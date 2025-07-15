@@ -1,0 +1,42 @@
+{
+  "name": "@devloops/jcron",
+  "version": "1.1.0",
+  "description": "A high-performance, type-safe job scheduler for Node.js, inspired by Go's jcron.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist"
+  ],
+  "keywords": [
+    "cron",
+    "scheduler",
+    "job",
+    "task",
+    "typescript",
+    "concurrent"
+  ],
+  "author": "AI Assistant (Ported from Go)",
+  "license": "MIT",
+  "dependencies": {
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@sinonjs/fake-timers": "^14.0.0",
+    "@types/bun": "^1.2.18",
+    "@types/node": "^24.0.12",
+    "@types/sinonjs__fake-timers": "^8.1.5",
+    "@types/uuid": "^10.0.0",
+    "benchmark": "^2.1.4",
+    "bun-types": "^1.2.18",
+    "ts-node": "10.9.2",
+    "typescript": "^5.8.3"
+  }
+}
