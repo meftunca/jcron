@@ -17,7 +17,7 @@ Complete API reference for the jcron high-performance cron expression engine.
 ```go
 package jcron
 
-import "github.com/maple-tech/baseline/jcron"
+import "github.com/meftunca/jcron"
 ```
 
 The `jcron` package provides a high-performance cron expression parsing and scheduling engine optimized for enterprise-grade applications. It supports all standard cron features including special characters (L, #), timezones, and Vixie-style OR logic.
@@ -319,7 +319,7 @@ import (
     "fmt"
     "log"
     "time"
-    "github.com/maple-tech/baseline/jcron"
+    "github.com/meftunca/jcron"
 )
 
 func main() {
@@ -725,7 +725,7 @@ import (
     "log/slog"
     "os"
     "time"
-    "github.com/maple-tech/baseline/jcron"
+    "github.com/meftunca/jcron"
 )
 
 func main() {
