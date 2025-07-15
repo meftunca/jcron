@@ -1,12 +1,14 @@
-# 📖 jcron API Documentation
+# 📖 JCRON API Documentation
 
-Complete API reference for the jcron high-performance cron expression engine.
+Complete API reference for the JCRON high-performance Go job scheduler and cron expression engine.
 
 ## Table of Contents
 
 - [Package Overview](#package-overview)
 - [Types](#types)
 - [Core Functions](#core-functions)
+- [Runner API](#runner-api)
+- [Job Management](#job-management)
 - [Helper Functions](#helper-functions)
 - [Error Types](#error-types)
 - [Constants](#constants)
@@ -20,16 +22,17 @@ package jcron
 import "github.com/meftunca/jcron"
 ```
 
-The `jcron` package provides a high-performance cron expression parsing and scheduling engine optimized for enterprise-grade applications. It supports all standard cron features including special characters (L, #), timezones, and Vixie-style OR logic.
+The `jcron` package provides a modern, high-performance job scheduling library for Go. It incorporates advanced scheduling features inspired by the Quartz Scheduler while maintaining a simple and developer-friendly API.
 
 ### Key Features
-- **Sub-300ns performance** for most operations (152-275ns on Apple M2 Max)
-- **Ultra-fast bit operations** - 0.3ns for set bit finding
-- **Zero-allocation parsing** - 25ns for simple patterns, 0 allocations
-- **Memory-optimized** with object pooling - only 64B/op for most operations
-- **Thread-safe** with RWMutex caching
-- **Complete cron syntax support** including special characters (L, #)
-- **Timezone-aware scheduling** with any IANA timezone
+- **Sub-microsecond performance** for most operations (1.2μs on benchmarks)
+- **High-Performance "Next Jump" Algorithm** - Mathematical calculation instead of tick-by-tick checking
+- **Aggressive Caching** - Parse once, cache forever with integer-based representations
+- **Built-in Error Handling & Retries** - Configurable retry policies with delays
+- **Panic Recovery** - Jobs that panic won't crash the runner
+- **Structured Logging** - Integration with standard log/slog library
+- **Thread-safe** - Safe for concurrent use across multiple goroutines
+- **PostgreSQL Integration** - Database-backed job scheduling for distributed systems
 
 ## Types
 
@@ -44,6 +47,7 @@ type Schedule struct {
     Month      *string  // 1-12 or JAN-DEC
     DayOfWeek  *string  // 0-6 or SUN-SAT (0=Sunday)
     Year       *string  // Year (optional, defaults to "*")
+    WeekOfYear *string  // 1-53 ISO week numbers (optional, defaults to "*")
     Timezone   *string  // IANA timezone (optional, defaults to "UTC")
 }
 ```
@@ -61,6 +65,7 @@ Represents a cron schedule with all timing fields. All fields are optional point
 | `Month` | 1-12 | JAN-DEC | `*`, `/`, `,`, `-` | `"*"` |
 | `DayOfWeek` | 0-6 | SUN-SAT | `*`, `/`, `,`, `-`, `L`, `#` | `"*"` |
 | `Year` | 1970-3000 | - | `*`, `/`, `,`, `-` | `"*"` |
+| `WeekOfYear` | 1-53 | - | `*`, `/`, `,`, `-` | `"*"` |
 | `Timezone` | IANA zones | - | - | `"UTC"` |
 
 **Example:**
@@ -73,6 +78,7 @@ schedule := Schedule{
     Month:      StrPtr("*"),           // Any month
     DayOfWeek:  StrPtr("MON-FRI"),     // Weekdays only
     Year:       StrPtr("*"),           // Any year
+    WeekOfYear: StrPtr("1-13"),        // First quarter weeks
     Timezone:   StrPtr("America/New_York"),
 }
 ```
@@ -204,6 +210,252 @@ if err != nil {
     log.Fatal(err)
 }
 fmt.Printf("Previous execution: %s\n", prev.Format(time.RFC3339))
+```
+
+**Performance:**
+- Similar to `Next()` performance characteristics
+- Optimized reverse bit scanning for efficiency
+
+## Runner API
+
+The Runner is the core component for job scheduling and execution management.
+
+### NewRunner
+
+```go
+func NewRunner(logger *slog.Logger) *Runner
+```
+
+Creates a new job runner with structured logging support.
+
+**Parameters:**
+- `logger *slog.Logger`: Structured logger for job execution events
+
+**Returns:**
+- `*Runner`: New runner instance ready for use
+
+**Example:**
+```go
+logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+runner := jcron.NewRunner(logger)
+```
+
+### (*Runner) Start
+
+```go
+func (r *Runner) Start()
+```
+
+Starts the runner's background goroutine to process scheduled jobs.
+
+**Example:**
+```go
+runner.Start()
+defer runner.Stop() // Always stop gracefully
+```
+
+### (*Runner) Stop
+
+```go
+func (r *Runner) Stop()
+```
+
+Gracefully stops the runner and waits for running jobs to complete.
+
+**Example:**
+```go
+runner.Stop() // Blocks until all jobs finish
+```
+
+## Job Management
+
+### Job Interface
+
+```go
+type Job interface {
+    Run() error
+}
+```
+
+All scheduled tasks must implement the Job interface.
+
+**Example:**
+```go
+type BackupJob struct {
+    dbName string
+}
+
+func (b *BackupJob) Run() error {
+    // Perform backup logic
+    return nil
+}
+```
+
+### JobFunc
+
+```go
+type JobFunc func() error
+```
+
+Adapter type to use functions as Jobs.
+
+**Example:**
+```go
+var myJob JobFunc = func() error {
+    fmt.Println("Job executed!")
+    return nil
+}
+```
+
+### (*Runner) AddFuncCron
+
+```go
+func (r *Runner) AddFuncCron(cronExpr string, fn func() error, opts ...JobOption) (string, error)
+```
+
+Adds a function job using cron string syntax.
+
+**Parameters:**
+- `cronExpr string`: Standard cron expression (5, 6, or 7 fields)
+- `fn func() error`: Function to execute
+- `opts ...JobOption`: Optional job configuration
+
+**Returns:**
+- `string`: Unique job ID
+- `error`: Error if cron expression is invalid
+
+**Example:**
+```go
+jobID, err := runner.AddFuncCron("0 */15 9-17 * * 1-5", func() error {
+    fmt.Println("Business hours check!")
+    return nil
+})
+```
+
+### (*Runner) AddJobCron
+
+```go
+func (r *Runner) AddJobCron(cronExpr string, job Job, opts ...JobOption) (string, error)
+```
+
+Adds a Job implementation using cron string syntax.
+
+**Parameters:**
+- `cronExpr string`: Standard cron expression
+- `job Job`: Job implementation to execute
+- `opts ...JobOption`: Optional job configuration
+
+**Returns:**
+- `string`: Unique job ID
+- `error`: Error if cron expression is invalid
+
+**Example:**
+```go
+backupJob := &BackupJob{dbName: "production"}
+jobID, err := runner.AddJobCron("0 2 * * *", backupJob)
+```
+
+### (*Runner) RemoveJob
+
+```go
+func (r *Runner) RemoveJob(jobID string) error
+```
+
+Removes a scheduled job by its ID.
+
+**Parameters:**
+- `jobID string`: ID returned from AddJob functions
+
+**Returns:**
+- `error`: Error if job ID not found
+
+**Example:**
+```go
+err := runner.RemoveJob(jobID)
+if err != nil {
+    log.Printf("Failed to remove job: %v", err)
+}
+```
+
+### Job Options
+
+#### WithRetries
+
+```go
+func WithRetries(maxRetries int, delay time.Duration) JobOption
+```
+
+Configures automatic retry policy for failing jobs.
+
+**Parameters:**
+- `maxRetries int`: Maximum number of retry attempts
+- `delay time.Duration`: Delay between retry attempts
+
+**Example:**
+```go
+runner.AddFuncCron("0 */5 * * * *", myJob,
+    jcron.WithRetries(3, 30*time.Second))
+```
+
+#### WithTimeout
+
+```go
+func WithTimeout(timeout time.Duration) JobOption
+```
+
+Sets execution timeout for jobs.
+
+**Parameters:**
+- `timeout time.Duration`: Maximum execution time
+
+**Example:**
+```go
+runner.AddFuncCron("0 0 2 * * *", backupJob,
+    jcron.WithTimeout(10*time.Minute))
+```
+
+### Week of Year Support
+
+#### FromCronWithWeekOfYear
+
+```go
+func FromCronWithWeekOfYear(cronExpr string, weekOfYear string) (Schedule, error)
+```
+
+Creates a schedule from cron expression with week-of-year constraint.
+
+**Parameters:**
+- `cronExpr string`: Standard cron expression
+- `weekOfYear string`: Week constraint (e.g., "1-13", "*/2", "1,3,5")
+
+**Returns:**
+- `Schedule`: Schedule with week constraint
+- `error`: Error if expression is invalid
+
+**Example:**
+```go
+// Every Monday during odd weeks
+schedule, err := jcron.FromCronWithWeekOfYear("0 9 * * 1", "1,3,5,7,9,11,13")
+```
+
+#### Week Patterns
+
+```go
+const (
+    FirstWeek     = "1"
+    LastWeek      = "53"
+    EvenWeeks     = "2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52"
+    OddWeeks      = "1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53"
+    FirstQuarter  = "1-13"
+    SecondQuarter = "14-26"
+    ThirdQuarter  = "27-39"
+    FourthQuarter = "40-53"
+)
+```
+
+**Example:**
+```go
+schedule, err := jcron.FromCronWithWeekOfYear("0 10 * * 2", jcron.OddWeeks)
 ```
 
 **Performance:**
