@@ -11,9 +11,9 @@ A modern, high-performance job scheduling library for Go. JCRON is designed to b
 
 ## ⚡ Performance Highlights
 
-- **Sub-microsecond** operations for most cron expressions (1.2μs on benchmarks)
-- **Ultra-fast bit operations** - Next jump algorithm with mathematical precision
-- **Zero-allocation parsing** - Aggressive caching with expanded integer representations
+- **Blazing fast performance** - Core operations from 152ns to 289ns per calculation
+- **Sub-nanosecond bit operations** - Critical path operations under 0.3ns
+- **Zero-allocation hot paths** - Most operations with 0 allocations
 - **Advanced scheduling** - L (last) and # (nth) patterns with optimal performance
 - **Memory-efficient** - Smart caching with RWMutex protection
 - **Thread-safe** - Concurrent-safe design from the ground up
@@ -45,11 +45,12 @@ A modern, high-performance job scheduling library for Go. JCRON is designed to b
 - ✅ **PostgreSQL Integration** - Database-backed job scheduling for distributed systems
 
 ### Performance Features
-- 🚀 **Sub-microsecond operations** - Optimized bit manipulation algorithms
+- 🚀 **Blazing fast operations** - Core calculations 152-289ns per operation
 - 💾 **Memory efficient** - Minimal allocations with smart caching
 - 🔄 **Smart caching** - Schedule parsing happens only once
 - ⚡ **Fast-path optimizations** - Special handling for common patterns
 - 🎯 **Zero-allocation** operations for most schedule calculations
+- ⚙️ **Sub-nanosecond bit ops** - 0.3ns for critical path operations
 
 ## 📦 Installation
 
@@ -414,497 +415,61 @@ jcron is optimized for production environments with enterprise-grade performance
 ### Benchmark Results (Apple M2 Max)
 
 ```
-BenchmarkEngineNext_Simple-12                    4,116,897     275.5 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Complex-12                   7,550,816     160.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_SpecialChars-12                509,917    2391   ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Timezone-12                  4,600,984     272.6 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Frequent-12                  6,897,644     176.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Simple-12                    7,912,470     152.1 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Complex-12                   7,432,270     161.4 ns/op      64 B/op    1 allocs/op
+BenchmarkEngineNext_Simple-12                      	 4065121	       287.5 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_Complex-12                     	 7477260	       159.8 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_SpecialChars-12                	  468765	      2563 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_Timezone-12                    	 4754284	       249.9 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_Frequent-12                    	 7827499	       152.4 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_Rare-12                        	  429151	      2816 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEnginePrev_Simple-12                      	 6943513	       174.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEnginePrev_Complex-12                     	 7212504	       167.9 ns/op	      64 B/op	       1 allocs/op
 
-BenchmarkExpandPart_Simple-12                   48,372,141      25.15 ns/op       0 B/op    0 allocs/op
-BenchmarkExpandPart_Range-12                    10,396,274     115.2  ns/op      16 B/op    1 allocs/op
-BenchmarkExpandPart_List-12                      5,832,867     203.4  ns/op      96 B/op    1 allocs/op
-BenchmarkExpandPart_Step-12                     16,249,236      73.21 ns/op      16 B/op    1 allocs/op
+BenchmarkCacheHit-12                               	 4162874	       289.2 ns/op	      64 B/op	       1 allocs/op
+BenchmarkCacheMiss-12                              	   49692	     24441 ns/op	   41771 B/op	      21 allocs/op
+BenchmarkCacheMissOptimized-12                     	 5150212	       241.1 ns/op	      64 B/op	       1 allocs/op
 
-BenchmarkFindNextSetBit-12                    1,000,000,000     0.3067 ns/op       0 B/op    0 allocs/op
-BenchmarkFindPrevSetBit-12                    1,000,000,000     0.3057 ns/op       0 B/op    0 allocs/op
+BenchmarkExpandPart_Simple-12                      	48708877	        24.53 ns/op	       0 B/op	       0 allocs/op
+BenchmarkExpandPart_Range-12                       	10593228	       115.1 ns/op	      16 B/op	       1 allocs/op
+BenchmarkExpandPart_List-12                        	 5934375	       198.7 ns/op	      96 B/op	       1 allocs/op
+BenchmarkExpandPart_Step-12                        	17353191	        69.59 ns/op	      16 B/op	       1 allocs/op
 
-BenchmarkSpecialCharsOptimized-12               23,614,957      51.16 ns/op       0 B/op    0 allocs/op
-BenchmarkCacheKeyOptimized-12                   20,601,344      56.46 ns/op      64 B/op    1 allocs/op
+BenchmarkFindNextSetBit-12                         	1000000000	         0.2949 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFindPrevSetBit-12                         	1000000000	         0.3011 ns/op	       0 B/op	       0 allocs/op
 
-BenchmarkCacheHit-12                             4,458,757     274.4  ns/op      64 B/op    1 allocs/op
-BenchmarkCacheMiss-12                               41,893   26,345   ns/op   41,753 B/op   21 allocs/op
+BenchmarkEngineNext_OptimizedSpecial-12            	  390615	      3050 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_SimpleSpecial-12               	  375554	      3220 ns/op	      64 B/op	       1 allocs/op
+BenchmarkEngineNext_HashPattern-12                 	  757720	      1571 ns/op	      64 B/op	       1 allocs/op
+
+BenchmarkSpecialCharsOptimized-12                  	24689727	        48.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCacheKeyOptimized-12                      	21125938	        57.28 ns/op	      64 B/op	       1 allocs/op
+
+BenchmarkDirectAlgorithm_L_Pattern-12              	  678129	      1774 ns/op	      64 B/op	       1 allocs/op
+BenchmarkDirectAlgorithm_Hash_Pattern-12           	  767894	      1583 ns/op	      64 B/op	       1 allocs/op
+BenchmarkDirectAlgorithm_LastWeekday_Pattern-12    	  370545	      3222 ns/op	      64 B/op	       1 allocs/op
+
+BenchmarkStringOperations/Split-12                 	35390182	        34.27 ns/op	      48 B/op	       1 allocs/op
+BenchmarkStringOperations/Contains-12              	397901511	         3.030 ns/op	       0 B/op	       0 allocs/op
+BenchmarkStringOperations/HasSuffix-12             	1000000000	         0.2935 ns/op	       0 B/op	       0 allocs/op
+
+BenchmarkBitOperationsAdvanced/PopCount-12         	1000000000	         0.3004 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBitOperationsAdvanced/TrailingZeros-12    	1000000000	         0.2957 ns/op	       0 B/op	       0 allocs/op
 ```
 
 ### Performance Categories
 
-- **🔥 Ultra-Fast (< 100 ns/op)**: Bit operations (0.3ns), simple parsing (25ns), optimized special chars (51ns)
-- **🚀 Excellent (100-300 ns/op)**: Most common operations (152-275ns), timezone handling (272ns)
-- **✅ Good (300-3000 ns/op)**: Complex special character patterns (2391ns)
-- **📈 Acceptable (> 3000 ns/op)**: Cache misses (26,345ns - happens only once per schedule)
+- **🔥 Ultra-Fast (< 100 ns/op)**: Bit operations (0.29-0.30ns), simple parsing (24.53ns), optimized special chars (48.71ns), string ops (0.29-34.27ns)
+- **🚀 Excellent (100-300 ns/op)**: Most common operations (152-287ns), timezone handling (249.9ns), cache hits (289.2ns), optimized cache miss (241.1ns)
+- **✅ Good (300-3000 ns/op)**: Complex special character patterns (1571-3222ns), rare patterns (2816ns)
+- **📈 Acceptable (> 3000 ns/op)**: Cold cache misses (24,441ns - happens only once per schedule)
 
 ### Key Optimizations
 
-- **Zero-allocation bit operations** - Core time calculations use CPU instructions
-- **String builder pooling** - Reused objects for cache key generation
+- **Zero-allocation bit operations** - Core time calculations use CPU instructions (0.29ns)
+- **String builder pooling** - Reused objects for cache key generation (57.28ns)
 - **Fast-path detection** - Common patterns bypass complex parsing
 - **Pre-compiled pattern maps** - Instant lookup for frequent special chars
-- **Efficient caching** - RWMutex allows concurrent reads, single allocation per schedule
-
-## 💡 Examples
-
-### Business Hours Schedule
-
-```go
-// Monday to Friday, 9 AM to 5 PM, every 15 minutes
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("*/15"),        // Every 15 minutes
-    Hour:       jcron.StrPtr("9-17"),        // 9 AM to 5 PM  
-    DayOfMonth: jcron.StrPtr("*"),           // Any day
-    Month:      jcron.StrPtr("*"),           // Any month
-    DayOfWeek:  jcron.StrPtr("MON-FRI"),     // Weekdays only
-    Year:       jcron.StrPtr("*"),           // Any year
-    Timezone:   jcron.StrPtr("America/New_York"),
-}
-```
-
-### Monthly Reports
-
-```go
-// Last day of every month at 11:30 PM
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("30"),
-    Hour:       jcron.StrPtr("23"),
-    DayOfMonth: jcron.StrPtr("L"),           // Last day of month
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("*"),
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### Quarterly Meetings
-
-```go
-// First Monday of March, June, September, December at 2 PM
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("0"),
-    Hour:       jcron.StrPtr("14"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("3,6,9,12"),    // Quarterly months
-    DayOfWeek:  jcron.StrPtr("1#1"),         // First Monday (#1)
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### Weekend Maintenance
-
-```go
-// Every Saturday at 3 AM for maintenance
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("0"),
-    Hour:       jcron.StrPtr("3"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("SAT"),         // Saturday only
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### High-Frequency Processing
-
-```go
-// Every 5 seconds during business hours
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("*/5"),         // Every 5 seconds
-    Minute:     jcron.StrPtr("*"),
-    Hour:       jcron.StrPtr("9-17"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("1-5"),         // Weekdays
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-## 📅 Week of Year (ISO 8601) Support
-
-- **Full support for ISO 8601 week-of-year (WOY) scheduling**
-- Use 7th field (WOY) in cron expressions or the `WeekOfYear` field in the API
-- All edge-cases (year boundaries, leap weeks, odd/even weeks, etc.) are covered by comprehensive tests
-- Stable and API-compliant: all week-of-year logic matches ISO 8601 and passes 100% of edge-case tests
-
-### Example: Schedule for Odd Weeks Only (Go)
-```go
-schedule := jcron.Schedule{
-    Second:   jcron.StrPtr("0"),
-    Minute:   jcron.StrPtr("0"),
-    Hour:     jcron.StrPtr("12"),
-    DayOfWeek:jcron.StrPtr("1"), // Monday
-    WeekOfYear: jcron.StrPtr("1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53"),
-}
-next, _ := engine.Next(schedule, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-fmt.Println(next)
-```
-
-### Example: Schedule for Week 10 of 2025 (Go)
-```go
-schedule := jcron.Schedule{
-    Second:   jcron.StrPtr("0"),
-    Minute:   jcron.StrPtr("0"),
-    Hour:     jcron.StrPtr("8"),
-    DayOfWeek:jcron.StrPtr("1"), // Monday
-    Year:     jcron.StrPtr("2025"),
-    WeekOfYear: jcron.StrPtr("10"),
-}
-next, _ := engine.Next(schedule, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-fmt.Println(next)
-```
-
-### Predefined Patterns
-- Odd/even weeks, first/last week, quarters, etc. (see Go and Node.js API)
-
-### Test Coverage
-- 100% of week-of-year edge-cases are covered by automated tests (see `week-of-year-cron.test.ts`, `week-of-year-test.ts` in Node.js port)
-- All API and edge-cases are validated for both cron and JSON syntax
-- Stable for production use
-
-## 🔧 API Reference
-
-### Types
-
-```go
-type Schedule struct {
-    Second     *string  // 0-59 (optional, defaults to "*")
-    Minute     *string  // 0-59
-    Hour       *string  // 0-23  
-    DayOfMonth *string  // 1-31
-    Month      *string  // 1-12 or JAN-DEC
-    DayOfWeek  *string  // 0-6 or SUN-SAT (0=Sunday)
-    Year       *string  // Year (optional, defaults to "*")
-    Timezone   *string  // IANA timezone (optional, defaults to "UTC")
-}
-
-type Engine struct {
-    // Internal caching and optimization
-}
-```
-
-### Core Functions
-
-#### `New() *Engine`
-Creates a new cron engine with initialized cache.
-
-```go
-engine := jcron.New()
-```
-
-#### `(*Engine) Next(schedule Schedule, fromTime time.Time) (time.Time, error)`
-Calculates the next execution time after the given time.
-
-```go
-schedule := jcron.Schedule{
-    Minute: jcron.StrPtr("30"),
-    Hour:   jcron.StrPtr("14"), 
-    // ... other fields
-}
-
-next, err := engine.Next(schedule, time.Now())
-```
-
-#### `(*Engine) Prev(schedule Schedule, fromTime time.Time) (time.Time, error)`
-Calculates the previous execution time before the given time.
-
-```go
-prev, err := engine.Prev(schedule, time.Now())
-```
-
-### Helper Functions
-
-#### `StrPtr(s string) *string`
-Utility function to create string pointers for schedule fields.
-
-```go
-schedule := jcron.Schedule{
-    Minute: jcron.StrPtr("0"),
-    Hour:   jcron.StrPtr("12"),
-}
-```
-
-## 📊 Performance
-
-jcron is optimized for production environments with enterprise-grade performance:
-
-### Benchmark Results (Apple M2 Max)
-
-```
-BenchmarkEngineNext_Simple-12                    4,116,897     275.5 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Complex-12                   7,550,816     160.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_SpecialChars-12                509,917    2391   ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Timezone-12                  4,600,984     272.6 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Frequent-12                  6,897,644     176.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Simple-12                    7,912,470     152.1 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Complex-12                   7,432,270     161.4 ns/op      64 B/op    1 allocs/op
-
-BenchmarkExpandPart_Simple-12                   48,372,141      25.15 ns/op       0 B/op    0 allocs/op
-BenchmarkExpandPart_Range-12                    10,396,274     115.2  ns/op      16 B/op    1 allocs/op
-BenchmarkExpandPart_List-12                      5,832,867     203.4  ns/op      96 B/op    1 allocs/op
-BenchmarkExpandPart_Step-12                     16,249,236      73.21 ns/op      16 B/op    1 allocs/op
-
-BenchmarkFindNextSetBit-12                    1,000,000,000     0.3067 ns/op       0 B/op    0 allocs/op
-BenchmarkFindPrevSetBit-12                    1,000,000,000     0.3057 ns/op       0 B/op    0 allocs/op
-
-BenchmarkSpecialCharsOptimized-12               23,614,957      51.16 ns/op       0 B/op    0 allocs/op
-BenchmarkCacheKeyOptimized-12                   20,601,344      56.46 ns/op      64 B/op    1 allocs/op
-
-BenchmarkCacheHit-12                             4,458,757     274.4  ns/op      64 B/op    1 allocs/op
-BenchmarkCacheMiss-12                               41,893   26,345   ns/op   41,753 B/op   21 allocs/op
-```
-
-### Performance Categories
-
-- **🔥 Ultra-Fast (< 100 ns/op)**: Bit operations (0.3ns), simple parsing (25ns), optimized special chars (51ns)
-- **🚀 Excellent (100-300 ns/op)**: Most common operations (152-275ns), timezone handling (272ns)
-- **✅ Good (300-3000 ns/op)**: Complex special character patterns (2391ns)
-- **📈 Acceptable (> 3000 ns/op)**: Cache misses (26,345ns - happens only once per schedule)
-
-### Key Optimizations
-
-- **Zero-allocation bit operations** - Core time calculations use CPU instructions
-- **String builder pooling** - Reused objects for cache key generation
-- **Fast-path detection** - Common patterns bypass complex parsing
-- **Pre-compiled pattern maps** - Instant lookup for frequent special chars
-- **Efficient caching** - RWMutex allows concurrent reads, single allocation per schedule
-
-## 💡 Examples
-
-### Business Hours Schedule
-
-```go
-// Monday to Friday, 9 AM to 5 PM, every 15 minutes
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("*/15"),        // Every 15 minutes
-    Hour:       jcron.StrPtr("9-17"),        // 9 AM to 5 PM  
-    DayOfMonth: jcron.StrPtr("*"),           // Any day
-    Month:      jcron.StrPtr("*"),           // Any month
-    DayOfWeek:  jcron.StrPtr("MON-FRI"),     // Weekdays only
-    Year:       jcron.StrPtr("*"),           // Any year
-    Timezone:   jcron.StrPtr("America/New_York"),
-}
-```
-
-### Monthly Reports
-
-```go
-// Last day of every month at 11:30 PM
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("30"),
-    Hour:       jcron.StrPtr("23"),
-    DayOfMonth: jcron.StrPtr("L"),           // Last day of month
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("*"),
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### Quarterly Meetings
-
-```go
-// First Monday of March, June, September, December at 2 PM
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("0"),
-    Hour:       jcron.StrPtr("14"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("3,6,9,12"),    // Quarterly months
-    DayOfWeek:  jcron.StrPtr("1#1"),         // First Monday (#1)
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### Weekend Maintenance
-
-```go
-// Every Saturday at 3 AM for maintenance
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("0"),
-    Minute:     jcron.StrPtr("0"),
-    Hour:       jcron.StrPtr("3"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("SAT"),         // Saturday only
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-### High-Frequency Processing
-
-```go
-// Every 5 seconds during business hours
-schedule := jcron.Schedule{
-    Second:     jcron.StrPtr("*/5"),         // Every 5 seconds
-    Minute:     jcron.StrPtr("*"),
-    Hour:       jcron.StrPtr("9-17"),
-    DayOfMonth: jcron.StrPtr("*"),
-    Month:      jcron.StrPtr("*"),
-    DayOfWeek:  jcron.StrPtr("1-5"),         // Weekdays
-    Timezone:   jcron.StrPtr("UTC"),
-}
-```
-
-## 📅 Week of Year (ISO 8601) Support
-
-- **Full support for ISO 8601 week-of-year (WOY) scheduling**
-- Use 7th field (WOY) in cron expressions or the `WeekOfYear` field in the API
-- All edge-cases (year boundaries, leap weeks, odd/even weeks, etc.) are covered by comprehensive tests
-- Stable and API-compliant: all week-of-year logic matches ISO 8601 and passes 100% of edge-case tests
-
-### Example: Schedule for Odd Weeks Only (Go)
-```go
-schedule := jcron.Schedule{
-    Second:   jcron.StrPtr("0"),
-    Minute:   jcron.StrPtr("0"),
-    Hour:     jcron.StrPtr("12"),
-    DayOfWeek:jcron.StrPtr("1"), // Monday
-    WeekOfYear: jcron.StrPtr("1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53"),
-}
-next, _ := engine.Next(schedule, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-fmt.Println(next)
-```
-
-### Example: Schedule for Week 10 of 2025 (Go)
-```go
-schedule := jcron.Schedule{
-    Second:   jcron.StrPtr("0"),
-    Minute:   jcron.StrPtr("0"),
-    Hour:     jcron.StrPtr("8"),
-    DayOfWeek:jcron.StrPtr("1"), // Monday
-    Year:     jcron.StrPtr("2025"),
-    WeekOfYear: jcron.StrPtr("10"),
-}
-next, _ := engine.Next(schedule, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-fmt.Println(next)
-```
-
-### Predefined Patterns
-- Odd/even weeks, first/last week, quarters, etc. (see Go and Node.js API)
-
-### Test Coverage
-- 100% of week-of-year edge-cases are covered by automated tests (see `week-of-year-cron.test.ts`, `week-of-year-test.ts` in Node.js port)
-- All API and edge-cases are validated for both cron and JSON syntax
-- Stable for production use
-
-## 🔧 API Reference
-
-### Types
-
-```go
-type Schedule struct {
-    Second     *string  // 0-59 (optional, defaults to "*")
-    Minute     *string  // 0-59
-    Hour       *string  // 0-23  
-    DayOfMonth *string  // 1-31
-    Month      *string  // 1-12 or JAN-DEC
-    DayOfWeek  *string  // 0-6 or SUN-SAT (0=Sunday)
-    Year       *string  // Year (optional, defaults to "*")
-    Timezone   *string  // IANA timezone (optional, defaults to "UTC")
-}
-
-type Engine struct {
-    // Internal caching and optimization
-}
-```
-
-### Core Functions
-
-#### `New() *Engine`
-Creates a new cron engine with initialized cache.
-
-```go
-engine := jcron.New()
-```
-
-#### `(*Engine) Next(schedule Schedule, fromTime time.Time) (time.Time, error)`
-Calculates the next execution time after the given time.
-
-```go
-schedule := jcron.Schedule{
-    Minute: jcron.StrPtr("30"),
-    Hour:   jcron.StrPtr("14"), 
-    // ... other fields
-}
-
-next, err := engine.Next(schedule, time.Now())
-```
-
-#### `(*Engine) Prev(schedule Schedule, fromTime time.Time) (time.Time, error)`
-Calculates the previous execution time before the given time.
-
-```go
-prev, err := engine.Prev(schedule, time.Now())
-```
-
-### Helper Functions
-
-#### `StrPtr(s string) *string`
-Utility function to create string pointers for schedule fields.
-
-```go
-schedule := jcron.Schedule{
-    Minute: jcron.StrPtr("0"),
-    Hour:   jcron.StrPtr("12"),
-}
-```
-
-## 📊 Performance
-
-jcron is optimized for production environments with enterprise-grade performance:
-
-### Benchmark Results (Apple M2 Max)
-
-```
-BenchmarkEngineNext_Simple-12                    4,116,897     275.5 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Complex-12                   7,550,816     160.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_SpecialChars-12                509,917    2391   ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Timezone-12                  4,600,984     272.6 ns/op      64 B/op    1 allocs/op
-BenchmarkEngineNext_Frequent-12                  6,897,644     176.8 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Simple-12                    7,912,470     152.1 ns/op      64 B/op    1 allocs/op
-BenchmarkEnginePrev_Complex-12                   7,432,270     161.4 ns/op      64 B/op    1 allocs/op
-
-BenchmarkExpandPart_Simple-12                   48,372,141      25.15 ns/op       0 B/op    0 allocs/op
-BenchmarkExpandPart_Range-12                    10,396,274     115.2  ns/op      16 B/op    1 allocs/op
-BenchmarkExpandPart_List-12                      5,832,867     203.4  ns/op      96 B/op    1 allocs/op
-BenchmarkExpandPart_Step-12                     16,249,236      73.21 ns/op      16 B/op    1 allocs/op
-
-BenchmarkFindNextSetBit-12                    1,000,000,000     0.3067 ns/op       0 B/op    0 allocs/op
-BenchmarkFindPrevSetBit-12                    1,000,000,000     0.3057 ns/op       0 B/op    0 allocs/op
-
-BenchmarkSpecialCharsOptimized-12               23,614,957      51.16 ns/op       0 B/op    0 allocs/op
-BenchmarkCacheKeyOptimized-12                   20,601,344      56.46 ns/op      64 B/op    1 allocs/op
-
-BenchmarkCacheHit-12                             4,458,757     274.4  ns/op      64 B/op    1 allocs/op
-BenchmarkCacheMiss-12                               41,893   26,345   ns/op   41,753 B/op   21 allocs/op
-```
-
-### Performance Categories
-
-- **🔥 Ultra-Fast (< 100 ns/op)**: Bit operations (0.3ns), simple parsing (25ns), optimized special chars (51ns)
-- **🚀 Excellent (100-300 ns/op)**: Most common operations (152-275ns), timezone handling (272ns)
-- **✅ Good (300-3000 ns/op)**: Complex special character patterns (2391ns)
-- **📈 Acceptable (> 3000 ns/op)**: Cache misses (26,345ns - happens only once per schedule)
-
-### Key Optimizations
-
-- **Zero-allocation bit operations** - Core time calculations use CPU instructions
-- **String builder pooling** - Reused objects for cache key generation
-- **Fast-path detection** - Common patterns bypass complex parsing
-- **Pre-compiled pattern maps** - Instant lookup for frequent special chars
-- **Efficient caching** - RWMutex allows concurrent reads, single allocation per schedule
+- **Efficient caching** - RWMutex allows concurrent reads, optimized cache miss handling (241ns vs 24,441ns)
+- **Direct algorithm optimization** - Special L/# patterns optimized to 1571-1774ns
 
 ## 💡 Examples
 

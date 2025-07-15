@@ -5,16 +5,90 @@ import { Engine } from "../engine.js";
 import { Schedule, fromCronSyntax } from "../schedule.js";
 import { Formatters } from "./formatters.js";
 import { enLocale } from "./locales/en.js";
+import { frLocale } from "./locales/fr.js";
+import { trLocale } from "./locales/tr.js";
+import { esLocale } from "./locales/es.js";
+import { deLocale } from "./locales/de.js";
+import { plLocale } from "./locales/pl.js";
+import { ptLocale } from "./locales/pt.js";
+import { itLocale } from "./locales/it.js";
+import { czLocale } from "./locales/cz.js";
+import { nlLocale } from "./locales/nl.js";
 import { ExpressionParser, ParsedExpression } from "./parser.js";
 import { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types.js";
 
-// Locale registry
+// Locale registry with all supported languages
 const locales: Map<string, LocaleStrings> = new Map();
 locales.set("en", enLocale);
+locales.set("fr", frLocale);
+locales.set("tr", trLocale);
+locales.set("es", esLocale);
+locales.set("de", deLocale);
+locales.set("pl", plLocale);
+locales.set("pt", ptLocale);
+locales.set("it", itLocale);
+locales.set("cz", czLocale);
+locales.set("cs", czLocale); // Czech alias
+locales.set("nl", nlLocale);
 
-// Default options
+/**
+ * Detect browser/system locale automatically
+ */
+function detectLocale(): string {
+  if (typeof navigator !== "undefined" && (navigator as any).language) {
+    const browserLang = ((navigator as any).language as string).toLowerCase();
+    
+    // Direct matches
+    if (locales.has(browserLang)) {
+      return browserLang;
+    }
+    
+    // Language code only (e.g., 'en-US' -> 'en')
+    const langCode = browserLang.split('-')[0];
+    if (locales.has(langCode)) {
+      return langCode;
+    }
+    
+    // Special mappings
+    const langMap: Record<string, string> = {
+      'cs': 'cz', // Czech
+      'cs-cz': 'cz',
+      'pt-br': 'pt', // Brazilian Portuguese
+      'pt-pt': 'pt', // European Portuguese
+      'es-es': 'es', // European Spanish
+      'es-mx': 'es', // Mexican Spanish
+      'fr-fr': 'fr', // French
+      'fr-ca': 'fr', // Canadian French
+      'de-de': 'de', // German
+      'de-at': 'de', // Austrian German
+      'de-ch': 'de', // Swiss German
+      'it-it': 'it', // Italian
+      'nl-nl': 'nl', // Dutch
+      'nl-be': 'nl', // Belgian Dutch
+      'pl-pl': 'pl', // Polish
+      'tr-tr': 'tr', // Turkish
+    };
+    
+    if (langMap[browserLang] && locales.has(langMap[browserLang])) {
+      return langMap[browserLang];
+    }
+  }
+  
+  // Node.js environment
+  if (typeof process !== "undefined" && process.env) {
+    const envLang = (process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || '').toLowerCase();
+    const langCode = envLang.split('_')[0].split('.')[0];
+    if (locales.has(langCode)) {
+      return langCode;
+    }
+  }
+  
+  return "en"; // Default fallback
+}
+
+// Default options with auto-detected locale
 const defaultOptions: Required<HumanizeOptions> = {
-  locale: "en",
+  locale: detectLocale(),
   use24HourTime: false,
   dayFormat: "long",
   monthFormat: "long",
@@ -40,6 +114,38 @@ class HumanizerClass {
    */
   static registerLocale(locale: string, strings: LocaleStrings): void {
     locales.set(locale, strings);
+  }
+
+  /**
+   * Get list of supported locales
+   */
+  static getSupportedLocales(): string[] {
+    return Array.from(locales.keys()).sort();
+  }
+
+  /**
+   * Check if a locale is supported
+   */
+  static isLocaleSupported(locale: string): boolean {
+    return locales.has(locale);
+  }
+
+  /**
+   * Get the current detected locale
+   */
+  static getDetectedLocale(): string {
+    return detectLocale();
+  }
+
+  /**
+   * Set default locale for future operations
+   */
+  static setDefaultLocale(locale: string): void {
+    if (locales.has(locale)) {
+      defaultOptions.locale = locale;
+    } else {
+      throw new Error(`Unsupported locale: ${locale}. Supported locales: ${this.getSupportedLocales().join(', ')}`);
+    }
   }
 
   /**
@@ -487,8 +593,17 @@ class HumanizerClass {
 export const toString = HumanizerClass.toString.bind(HumanizerClass);
 export const toResult = HumanizerClass.toResult.bind(HumanizerClass);
 export const fromSchedule = HumanizerClass.fromSchedule.bind(HumanizerClass);
-export const registerLocale =
-  HumanizerClass.registerLocale.bind(HumanizerClass);
+export const registerLocale = HumanizerClass.registerLocale.bind(HumanizerClass);
+export const getSupportedLocales = HumanizerClass.getSupportedLocales.bind(HumanizerClass);
+export const isLocaleSupported = HumanizerClass.isLocaleSupported.bind(HumanizerClass);
+export const getDetectedLocale = HumanizerClass.getDetectedLocale.bind(HumanizerClass);
+export const setDefaultLocale = HumanizerClass.setDefaultLocale.bind(HumanizerClass);
+
+// Export locale utilities
+export * from "./locales/index.js";
+
+// Export types
+export type { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types.js";
 
 // Default export
 export default HumanizerClass;
