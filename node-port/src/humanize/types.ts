@@ -170,4 +170,8 @@ export interface LocaleStrings {
   timezone: string;
   utc: string;
   local: string;
+
+  // Eklenen: Doğal step ve every day ifadeleri için örnek stringler
+  // (Kullanımda string olarak yazıldığı için, interface'e eklemeye gerek yok)
+  everyDay: string;
 }

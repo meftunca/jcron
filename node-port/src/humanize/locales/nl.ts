@@ -12,6 +12,7 @@ export const nlLocale: LocaleStrings = {
   of: "van",
   and: "en",
   or: "of",
+  everyDay: "elke dag",
 
   // Frequency
   second: "seconde",

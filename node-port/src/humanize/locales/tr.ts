@@ -12,7 +12,7 @@ export const trLocale: LocaleStrings = {
   of: "nin",
   and: "ve",
   or: "veya",
-
+  everyDay: "her gün",
   // Frequency
   second: "saniye",
   seconds: "saniye",

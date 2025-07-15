@@ -29,13 +29,29 @@ JCRON automatically detects browser environment and provides optimized functiona
 ## 🚀 Quick Start
 
 ```javascript
-import { toString, getNext, getPrev, isValid, match, fromCronSyntax } from '@devloops/jcron';
+import { 
+  toString, 
+  getNext, 
+  getPrev, 
+  isValid, 
+  match, 
+  fromCronSyntax,
+  fromObject,
+  fromSchedule 
+} from '@devloops/jcron';
 
-// Create a schedule from cron expression
+// Method 1: Create a schedule from cron expression
 const schedule = fromCronSyntax('0 9 * * *');
 
+// Method 2: Create a schedule from object (NEW!)
+const schedule2 = fromObject({
+  hours: 9,
+  minutes: 0
+});
+
 // Get human-readable description
-console.log(toString(schedule)); // "at 09:00, every day"
+console.log(toString('0 9 * * *')); // "at 09:00, every day"
+console.log(fromSchedule(schedule2)); // "at 09:00, every day"
 
 // Get next execution time
 const nextRun = getNext('0 9 * * *');
@@ -166,6 +182,128 @@ function CronCountdown({ cronExpression }) {
 
 // Usage
 <CronCountdown cronExpression="0 9 * * 1-5" />
+```
+
+## 📦 Object-Based Schedule Creation
+
+### Using fromObject Function
+
+Instead of using cron syntax, you can create schedules using JavaScript objects for more intuitive configuration:
+
+```javascript
+import { fromObject, toString, getNext } from '@devloops/jcron';
+
+// Basic time scheduling
+const dailyMeeting = fromObject({
+  hours: [9],
+  minutes: [30]
+});
+console.log(toString(dailyMeeting)); // "at 09:30"
+
+// Specific days
+const weekendBackup = fromObject({
+  hours: [2],
+  minutes: [0],
+  dayOfWeek: ['Saturday', 'Sunday']
+});
+console.log(toString(weekendBackup)); // "at 02:00 on Saturday and Sunday"
+
+// Multiple times
+const notifications = fromObject({
+  hours: [9, 13, 17],
+  minutes: [0],
+  dayOfWeek: ['Monday', 'Wednesday', 'Friday']
+});
+console.log(toString(notifications)); 
+// "at 09:00, 13:00, and 17:00 on Monday, Wednesday, and Friday"
+
+// With timezone
+const globalMeeting = fromObject({
+  hours: [14],
+  minutes: [30],
+  dayOfWeek: ['Tuesday'],
+  timezone: 'Europe/London'
+});
+console.log(toString(globalMeeting)); 
+// "at 14:30 on Tuesday (Europe/London)"
+```
+
+### Object Properties
+
+The `fromObject` function accepts these properties:
+
+```javascript
+{
+  seconds?: number[],        // 0-59
+  minutes?: number[],        // 0-59  
+  hours?: number[],          // 0-23
+  dayOfMonth?: number[],     // 1-31
+  month?: number[] | string[], // 1-12 or month names
+  dayOfWeek?: number[] | string[], // 0-6 or day names
+  timezone?: string          // IANA timezone name
+}
+```
+
+### Month and Day Names
+
+You can use textual names for months and days:
+
+```javascript
+// Using month names
+const quarterlyReview = fromObject({
+  hours: [10],
+  minutes: [0],
+  dayOfMonth: [1],
+  month: ['January', 'April', 'July', 'October']
+});
+
+// Using day names  
+const weeklyReport = fromObject({
+  hours: [17],
+  minutes: [0],
+  dayOfWeek: ['Friday']
+});
+
+// Mixed numeric and textual
+const mixedSchedule = fromObject({
+  hours: [8, 12, 16],
+  minutes: [30],
+  dayOfWeek: ['Monday', 'Wednesday', 5], // Monday, Wednesday, Friday
+  month: [1, 'March', 'May', 7, 'September', 11] // Jan, Mar, May, Jul, Sep, Nov
+});
+```
+
+### Practical Examples
+
+```javascript
+// Database backup every day at 3 AM
+const backup = fromObject({
+  hours: [3],
+  minutes: [0]
+});
+
+// Team standup Monday-Friday at 9:30 AM
+const standup = fromObject({
+  hours: [9],
+  minutes: [30], 
+  dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+});
+
+// Monthly report on first Monday of each month at 2 PM
+const monthlyReport = fromObject({
+  hours: [14],
+  minutes: [0],
+  dayOfWeek: ['Monday'],
+  dayOfMonth: [1, 2, 3, 4, 5, 6, 7] // First week
+});
+
+// Quarterly maintenance on weekends
+const maintenance = fromObject({
+  hours: [1],
+  minutes: [0],
+  dayOfWeek: ['Saturday'],
+  month: ['January', 'April', 'July', 'October']
+});
 ```
 
 ## 🌍 Humanization with Localization
@@ -650,17 +788,46 @@ console.log('Daily jobs:', weeklyJobs);
 ### Meeting Scheduler
 
 ```javascript
-import { getNextN, toString } from '@devloops/jcron';
+import { getNextN, toString, fromObject, fromCronSyntax } from '@devloops/jcron';
 
+// Using object syntax (recommended for readability)
 const meetings = [
-  { name: 'Daily Standup', cron: '0 9 * * 1-5' },
-  { name: 'Weekly Review', cron: '0 14 * * 5' },
-  { name: 'Monthly Planning', cron: '0 10 1 * *' }
+  { 
+    name: 'Daily Standup', 
+    schedule: fromObject({
+      hours: [9],
+      minutes: [0],
+      dayOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    })
+  },
+  { 
+    name: 'Weekly Review', 
+    schedule: fromObject({
+      hours: [14],
+      minutes: [0],
+      dayOfWeek: ['Friday']
+    })
+  },
+  { 
+    name: 'Monthly Planning', 
+    schedule: fromObject({
+      hours: [10],
+      minutes: [0],
+      dayOfMonth: [1]
+    })
+  }
+];
+
+// Or using cron syntax
+const meetingsWithCron = [
+  { name: 'Daily Standup', schedule: fromCronSyntax('0 9 * * 1-5') },
+  { name: 'Weekly Review', schedule: fromCronSyntax('0 14 * * 5') },
+  { name: 'Monthly Planning', schedule: fromCronSyntax('0 10 1 * *') }
 ];
 
 meetings.forEach(meeting => {
-  const next = getNextN(meeting.cron, 3);
-  const description = toString(meeting.cron);
+  const next = getNextN(meeting.schedule, 3);
+  const description = toString(meeting.schedule);
   
   console.log(`${meeting.name}: ${description}`);
   console.log('Next 3 occurrences:');
@@ -674,12 +841,16 @@ meetings.forEach(meeting => {
 ### Backup Reminder
 
 ```javascript
-import { getNext, toString, fromCronSyntax } from '@devloops/jcron';
+import { getNext, toString, fromCronSyntax, fromObject } from '@devloops/jcron';
 
-function createBackupReminder(cronExpression) {
-  const schedule = fromCronSyntax(cronExpression);
+function createBackupReminder(scheduleInput) {
+  // Accept either Schedule object or cron string
+  const schedule = typeof scheduleInput === 'string' 
+    ? fromCronSyntax(scheduleInput)
+    : scheduleInput;
+    
   const description = toString(schedule, { locale: 'en' });
-  const nextBackup = getNext(cronExpression);
+  const nextBackup = getNext(schedule);
   
   return {
     schedule: description,
@@ -689,10 +860,20 @@ function createBackupReminder(cronExpression) {
   };
 }
 
-const reminder = createBackupReminder('0 2 * * 0'); // Sunday 2 AM
-console.log(`Backup scheduled: ${reminder.schedule}`);
-console.log(`Next backup: ${reminder.nextRun.toLocaleString()}`);
-console.log(`Is today: ${reminder.isToday}`);
+// Using object syntax (more readable)
+const weeklyBackup = fromObject({
+  hours: [2],
+  minutes: [0],
+  dayOfWeek: ['Sunday']
+});
+
+// Using cron syntax
+const reminder1 = createBackupReminder(weeklyBackup);
+const reminder2 = createBackupReminder('0 2 * * 0'); // Sunday 2 AM
+
+console.log(`Backup scheduled: ${reminder1.schedule}`);
+console.log(`Next backup: ${reminder1.nextRun.toLocaleString()}`);
+console.log(`Is today: ${reminder1.isToday}`);
 ```
 
 ## 📱 Mobile Considerations
@@ -759,6 +940,27 @@ Parse a cron expression into a Schedule object.
 ```javascript
 import { fromCronSyntax } from '@devloops/jcron';
 const schedule = fromCronSyntax('0 9 * * 1-5');
+```
+
+#### `fromObject(config: ScheduleConfig): Schedule`
+Create a Schedule object from a configuration object.
+
+```javascript
+import { fromObject } from '@devloops/jcron';
+
+// Simple daily schedule
+const schedule = fromObject({
+  hours: [9],
+  minutes: [30]
+});
+
+// Complex schedule with multiple options
+const complex = fromObject({
+  hours: [9, 13, 17],
+  minutes: [0, 30],
+  dayOfWeek: ['Monday', 'Wednesday', 'Friday'],
+  timezone: 'Europe/London'
+});
 ```
 
 #### `getNext(cronExpression: string, fromTime?: Date): Date`

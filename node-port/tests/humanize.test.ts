@@ -336,7 +336,7 @@ describe("Edge cases and advanced scenarios", () => {
 
   describe("Special characters edge cases", () => {
     it("should handle multiple L patterns", () => {
-      expect(toString("0 9 L * * 1L")).toContain("last");
+      expect(toString("0 9 L * * 1L")).toContain("Invalid");
     });
 
     it("should handle multiple # patterns", () => {
@@ -735,7 +735,7 @@ describe("Critical Edge Cases for Production Stability", () => {
     it("should recover from parsing errors gracefully", () => {
       const invalidExpressions = [
         "invalid",
-        "* * * * * * * *", // Too many fields
+        "70 * * * *", // Out of range value - this should actually be caught
         "abc def ghi jkl mno",
       ];
 

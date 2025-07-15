@@ -1,13 +1,185 @@
-// src/humanize/README.md
-# JCRON Humanize API
+# JCron Humanize API
 
-A comprehensive humanization library for cron expressions, inspired by cronstrue but with full support for JCRON's advanced features including week-of-year, special characters, and timezone support.
+A human-readable description generator for jcron expressions, supporting multiple languages and advanced jcron features.
 
 ## Features
 
-### Complete cronstrue Compatibility
-- ✅ All standard cron expression patterns
-- ✅ Multiple output formats (12/24 hour, short/long names)
+- 🌍 **Multi-language support**: English, Turkish, French, Spanish, German, Polish, Portuguese, Italian, Czech, Dutch
+- 🔄 **Jcron extensions**: Week of Year, timezone support, seconds field
+- 📝 **Natural descriptions**: Convert complex cron expressions into readable text
+- 🎯 **Type-safe**: Full TypeScript support with comprehensive type definitions
+- ⚡ **Performance optimized**: Direct Schedule object processing
+
+## Quick Start
+
+```typescript
+import { fromSchedule, toString } from '@devloops/jcron/humanize';
+import { fromCronSyntax, withWeekOfYear } from '@devloops/jcron';
+
+// Basic usage with cron string
+console.log(toString("0 9 * * 1-5")); // "at 9:00 AM, on Monday through Friday"
+
+// Using Schedule objects for advanced features
+const schedule = fromCronSyntax("0 12 * * *");
+const withWeek = withWeekOfYear(schedule, "1");
+console.log(fromSchedule(withWeek)); // "at noon, week 1"
+
+// Step patterns
+console.log(toString("*/15 * * * *")); // "every 15 minutes"
+console.log(toString("0 9-17/2 * * *")); // "at 9:00 AM, 11:00 AM, 1:00 PM, 3:00 PM, and 5:00 PM, every day"
+```
+
+## API Reference
+
+### Core Functions
+
+#### `toString(cronExpression, options?)`
+Convert a cron expression string to human-readable text.
+
+```typescript
+toString("0 9 * * 1"); // "at 9:00 AM, on Monday"
+toString("*/30 * * * *"); // "every 30 minutes"
+```
+
+#### `fromSchedule(schedule, options?)`
+Convert a jcron Schedule object to human-readable text. **Recommended for advanced features.**
+
+```typescript
+const schedule = fromCronSyntax("0 12 * * *");
+fromSchedule(schedule); // "at noon, every day"
+```
+
+#### `toResult(cronExpression, options?)`
+Get detailed analysis of a cron expression.
+
+```typescript
+const result = toResult("0 9 * * 1-5");
+// Returns: { description, pattern, frequency, components, warnings }
+```
+
+### Options
+
+```typescript
+interface HumanizeOptions {
+  locale?: string;              // Language: 'en', 'tr', 'fr', etc.
+  use24HourTime?: boolean;      // 24-hour vs 12-hour format
+  dayFormat?: 'long' | 'short' | 'narrow';
+  monthFormat?: 'long' | 'short' | 'narrow' | 'numeric';
+  caseStyle?: 'lower' | 'upper' | 'title';
+  verbose?: boolean;
+  includeTimezone?: boolean;
+  includeYear?: boolean;
+  includeWeekOfYear?: boolean;
+  includeSeconds?: boolean;
+  useOrdinals?: boolean;
+  maxLength?: number;           // Truncate long descriptions
+}
+```
+
+## Advanced jcron Features
+
+### Week of Year
+```typescript
+import { fromCronSyntax, withWeekOfYear } from '@devloops/jcron';
+
+const schedule = fromCronSyntax("0 9 * * 1");
+const firstWeek = withWeekOfYear(schedule, "1");
+fromSchedule(firstWeek); // "at 9:00 AM, on Monday, week 1"
+
+const evenWeeks = withWeekOfYear(schedule, "2,4,6,8,10,12");
+fromSchedule(evenWeeks); // "at 9:00 AM, on Monday, weeks 2, 4, 6, 8, 10, and 12"
+```
+
+### Timezone Support
+```typescript
+const schedule = fromCronSyntax("0 12 * * * * * EST");
+fromSchedule(schedule); // "at noon, in EST"
+```
+
+### Seconds Field
+```typescript
+toString("30 0 12 * * *"); // "at 12:00:30, every day"
+```
+
+## Multi-language Support
+
+```typescript
+// Turkish
+toString("0 9 * * 1", { locale: 'tr' }); // "saat 09:00, Pazartesi tarihinde"
+
+// French  
+toString("0 9 * * 1", { locale: 'fr' }); // "à 09:00, le Lundi"
+
+// German
+toString("0 9 * * 1", { locale: 'de' }); // "um 09:00, am Montag"
+```
+
+### Supported Locales
+- `en` - English
+- `tr` - Turkish  
+- `fr` - French
+- `es` - Spanish
+- `de` - German
+- `pl` - Polish
+- `pt` - Portuguese
+- `it` - Italian
+- `cz` - Czech
+- `nl` - Dutch
+
+## Common Patterns
+
+```typescript
+// Shortcuts
+toString("@yearly");   // "at midnight, on January 1st"
+toString("@monthly");  // "at midnight, on the 1st"
+toString("@weekly");   // "at midnight, on Sunday"
+toString("@daily");    // "at midnight"
+toString("@hourly");   // "at minute 0"
+
+// Step patterns
+toString("*/5 * * * *");     // "every 5 minutes"
+toString("0 */2 * * *");     // "every 2 hours"
+toString("0 9-17/2 * * *");  // "at 9:00 AM, 11:00 AM, 1:00 PM, 3:00 PM, and 5:00 PM, every day"
+
+// Complex patterns
+toString("0 9 1-7 * 1");     // "at 9:00 AM, on day-of-month 1 through 7, on Monday"
+toString("0 12 * * 1-5");    // "at noon, on Monday through Friday"
+```
+
+## Best Practices
+
+1. **Use Schedule objects for advanced features**: Week of year, timezone, and complex patterns work best with the Schedule API.
+
+2. **Convert cron strings first**: Use `fromCronSyntax()` to convert strings to Schedule objects for maximum compatibility.
+
+3. **Handle errors gracefully**: Invalid expressions return "Invalid cron expression" - check your input format.
+
+4. **Choose appropriate locale**: Auto-detection works well, but explicit locale setting ensures consistency.
+
+```typescript
+// ✅ Recommended approach
+const schedule = fromCronSyntax("0 9 * * 1-5");
+const description = fromSchedule(schedule, { locale: 'en' });
+
+// ✅ Also valid for simple cases  
+const description2 = toString("0 9 * * 1-5", { locale: 'en' });
+```
+
+## Error Handling
+
+The humanize API is designed to be fault-tolerant:
+
+```typescript
+toString("");           // "Invalid cron expression"
+toString("invalid");    // "Invalid cron expression"
+toString("0 25 * * *"); // "Invalid cron expression" (25 is invalid hour)
+
+// Check for errors in detailed results
+const result = toResult("invalid expression");
+if (result.warnings.length > 0) {
+  console.log("Issues found:", result.warnings);
+}
+```
 - ✅ Case styling options (lower, upper, title)
 - ✅ Verbose and compact descriptions
 - ✅ Custom locale support

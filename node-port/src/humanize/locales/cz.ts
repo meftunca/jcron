@@ -12,7 +12,7 @@ export const czLocale: LocaleStrings = {
   of: "z",
   and: "a",
   or: "nebo",
-
+  everyDay: "každý den",
   // Frequency
   second: "sekunda",
   seconds: "sekund",

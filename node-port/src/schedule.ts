@@ -166,6 +166,39 @@ export function fromCronWithWeekOfYear(
   return new Schedule(s, m, h, D, M, dow, Y || null, weekOfYear, tz || null);
 }
 
+/**
+ * Create a Schedule from a jcron-like object
+ * Useful for creating schedules from JSON configurations or API responses
+ */
+export function fromObject(obj: {
+  seconds?: string | number;
+  minutes?: string | number;
+  hours?: string | number;
+  dayOfMonth?: string | number;
+  month?: string | number;
+  dayOfWeek?: string | number;
+  year?: string | number;
+  weekOfYear?: string | number;
+  timezone?: string;
+}): Schedule {
+  // Convert numbers to strings and provide defaults
+  const s = obj.seconds != null ? String(obj.seconds) : "0";
+  const m = obj.minutes != null ? String(obj.minutes) : "*";
+  const h = obj.hours != null ? String(obj.hours) : "*";
+  const D = obj.dayOfMonth != null ? String(obj.dayOfMonth) : "*";
+  const M = obj.month != null ? String(obj.month) : "*";
+  const dow = obj.dayOfWeek != null ? String(obj.dayOfWeek) : "*";
+  const Y = obj.year != null ? String(obj.year) : null;
+  const woy = obj.weekOfYear != null ? String(obj.weekOfYear) : null;
+  const tz = obj.timezone || null;
+
+  // Apply textual name conversion
+  const processedM = replaceTextualNames(M);
+  const processedDow = replaceTextualNames(dow);
+
+  return new Schedule(s, m, h, D, processedM, processedDow, Y, woy, tz);
+}
+
 // Predefined week patterns for convenience
 export const WeekPatterns = {
   FIRST_WEEK: "1",

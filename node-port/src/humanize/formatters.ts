@@ -27,11 +27,12 @@ export class Formatters {
       const second =
         seconds && seconds.length === 1 ? parseInt(seconds[0], 10) : 0;
 
-      // Validate ranges
+      // Validate ranges - return Invalid if out of range
       if (isNaN(hour) || hour < 0 || hour > 23) return "Invalid hour";
       if (isNaN(minute) || minute < 0 || minute > 59) return "Invalid minute";
       if (isNaN(second) || second < 0 || second > 59) return "Invalid second";
 
+      // 24-hour format validation
       if (options.use24HourTime) {
         const timeStr = `${hour.toString().padStart(2, "0")}:${minute
           .toString()
@@ -60,7 +61,7 @@ export class Formatters {
       }
     }
 
-    // Multiple times - use regular format, not special names
+    // Multiple times - validate each one
     const times: string[] = [];
     for (const hour of hours) {
       for (const minute of minutes) {
@@ -69,18 +70,31 @@ export class Formatters {
           const m = parseInt(minute, 10);
           const s = seconds.length === 1 ? parseInt(seconds[0], 10) : 0;
 
-          // Don't use special names for multiple times
-          const ampm = h >= 12 ? "PM" : "AM";
-          const hour12 = h % 12 === 0 ? 12 : h % 12;
-          let timeStr = `${hour12}:${m.toString().padStart(2, "0")} ${ampm}`;
+          // Skip invalid values instead of showing them
+          if (isNaN(h) || h < 0 || h > 23) continue;
+          if (isNaN(m) || m < 0 || m > 59) continue;
+          if (isNaN(s) || s < 0 || s > 59) continue;
 
-          if (options.includeSeconds && s > 0) {
-            timeStr = `${hour12}:${m.toString().padStart(2, "0")}:${s
-              .toString()
-              .padStart(2, "0")} ${ampm}`;
+          if (options.use24HourTime) {
+            let timeStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+            if (options.includeSeconds && s > 0) {
+              timeStr += `:${s.toString().padStart(2, "0")}`;
+            }
+            times.push(timeStr);
+          } else {
+            // Don't use special names for multiple times
+            const ampm = h >= 12 ? "PM" : "AM";
+            const hour12 = h % 12 === 0 ? 12 : h % 12;
+            let timeStr = `${hour12}:${m.toString().padStart(2, "0")} ${ampm}`;
+
+            if (options.includeSeconds && s > 0) {
+              timeStr = `${hour12}:${m.toString().padStart(2, "0")}:${s
+                .toString()
+                .padStart(2, "0")} ${ampm}`;
+            }
+
+            times.push(timeStr);
           }
-
-          times.push(timeStr);
         }
       }
     }
@@ -252,10 +266,11 @@ export class Formatters {
       const stepPattern = parsed.rawFields.minutes;
       if (stepPattern.startsWith("*")) {
         const [, step] = stepPattern.split("/");
+        const stepNum = parseInt(step, 10);
         return {
           type: "minutes",
-          interval: parseInt(step, 10),
-          description: `every ${step} minutes`,
+          interval: stepNum,
+          description: stepNum === 1 ? "every minute" : `every ${step} minutes`,
         };
       }
     }
@@ -288,7 +303,7 @@ export class Formatters {
     // Check for weekly patterns
     if (parsed.daysOfWeek[0] !== "*" && parsed.daysOfMonth[0] === "*") {
       return {
-        type: "weekly",
+        type: "weeks",
         interval: 1,
         description: "weekly",
       };

@@ -2,11 +2,11 @@
 
 // Core imports
 import { Engine } from "./engine";
-import { fromCronSyntax, Schedule, withWeekOfYear, fromCronWithWeekOfYear, WeekPatterns } from "./schedule";
+import { fromCronSyntax,  } from "./schedule";
 
 // Core Engine and Schedule
 export { Engine } from "./engine";
-export { fromCronSyntax, Schedule, withWeekOfYear, fromCronWithWeekOfYear, WeekPatterns } from "./schedule";
+export { fromCronSyntax, fromObject, Schedule, withWeekOfYear, fromCronWithWeekOfYear, WeekPatterns } from "./schedule";
 
 // Humanization API - Import and re-export from humanize module  
 export { 

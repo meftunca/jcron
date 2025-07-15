@@ -47,12 +47,12 @@ ORDER BY routine_name;
 ### Quick Start
 
 ```sql
--- Create a simple job
+-- Create a simple job - clean old user sessions
 SELECT jcron.add_job_from_cron(
-    'daily_backup',           -- Job name
-    '@daily',                 -- Run daily
-    'pg_dump mydatabase',     -- Command
-    'UTC'                     -- Timezone
+    'session_cleanup',           -- Job name
+    '@daily',                    -- Run daily
+    'DELETE FROM user_sessions WHERE last_activity < now() - interval ''7 days''', -- SQL command
+    'UTC'                        -- Timezone
 );
 
 -- List active jobs
@@ -170,6 +170,68 @@ SELECT jcron.next_jump(
 | `#` | dow | Nth [day] | `"1#2"` (2nd Monday) |
 | `?` | D/dow | Ignore (other field is used) | `"?"` |
 
+#### Partial Schedule Definitions
+
+When only some fields are provided, JCRON automatically fills missing fields with default values:
+
+```sql
+-- Test what happens when only dow is specified
+SELECT jcron.next_jump(
+    '{"dow":"1"}'::jsonb,
+    now()
+) as next_monday;
+
+-- This is equivalent to:
+SELECT jcron.next_jump(
+    '{"s":"0","m":"0","h":"0","D":"*","M":"*","dow":"1","Y":"*","W":"*","timezone":"UTC"}'::jsonb,
+    now()
+) as full_schedule_monday;
+
+-- System defaults for missing fields:
+-- s (seconds): "0"
+-- m (minutes): "0" 
+-- h (hours): "0"
+-- D (day of month): "*"
+-- M (month): "*"
+-- Y (year): "*"
+-- W (week of year): "*"
+-- timezone: "UTC"
+
+-- So {"dow":"1"} means: "Every Monday at 00:00:00 UTC"
+```
+
+#### Field Default Values
+
+```sql
+-- Test various partial schedules
+SELECT 'Only dow=1' as description, jcron.next_jump('{"dow":"1"}'::jsonb, now()) as next_run
+UNION ALL
+SELECT 'Only h=9' as description, jcron.next_jump('{"h":"9"}'::jsonb, now()) as next_run
+UNION ALL  
+SELECT 'Only m=30' as description, jcron.next_jump('{"m":"30"}'::jsonb, now()) as next_run
+UNION ALL
+SELECT 'dow=1, h=9' as description, jcron.next_jump('{"dow":"1","h":"9"}'::jsonb, now()) as next_run;
+
+-- Results:
+-- {"dow":"1"} → Every Monday at 00:00:00 UTC
+-- {"h":"9"} → Every day at 09:00:00 UTC  
+-- {"m":"30"} → Every hour at minute 30 (XX:30:00) UTC
+-- {"dow":"1","h":"9"} → Every Monday at 09:00:00 UTC
+```
+
+#### Validation of Partial Schedules
+
+```sql
+-- All these are valid partial schedules
+SELECT * FROM jcron.validate_schedule('{"dow":"1"}'::jsonb);           -- Valid: Monday midnight
+SELECT * FROM jcron.validate_schedule('{"h":"9","m":"30"}'::jsonb);     -- Valid: Daily 9:30 AM
+SELECT * FROM jcron.validate_schedule('{"D":"1","h":"0"}'::jsonb);      -- Valid: 1st of month midnight
+SELECT * FROM jcron.validate_schedule('{"W":"1","dow":"1"}'::jsonb);    -- Valid: First week Monday
+
+-- Empty schedule gets all defaults
+SELECT * FROM jcron.validate_schedule('{}'::jsonb);                    -- Valid: Every minute
+```
+
 ## 🔧 Functions
 
 ### Core Calculation Functions
@@ -240,18 +302,18 @@ SELECT * FROM jcron.validate_schedule('{"s":"0","m":"30","h":"9"}'::jsonb);
 #### `jcron.add_job_from_cron(name, cron_expr, command, timezone, max_retries, retry_delay)`
 
 ```sql
--- Simple job addition
+-- Simple job addition - daily cleanup
 SELECT jcron.add_job_from_cron(
-    'backup_job',
+    'daily_cleanup',
     '@daily',
-    'pg_dump -h localhost mydb > /backup/daily.sql'
+    'DELETE FROM logs WHERE created_at < now() - interval ''7 days'''
 );
 
--- Advanced job addition
+-- Advanced job addition - business hours statistics
 SELECT jcron.add_job_from_cron(
-    'business_hours_job',
+    'business_hours_stats',
     '0 */15 9-17 * * 1-5',  -- Every 15 minutes, business hours, weekdays
-    'python /scripts/check_health.py',
+    'INSERT INTO hourly_stats SELECT COUNT(*), avg(response_time) FROM requests WHERE created_at > now() - interval ''15 minutes''',
     'Europe/Istanbul',       -- Turkey time
     3,                      -- Retry 3 times
     300                     -- Wait 5 minutes
@@ -261,11 +323,11 @@ SELECT jcron.add_job_from_cron(
 #### `jcron.add_job(name, schedule_json, command, timezone, max_retries, retry_delay)`
 
 ```sql
--- Adding job with JSON schedule
+-- Adding job with JSON schedule - monthly data archiving
 SELECT jcron.add_job(
-    'monthly_report',
-    '{"s":"0","m":"0","h":"8","D":"L","M":"*","dow":"?","timezone":"UTC"}'::jsonb,
-    'python /reports/monthly.py'
+    'monthly_archive',
+    '{"s":"0","m":"0","h":"2","D":"L","M":"*","dow":"?","timezone":"UTC"}'::jsonb,
+    'INSERT INTO archive_table SELECT * FROM main_table WHERE created_at < date_trunc(''month'', now()); DELETE FROM main_table WHERE created_at < date_trunc(''month'', now())'
 );
 ```
 
@@ -365,60 +427,60 @@ ORDER BY run_started_at DESC;
 
 ## 🎯 Examples
 
-### 1. Daily Backup Job
+### 1. Daily Database Cleanup
 
 ```sql
--- Take backup every night at 02:00
+-- Clean old records every night at 02:00
 SELECT jcron.add_job_from_cron(
-    'nightly_backup',
+    'nightly_cleanup',
     '0 0 2 * * *',
-    'pg_dump -h localhost -U postgres myapp > /backups/nightly_$(date +\%Y\%m\%d).sql',
+    'DELETE FROM user_sessions WHERE last_activity < now() - interval ''30 days''; DELETE FROM audit_logs WHERE created_at < now() - interval ''90 days'';',
     'UTC'
 );
 ```
 
-### 2. Business Hours Health Check
+### 2. Business Hours Statistics Update
 
 ```sql
--- System check every 10 minutes on weekdays
+-- Update statistics every 10 minutes on weekdays
 SELECT jcron.add_job_from_cron(
-    'health_check',
+    'stats_update',
     '0 */10 9-18 * * 1-5',
-    'curl -f http://localhost:8080/health || echo "Service down" | mail admin@company.com',
+    'REFRESH MATERIALIZED VIEW daily_stats; UPDATE system_health SET last_check = now() WHERE service_name = ''main_db'';',
     'Europe/Istanbul'
 );
 ```
 
-### 3. Monthly Report (Last Day of Month)
+### 3. Monthly Data Archiving (Last Day of Month)
 
 ```sql
--- Generate report on the last day of each month at 23:30
+-- Archive data on the last day of each month at 23:30
 SELECT jcron.add_job(
-    'monthly_report',
+    'monthly_archive',
     '{"s":"0","m":"30","h":"23","D":"L","M":"*","dow":"?","timezone":"UTC"}'::jsonb,
-    'python /scripts/generate_monthly_report.py'
+    'INSERT INTO archived_orders SELECT * FROM orders WHERE created_at < date_trunc(''month'', now()); DELETE FROM orders WHERE created_at < date_trunc(''month'', now());'
 );
 ```
 
-### 4. Monday Cleanup (First Monday)
+### 4. Monday Cache Refresh (First Monday)
 
 ```sql
--- Cleanup on the first Monday of each month
+-- Refresh cache on the first Monday of each month
 SELECT jcron.add_job(
-    'monthly_cleanup',
+    'monthly_cache_refresh',
     '{"s":"0","m":"0","h":"6","D":"?","M":"*","dow":"1#1","timezone":"UTC"}'::jsonb,
-    '/scripts/cleanup_logs.sh'
+    'TRUNCATE TABLE cache_table; INSERT INTO cache_table SELECT * FROM main_view;'
 );
 ```
 
-### 5. Weekend Maintenance (Last Saturday)
+### 5. Weekend Index Maintenance (Last Saturday)
 
 ```sql
--- Maintenance on the last Saturday of each month
+-- Index maintenance on the last Saturday of each month
 SELECT jcron.add_job(
     'monthly_maintenance',
     '{"s":"0","m":"0","h":"4","D":"?","M":"*","dow":"6L","timezone":"UTC"}'::jsonb,
-    '/scripts/maintenance.sh'
+    'REINDEX DATABASE current_database(); VACUUM ANALYZE;'
 );
 ```
 
@@ -429,16 +491,16 @@ SELECT jcron.add_job(
 ```sql
 -- Biweekly team sync on odd weeks, Mondays 10:00
 SELECT jcron.add_job(
-    'biweekly_sync_odd',
+    'biweekly_stats_odd',
     '{"s":"0","m":"0","h":"10","D":"*","M":"*","dow":"1","W":"1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35,37,39,41,43,45,47,49,51,53","timezone":"UTC"}'::jsonb,
-    'send_teams_meeting_invite.py --type=sync'
+    'INSERT INTO weekly_reports SELECT generate_stats_for_week(extract(week from now()))'
 );
 
--- Biweekly review on even weeks, Fridays 16:00
+-- Biweekly cleanup on even weeks, Fridays 16:00
 SELECT jcron.add_job(
-    'biweekly_review_even',
+    'biweekly_cleanup_even',
     '{"s":"0","m":"0","h":"16","D":"*","M":"*","dow":"5","W":"2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44,46,48,50,52","timezone":"UTC"}'::jsonb,
-    'generate_biweekly_report.py'
+    'DELETE FROM temp_data WHERE created_at < now() - interval ''2 weeks''; VACUUM ANALYZE temp_data;'
 );
 ```
 
@@ -447,16 +509,16 @@ SELECT jcron.add_job(
 ```sql
 -- Quarterly business review - weeks 1, 14, 27, 40
 SELECT jcron.add_job(
-    'quarterly_review',
+    'quarterly_aggregation',
     '{"s":"0","m":"0","h":"9","D":"*","M":"*","dow":"1","W":"1,14,27,40","timezone":"UTC"}'::jsonb,
-    'python /scripts/quarterly_report.py'
+    'INSERT INTO quarterly_summary SELECT quarter, sum(revenue), avg(performance) FROM monthly_data GROUP BY quarter'
 );
 
--- Quarterly backup verification - weeks 4, 17, 30, 43
+-- Quarterly index rebuild - weeks 4, 17, 30, 43
 SELECT jcron.add_job(
-    'quarterly_backup_test',
+    'quarterly_index_rebuild',
     '{"s":"0","m":"0","h":"2","D":"*","M":"*","dow":"0","W":"4,17,30,43","timezone":"UTC"}'::jsonb,
-    '/scripts/verify_backups.sh'
+    'REINDEX INDEX CONCURRENTLY idx_large_table_created; REINDEX INDEX CONCURRENTLY idx_transactions_date;'
 );
 ```
 
@@ -467,14 +529,14 @@ SELECT jcron.add_job(
 SELECT jcron.add_job(
     'year_end_processing',
     '{"s":"0","m":"0","h":"23","D":"*","M":"*","dow":"5","W":"52,53","timezone":"UTC"}'::jsonb,
-    'python /scripts/year_end_close.py'
+    'UPDATE annual_summary SET status = ''closed'', total_sales = (SELECT sum(amount) FROM sales WHERE extract(year from created_at) = extract(year from now()))'
 );
 
 -- New year setup on first week
 SELECT jcron.add_job(
     'new_year_setup',
     '{"s":"0","m":"0","h":"6","D":"*","M":"*","dow":"1","W":"1","timezone":"UTC"}'::jsonb,
-    'python /scripts/new_year_init.py'
+    'INSERT INTO annual_summary (year, status) VALUES (extract(year from now()), ''active''); TRUNCATE TABLE daily_counters;'
 );
 ```
 
@@ -483,16 +545,16 @@ SELECT jcron.add_job(
 ```sql
 -- Academic semester tasks - weeks 1, 16, 32 (roughly 3 times per year)
 SELECT jcron.add_job(
-    'semester_grades_backup',
+    'semester_grades_summary',
     '{"s":"0","m":"0","h":"3","D":"*","M":"*","dow":"0","W":"1,16,32","timezone":"UTC"}'::jsonb,
-    '/scripts/backup_academic_data.sh'
+    'INSERT INTO semester_reports SELECT semester_id, avg(grade), count(*) FROM student_grades WHERE semester_id = get_current_semester() GROUP BY semester_id'
 );
 
 -- Mid-semester reports - weeks 8, 24, 40
 SELECT jcron.add_job(
-    'mid_semester_reports',
+    'mid_semester_stats',
     '{"s":"0","m":"30","h":"8","D":"*","M":"*","dow":"1","W":"8,24,40","timezone":"UTC"}'::jsonb,
-    'python /scripts/generate_semester_report.py'
+    'UPDATE semester_progress SET mid_term_avg = (SELECT avg(grade) FROM student_grades WHERE created_at > current_semester_start())'
 );
 ```
 
@@ -501,9 +563,9 @@ SELECT jcron.add_job(
 ```sql
 -- Payroll processing every 4 weeks (approximately bi-monthly)
 SELECT jcron.add_job(
-    'payroll_processing',
+    'payroll_calculations',
     '{"s":"0","m":"0","h":"8","D":"*","M":"*","dow":"5","W":"2,6,10,14,18,22,26,30,34,38,42,46,50","timezone":"UTC"}'::jsonb,
-    'python /scripts/process_payroll.py'
+    'UPDATE employee_payroll SET calculated_salary = base_salary + overtime_hours * hourly_rate WHERE pay_period = get_current_pay_period()'
 );
 ```
 
@@ -514,46 +576,46 @@ SELECT jcron.add_job(
 SELECT jcron.add_job(
     'holiday_season_monitoring',
     '{"s":"0","m":"0","h":"*/6","D":"*","M":"*","dow":"*","W":"50,51,52,53,1,2","timezone":"UTC"}'::jsonb,
-    '/scripts/holiday_monitoring.sh'
+    'UPDATE system_load_stats SET peak_season = true WHERE week_of_year IN (50,51,52,53,1,2); REFRESH MATERIALIZED VIEW holiday_performance;'
 );
 
 -- Summer maintenance schedule (weeks 26-35, roughly July-August)
 SELECT jcron.add_job(
     'summer_maintenance',
     '{"s":"0","m":"0","h":"6","D":"*","M":"*","dow":"6","W":"26,27,28,29,30,31,32,33,34,35","timezone":"UTC"}'::jsonb,
-    '/scripts/summer_system_maintenance.sh'
+    'VACUUM FULL low_activity_tables; REINDEX DATABASE current_database();'
 );
 
 -- Tax season intensive processing (weeks 10-16)
 SELECT jcron.add_job(
     'tax_season_processing',
     '{"s":"0","m":"0","h":"2","D":"*","M":"*","dow":"1-5","W":"10,11,12,13,14,15,16","timezone":"UTC"}'::jsonb,
-    'python /scripts/tax_document_processing.py'
+    'UPDATE tax_calculations SET status = ''processing'' WHERE tax_year = extract(year from now()); REFRESH MATERIALIZED VIEW tax_summary;'
 );
     '/scripts/system_maintenance.sh'
 );
 ```
 
-### 6. Quarterly Log Cleanup
+### 6. Regular Database Maintenance
 
 ```sql
 -- Clean old logs every 15 minutes
 SELECT jcron.add_job_from_cron(
     'log_cleanup',
     '0 */15 * * * *',
-    'find /var/log/myapp -name "*.log" -mtime +7 -delete',
+    'DELETE FROM application_logs WHERE created_at < now() - interval ''7 days''; DELETE FROM error_logs WHERE created_at < now() - interval ''30 days'';',
     'UTC'
 );
 ```
 
-### 7. Year-End Archiving
+### 7. Year-End Data Archiving
 
 ```sql
 -- Only on the last day of 2025
 SELECT jcron.add_job(
     'year_end_archive',
     '{"s":"0","m":"0","h":"1","D":"31","M":"12","dow":"?","Y":"2025","timezone":"UTC"}'::jsonb,
-    'python /scripts/archive_year_end.py'
+    'INSERT INTO archive_2025 SELECT * FROM transactions WHERE extract(year from created_at) = 2025; CREATE INDEX IF NOT EXISTS idx_archive_2025_date ON archive_2025(created_at);'
 );
 ```
 
@@ -762,6 +824,33 @@ SELECT jcron.next_jump(
 ) as safe_week_53_schedule;
 ```
 
+#### 7. Partial Schedule Confusion
+
+```sql
+-- ❌ COMMON CONFUSION: Thinking {"dow":"1"} means "once on Monday"
+-- Actually means: "Every Monday at 00:00:00 UTC"
+SELECT jcron.next_jump('{"dow":"1"}'::jsonb, now()) as every_monday_midnight;
+
+-- ❌ THINKING: {"h":"9"} means "at 9 AM once"  
+-- Actually means: "Every day at 09:00:00 UTC"
+SELECT jcron.next_jump('{"h":"9"}'::jsonb, now()) as every_day_9am;
+
+-- ✅ TO GET SPECIFIC TIME: Include all relevant fields
+SELECT jcron.next_jump('{"s":"0","m":"0","h":"9","D":"15","M":"7","dow":"?","Y":"2025"}'::jsonb, now()) as july_15_2025_9am;
+
+-- ✅ DEBUGGING: Check what defaults are applied
+SELECT jcron.validate_schedule('{"dow":"1"}'::jsonb) as partial_validation;
+
+-- ✅ UNDERSTANDING: Compare partial vs full schedule
+SELECT 
+    'Partial' as type,
+    jcron.next_jump('{"dow":"1"}'::jsonb, '2025-07-14 15:30:00'::timestamp) as next_time
+UNION ALL
+SELECT 
+    'Full equivalent' as type,
+    jcron.next_jump('{"s":"0","m":"0","h":"0","D":"*","M":"*","dow":"1","timezone":"UTC"}'::jsonb, '2025-07-14 15:30:00'::timestamp) as next_time;
+```
+
 ### Log Analysis
 
 ```sql
@@ -793,19 +882,18 @@ GRANT SELECT ON ALL TABLES IN SCHEMA jcron TO readonly_user;
 ### Command Security
 
 ```sql
--- Secure command examples (to protect against shell injection)
+-- Secure command examples (SQL commands are safer than shell commands)
 SELECT jcron.add_job_from_cron(
-    'safe_backup',
+    'safe_cleanup',
     '@daily',
-    '/usr/bin/pg_dump --host=localhost --username=backup_user --no-password mydb'
+    'DELETE FROM temp_table WHERE created_at < now() - interval ''1 day'''
 );
 
--- ❌ Insecure (shell injection risk)
--- '/bin/sh -c "pg_dump mydb > /tmp/$(whoami).sql"'
+-- ❌ Insecure (shell injection risk if external commands were used)
+-- '/bin/sh -c "rm -rf /tmp/$(whoami)/*"'
 
--- ✅ Secure alternative
--- Use parameterized script
--- '/scripts/safe_backup.sh mydb /backup/location'
+-- ✅ Secure alternative - pure SQL
+-- 'DELETE FROM user_sessions WHERE last_activity < now() - interval ''30 days'''
 ```
 
 ## 📈 Advanced Usage

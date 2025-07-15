@@ -150,24 +150,18 @@ class HumanizerClass {
 
   /**
    * Humanize a cron expression string
+   * Users should convert cron syntax to Schedule using fromCronSyntax() first
    */
   static toString(
     cronExpression: string,
     options: Partial<HumanizeOptions> = {}
   ): string {
-    // Input validation and sanitization
-    if (cronExpression == null || cronExpression === "") {
+    try {
+      const schedule = fromCronSyntax(cronExpression);
+      return this.fromSchedule(schedule, options);
+    } catch (error) {
       return "Invalid cron expression";
     }
-
-    // Normalize whitespace
-    const normalizedExpression = cronExpression
-      .toString()
-      .trim()
-      .replace(/\s+/g, " ");
-
-    const result = this.toResult(normalizedExpression, options);
-    return result.description;
   }
 
   /**
@@ -188,46 +182,15 @@ class HumanizerClass {
 
   /**
    * Get detailed humanization result for a cron expression
+   * Users should convert cron syntax to Schedule using fromCronSyntax() first
    */
   static toResult(
     cronExpression: string,
     options: Partial<HumanizeOptions> = {}
   ): HumanizeResult {
     try {
-      // Input validation
-      if (cronExpression == null || cronExpression === "") {
-        return {
-          description: "Invalid cron expression",
-          pattern: "custom",
-          frequency: { type: "custom", interval: 1, description: "custom" },
-          components: {},
-          originalExpression: cronExpression || "",
-          warnings: ["Empty or null cron expression"],
-        };
-      }
-
-      // Normalize and validate field count
-      const normalizedExpression = cronExpression
-        .toString()
-        .trim()
-        .replace(/\s+/g, " ");
-      const fields = normalizedExpression.split(" ");
-
-      if (fields.length < 5 || fields.length > 7) {
-        return {
-          description: "Invalid cron expression",
-          pattern: "custom",
-          frequency: { type: "custom", interval: 1, description: "custom" },
-          components: {},
-          originalExpression: normalizedExpression,
-          warnings: [
-            `Invalid number of fields: ${fields.length}. Expected 5-7 fields.`,
-          ],
-        };
-      }
-
-      const schedule = fromCronSyntax(normalizedExpression);
-      return this.scheduleToResult(schedule, options, normalizedExpression);
+      const schedule = fromCronSyntax(cronExpression);
+      return this.scheduleToResult(schedule, options, cronExpression);
     } catch (error) {
       return {
         description: "Invalid cron expression",
@@ -289,96 +252,18 @@ class HumanizerClass {
     options: Required<HumanizeOptions>,
     locale: LocaleStrings
   ): string {
-    const parts: string[] = [];
+    // Jcron özel formatları kontrolü
+    if (this.isJcronSpecialFormat(parsed)) {
+      return this.buildJcronDescription(parsed, options, locale);
+    }
 
-    // Check for step patterns first
-    const hasStepPattern = this.hasStepPattern(parsed);
-    if (hasStepPattern) {
+    // Step pattern kontrolü
+    if (this.hasStepPattern(parsed)) {
       return this.buildStepDescription(parsed, options, locale);
     }
 
-    // Time component with "at" prefix
-    const timeStr = Formatters.formatTime(
-      parsed.hours,
-      parsed.minutes,
-      parsed.seconds,
-      options,
-      locale
-    );
-    if (timeStr) {
-      // For special times (midnight, noon) or with "at" prefix
-      if (timeStr === locale.midnight || timeStr === locale.noon) {
-        parts.push(`${locale.at} ${timeStr}`);
-      } else {
-        parts.push(`${locale.at} ${timeStr}`);
-      }
-    }
-
-    // Add "every day" for simple daily patterns
-    if (
-      parsed.daysOfWeek[0] === "*" &&
-      parsed.daysOfMonth[0] === "*" &&
-      parsed.months[0] === "*"
-    ) {
-      parts.push("every day");
-    }
-
-    // Day of month component
-    const domStr = Formatters.formatDayOfMonth(
-      parsed.daysOfMonth,
-      options,
-      locale
-    );
-    if (domStr && parsed.daysOfMonth[0] !== "*") {
-      parts.push(`${locale.on} ${domStr}`);
-    }
-
-    // Day of week component
-    const dowStr = Formatters.formatDayOfWeek(
-      parsed.daysOfWeek,
-      options,
-      locale
-    );
-    if (dowStr && parsed.daysOfWeek[0] !== "*") {
-      parts.push(`${locale.on} ${dowStr}`);
-    }
-
-    // Month component
-    const monthStr = Formatters.formatMonth(parsed.months, options, locale);
-    if (monthStr && parsed.months[0] !== "*") {
-      parts.push(`${locale.in} ${monthStr}`);
-    }
-
-    // Week of year component
-    if (
-      options.includeWeekOfYear &&
-      parsed.weekOfYear &&
-      parsed.weekOfYear[0] !== "*"
-    ) {
-      const woyStr = Formatters.formatWeekOfYear(parsed.weekOfYear, locale);
-      if (woyStr) {
-        parts.push(woyStr); // No "in" prefix since formatWeekOfYear already includes "week"
-      }
-    }
-
-    // Year component
-    if (options.includeYear && parsed.years && parsed.years[0] !== "*") {
-      const yearStr = Formatters.formatYear(parsed.years, locale);
-      if (yearStr) {
-        parts.push(`${locale.in} ${yearStr}`);
-      }
-    }
-
-    // Timezone component - proper format
-    if (
-      options.includeTimezone &&
-      parsed.timezone &&
-      parsed.timezone !== "UTC"
-    ) {
-      parts.push(`${locale.in} ${parsed.timezone}`);
-    }
-
-    return parts.join(", ");
+    // Normal cron format
+    return this.buildStandardDescription(parsed, options, locale);
   }
 
   private static detectPattern(
@@ -553,6 +438,8 @@ class HumanizerClass {
       const stepPattern = parsed.rawFields.minutes;
       if (stepPattern.startsWith("*")) {
         const [, step] = stepPattern.split("/");
+        const stepNum = parseInt(step, 10);
+        if (stepNum === 1) return "every minute";
         return `every ${step} minutes`;
       }
     }
@@ -586,6 +473,237 @@ class HumanizerClass {
     }
 
     return "every day"; // fallback
+  }
+
+  private static isJcronSpecialFormat(parsed: ParsedExpression): boolean {
+    // Week of Year var mı kontrol et
+    return parsed.weekOfYear && parsed.weekOfYear[0] !== "*";
+  }
+
+  private static buildJcronDescription(
+    parsed: ParsedExpression,
+    options: Required<HumanizeOptions>,
+    locale: LocaleStrings
+  ): string {
+    const parts: string[] = [];
+
+    // Zaman bileşeni
+    const timeStr = Formatters.formatTime(
+      parsed.hours,
+      parsed.minutes,
+      parsed.seconds,
+      options,
+      locale
+    );
+    if (timeStr) {
+      parts.push(`${locale.at} ${timeStr}`);
+    }
+
+    // Week of Year öncelikli
+    if (options.includeWeekOfYear && parsed.weekOfYear && parsed.weekOfYear[0] !== "*") {
+      const woyStr = Formatters.formatWeekOfYear(parsed.weekOfYear, locale);
+      parts.push(woyStr);
+    }
+
+    // Day of week
+    if (parsed.daysOfWeek[0] !== "*") {
+      const dowStr = Formatters.formatDayOfWeek(parsed.daysOfWeek, options, locale);
+      if (dowStr) parts.push(`${locale.on} ${dowStr}`);
+    }
+
+    // Month
+    if (parsed.months[0] !== "*") {
+      const monthStr = Formatters.formatMonth(parsed.months, options, locale);
+      if (monthStr) parts.push(`${locale.in} ${monthStr}`);
+    }
+
+    // Year
+    if (options.includeYear && parsed.years && parsed.years[0] !== "*") {
+      const yearStr = Formatters.formatYear(parsed.years, locale);
+      if (yearStr) parts.push(`${locale.in} ${yearStr}`);
+    }
+
+    // Timezone
+    if (options.includeTimezone && parsed.timezone && parsed.timezone !== "UTC") {
+      parts.push(`${locale.in} ${parsed.timezone}`);
+    }
+
+    return parts.filter(Boolean).join(", ");
+  }
+
+  private static buildStandardDescription(
+    parsed: ParsedExpression,
+    options: Required<HumanizeOptions>,
+    locale: LocaleStrings
+  ): string {
+    const parts: string[] = [];
+
+    // Validate fields first
+    if (this.hasInvalidFields(parsed)) {
+      return "Invalid cron expression";
+    }
+
+    // Handle step patterns first for minutes and hours
+    if (parsed.rawFields.minutes.includes("/") && parsed.rawFields.minutes.startsWith("*")) {
+      const [, step] = parsed.rawFields.minutes.split("/");
+      const stepNum = parseInt(step, 10);
+      if (stepNum === 0) return "Invalid cron expression"; // Division by zero
+      if (stepNum === 1) return "every minute"; // Special case for */1
+      return `every ${step} minutes`;
+    }
+
+    if (parsed.rawFields.hours.includes("/") && parsed.rawFields.hours.startsWith("*")) {
+      const [, step] = parsed.rawFields.hours.split("/");
+      const stepNum = parseInt(step, 10);
+      if (stepNum === 0) return "Invalid cron expression"; // Division by zero
+      return `every ${step} hours`;
+    }
+
+    // Handle full range cases (e.g., 0-23 for hours)
+    if (parsed.rawFields.hours === "0-23" && parsed.rawFields.minutes === "0") {
+      return "every minute";
+    }
+
+    // Check for "every minute" pattern (* * * * *)
+    if (parsed.minutes[0] === "*" && parsed.hours[0] === "*" && 
+        parsed.daysOfMonth[0] === "*" && parsed.daysOfWeek[0] === "*" && 
+        parsed.months[0] === "*") {
+      return "every minute";
+    }
+
+    // Check for "every hour" pattern (0 * * * *)
+    if (parsed.minutes[0] === "0" && parsed.hours[0] === "*" && 
+        parsed.daysOfMonth[0] === "*" && parsed.daysOfWeek[0] === "*" && 
+        parsed.months[0] === "*") {
+      return "every hour";
+    }
+
+    // Zaman bileşeni
+    const timeStr = Formatters.formatTime(
+      parsed.hours,
+      parsed.minutes,
+      parsed.seconds,
+      options,
+      locale
+    );
+    
+    // If time formatting returned an error, return invalid expression
+    if (timeStr && timeStr.startsWith("Invalid")) {
+      return "Invalid cron expression";
+    }
+    
+    if (timeStr) {
+      parts.push(`${locale.at} ${timeStr}`);
+    }
+
+    // Day of month
+    if (parsed.daysOfMonth[0] !== "*") {
+      const domStr = Formatters.formatDayOfMonth(parsed.daysOfMonth, options, locale);
+      if (domStr && domStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (domStr) parts.push(`${locale.on} ${domStr}`);
+    }
+
+    // Day of week
+    if (parsed.daysOfWeek[0] !== "*") {
+      const dowStr = Formatters.formatDayOfWeek(parsed.daysOfWeek, options, locale);
+      if (dowStr && dowStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (dowStr) parts.push(`${locale.on} ${dowStr}`);
+    }
+
+    // Month
+    if (parsed.months[0] !== "*") {
+      const monthStr = Formatters.formatMonth(parsed.months, options, locale);
+      if (monthStr && monthStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (monthStr) parts.push(`${locale.in} ${monthStr}`);
+    }
+
+    // Year
+    if (options.includeYear && parsed.years && parsed.years[0] !== "*") {
+      const yearStr = Formatters.formatYear(parsed.years, locale);
+      if (yearStr && yearStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (yearStr) parts.push(`${locale.in} ${yearStr}`);
+    }
+
+    // Timezone
+    if (options.includeTimezone && parsed.timezone && parsed.timezone !== "UTC") {
+      parts.push(`${locale.in} ${parsed.timezone}`);
+    }
+
+    // Eğer sadece zaman varsa "every day" ekle
+    if (parts.length === 1 && timeStr) {
+      parts.push("every day");
+    }
+
+    // If no valid parts, return error
+    if (parts.length === 0) {
+      return "Invalid cron expression";
+    }
+
+    return parts.filter(Boolean).join(", ");
+  }
+
+  private static hasInvalidFields(parsed: ParsedExpression): boolean {
+    // Check hours (0-23)
+    for (const hour of parsed.hours) {
+      if (hour !== "*") {
+        const h = parseInt(hour, 10);
+        if (isNaN(h) || h < 0 || h > 23) {
+          return true;
+        }
+      }
+    }
+
+    // Check minutes (0-59)
+    for (const minute of parsed.minutes) {
+      if (minute !== "*") {
+        const m = parseInt(minute, 10);
+        if (isNaN(m) || m < 0 || m > 59) {
+          return true;
+        }
+      }
+    }
+
+    // Check seconds (0-59)
+    for (const second of parsed.seconds) {
+      if (second !== "*") {
+        const s = parseInt(second, 10);
+        if (isNaN(s) || s < 0 || s > 59) {
+          return true;
+        }
+      }
+    }
+
+    // Check days of month (1-31)
+    for (const day of parsed.daysOfMonth) {
+      if (day !== "*" && !day.includes("L") && !day.includes("#")) {
+        const d = parseInt(day, 10);
+        if (isNaN(d) || d < 1 || d > 31) {
+          return true;
+        }
+      }
+    }
+
+    // Check months (1-12)
+    for (const month of parsed.months) {
+      if (month !== "*") {
+        const mo = parseInt(month, 10);
+        if (isNaN(mo) || mo < 1 || mo > 12) {
+          return true;
+        }
+      }
+    }
+
+    // Check days of week (0-6)
+    for (const dow of parsed.daysOfWeek) {
+      if (dow !== "*" && !dow.includes("L") && !dow.includes("#")) {
+        const d = parseInt(dow, 10);
+        if (isNaN(d) || d < 0 || d > 6) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 }
 

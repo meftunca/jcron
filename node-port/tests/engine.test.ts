@@ -160,7 +160,7 @@ describe("Engine.next - Comprehensive Tests", () => {
       name: "27. Artık Yıl Şubat 29",
       schedule: new Schedule("0", "0", "12", "29", "2", "*", null, "UTC"),
       fromTime: mustParseTime("2023-12-01T00:00:00Z"),
-      expectedTime: mustParseTime("2028-02-29T12:00:00Z"), // Next leap year (fixed)
+      expectedTime: mustParseTime("2024-02-29T12:00:00Z"), // Next leap year (2024)
     },
     {
       name: "28. Ayın 1. ve 3. Pazartesi",
@@ -288,7 +288,7 @@ describe("Engine.next - Comprehensive Tests", () => {
       name: "35. Şubat 29 (Normal Yıl)",
       schedule: new Schedule("0", "0", "12", "29", "2", "*", null, "UTC"),
       fromTime: mustParseTime("2025-01-01T00:00:00Z"),
-      expectedTime: mustParseTime("2028-02-29T12:00:00Z"), // Next leap year
+      expectedTime: mustParseTime("2028-02-29T12:00:00Z"), // Next leap year after 2025
     },
     {
       name: "37. Hafta İçi + Belirli Gün Kombinasyonu (Vixie OR)",

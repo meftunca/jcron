@@ -12,7 +12,7 @@ export const ptLocale: LocaleStrings = {
   of: "de",
   and: "e",
   or: "ou",
-
+  everyDay: "todos os dias",
   // Frequency
   second: "segundo",
   seconds: "segundos",

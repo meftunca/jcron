@@ -12,7 +12,7 @@ export const plLocale: LocaleStrings = {
   of: "z",
   and: "i",
   or: "lub",
-
+  everyDay: "codziennie",
   // Frequency
   second: "sekunda",
   seconds: "sekund",

@@ -45,17 +45,28 @@ export class ExpressionParser {
         const [range, step] = part.split("/");
         const stepNum = parseInt(step, 10);
 
+        // Validate step
+        if (isNaN(stepNum) || stepNum <= 0) {
+          throw new Error(`Division by zero in step pattern`);
+        }
+
         if (range === "*") {
           for (let i = min; i <= max; i += stepNum) {
             values.push(i);
           }
         } else if (range.includes("-")) {
           const [start, end] = range.split("-").map((n) => parseInt(n, 10));
+          if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+            throw new Error(`Invalid range: ${range}`);
+          }
           for (let i = start; i <= end; i += stepNum) {
             values.push(i);
           }
         } else {
           const start = parseInt(range, 10);
+          if (isNaN(start) || start < min || start > max) {
+            throw new Error(`Invalid value: ${range}`);
+          }
           for (let i = start; i <= max; i += stepNum) {
             values.push(i);
           }
@@ -63,6 +74,9 @@ export class ExpressionParser {
       } else if (part.includes("-")) {
         // Range values (e.g., 1-5)
         const [start, end] = part.split("-").map((n) => parseInt(n, 10));
+        if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+          throw new Error(`Invalid range: ${part}`);
+        }
         for (let i = start; i <= end; i++) {
           values.push(i);
         }
@@ -71,11 +85,23 @@ export class ExpressionParser {
         return [part]; // Keep as string for special handling
       } else if (part.includes("#")) {
         // Nth occurrence patterns
+        const [dayOfWeekStr, nthStr] = part.split("#");
+        const dayOfWeek = parseInt(dayOfWeekStr, 10);
+        const nth = parseInt(nthStr, 10);
+        
+        // Validate # patterns
+        if (isNaN(dayOfWeek) || isNaN(nth) || dayOfWeek < 0 || dayOfWeek > 6 || nth < 1 || nth > 5) {
+          throw new Error(`Invalid # pattern: ${part}`);
+        }
+        
         return [part]; // Keep as string for special handling
       } else {
         // Single value
         const num = parseInt(part, 10);
         if (!isNaN(num)) {
+          if (num < min || num > max) {
+            throw new Error(`Value ${num} out of range [${min}-${max}]`);
+          }
           values.push(num);
         } else {
           return [part]; // Keep as string (e.g., month/day names)

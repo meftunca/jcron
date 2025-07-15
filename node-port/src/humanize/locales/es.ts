@@ -12,7 +12,7 @@ export const esLocale: LocaleStrings = {
   of: "de",
   and: "y",
   or: "o",
-
+  everyDay: "cada día",
   // Frequency
   second: "segundo",
   seconds: "segundos",
