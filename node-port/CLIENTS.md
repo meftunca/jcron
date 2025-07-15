@@ -29,10 +29,13 @@ JCRON automatically detects browser environment and provides optimized functiona
 ## 🚀 Quick Start
 
 ```javascript
-import { toString, getNext, getPrev, isValid, match } from '@devloops/jcron';
+import { toString, getNext, getPrev, isValid, match, fromCronSyntax } from '@devloops/jcron';
+
+// Create a schedule from cron expression
+const schedule = fromCronSyntax('0 9 * * *');
 
 // Get human-readable description
-console.log(toString('0 9 * * *')); // "at 09:00, every day"
+console.log(toString(schedule)); // "at 09:00, every day"
 
 // Get next execution time
 const nextRun = getNext('0 9 * * *');
@@ -172,10 +175,11 @@ function CronCountdown({ cronExpression }) {
 JCRON automatically detects browser language and uses appropriate locale:
 
 ```javascript
-import { toString } from '@devloops/jcron';
+import { toString, fromCronSyntax } from '@devloops/jcron';
 
-// Auto-detects browser language (navigator.language)
-console.log(toString('0 9 * * 1')); 
+// Create schedule and humanize with auto-detection
+const schedule = fromCronSyntax('0 9 * * 1');
+console.log(toString(schedule)); 
 // English: "at 09:00 on Monday"
 // Turkish: "her Pazartesi 09:00'da"
 // French: "à 09:00 tous les lundi"
@@ -184,33 +188,34 @@ console.log(toString('0 9 * * 1'));
 ### Explicit Locale
 
 ```javascript
-import { toString, toResult } from '@devloops/jcron';
+import { toString, toResult, fromCronSyntax } from '@devloops/jcron';
 
-const cronExpr = '0 9 * * 1-5'; // Weekdays at 9 AM
+const schedule = fromCronSyntax('0 9 * * 1-5'); // Weekdays at 9 AM
 
 // Different languages
-console.log(toString(cronExpr, { locale: 'en' })); 
+console.log(toString(schedule, { locale: 'en' })); 
 // "at 09:00 on Monday through Friday"
 
-console.log(toString(cronExpr, { locale: 'tr' })); 
+console.log(toString(schedule, { locale: 'tr' })); 
 // "Pazartesi-Cuma arası 09:00'da"
 
-console.log(toString(cronExpr, { locale: 'fr' })); 
+console.log(toString(schedule, { locale: 'fr' })); 
 // "à 09:00 du lundi au vendredi"
 
-console.log(toString(cronExpr, { locale: 'es' })); 
+console.log(toString(schedule, { locale: 'es' })); 
 // "a las 09:00 de lunes a viernes"
 
-console.log(toString(cronExpr, { locale: 'de' })); 
+console.log(toString(schedule, { locale: 'de' })); 
 // "um 09:00 von Montag bis Freitag"
 ```
 
 ### Detailed Humanization
 
 ```javascript
-import { toResult } from '@devloops/jcron';
+import { toResult, fromCronSyntax } from '@devloops/jcron';
 
-const result = toResult('0 9 * * 1-5', { 
+const schedule = fromCronSyntax('0 9 * * 1-5');
+const result = toResult(schedule, { 
   locale: 'en',
   verbose: true,
   caseStyle: 'title'
@@ -247,14 +252,15 @@ console.log(getLocaleDisplayName('de')); // "Deutsch"
 
 // Set default locale for all operations
 setDefaultLocale('tr');
-console.log(toString('0 9 * * 1')); // Now uses Turkish by default
+const schedule = fromCronSyntax('0 9 * * 1');
+console.log(toString(schedule)); // Now uses Turkish by default
 ```
 
 ## 🎨 Interactive Cron Builder
 
 ```javascript
 // Vue.js component example
-import { toString, isValid } from '@devloops/jcron';
+import { toString, isValid, fromCronSyntax } from '@devloops/jcron';
 
 export default {
   data() {
@@ -269,7 +275,12 @@ export default {
   },
   computed: {
     humanReadable() {
-      return toString(this.cronExpression, { locale: 'en' });
+      try {
+        const schedule = fromCronSyntax(this.cronExpression);
+        return toString(schedule, { locale: 'en' });
+      } catch {
+        return 'Invalid expression';
+      }
     },
     isValidExpression() {
       return isValid(this.cronExpression);
@@ -293,12 +304,13 @@ export default {
 ## 📅 Calendar Integration
 
 ```javascript
-import { getNextN, toString } from '@devloops/jcron';
+import { getNextN, toString, fromCronSyntax } from '@devloops/jcron';
 
 // Generate calendar events from cron expression
 function generateCalendarEvents(cronExpr, daysAhead = 30) {
   const events = getNextN(cronExpr, daysAhead);
-  const description = toString(cronExpr);
+  const schedule = fromCronSyntax(cronExpr);
+  const description = toString(schedule);
   
   return events.map(date => ({
     title: description,
@@ -318,7 +330,7 @@ $('#calendar').fullCalendar({
 ## 🔔 Notification Scheduler
 
 ```javascript
-import { getNext, toString, match } from '@devloops/jcron';
+import { getNext, toString, match, fromCronSyntax } from '@devloops/jcron';
 
 class NotificationScheduler {
   constructor() {
@@ -367,7 +379,8 @@ class NotificationScheduler {
   
   showNotification(message, cronExpr) {
     if ('Notification' in window && Notification.permission === 'granted') {
-      const description = toString(cronExpr);
+      const schedule = fromCronSyntax(cronExpr);
+      const description = toString(schedule);
       new Notification(message, {
         body: `Scheduled: ${description}`,
         icon: '/icon.png'
@@ -411,19 +424,30 @@ console.log('Tokyo time:', nextLocal.toLocaleString('ja-JP', optionsTokyo));
 ### Batch Operations
 
 ```javascript
-import { getNext, toString, isValid, match } from '@devloops/jcron';
+import { getNext, toString, isValid, match, fromCronSyntax } from '@devloops/jcron';
 
 // Instead of calling functions repeatedly
 const expressions = ['0 9 * * *', '0 12 * * *', '0 18 * * *'];
 
 // Batch process for better performance
-const cronAnalysis = expressions.map(expr => ({
-  expression: expr,
-  isValid: isValid(expr),
-  human: toString(expr),
-  next: getNext(expr),
-  matchesNow: match(expr)
-}));
+const cronAnalysis = expressions.map(expr => {
+  let schedule = null;
+  let humanText = 'Invalid';
+  
+  const valid = isValid(expr);
+  if (valid) {
+    schedule = fromCronSyntax(expr);
+    humanText = toString(schedule);
+  }
+  
+  return {
+    expression: expr,
+    isValid: valid,
+    human: humanText,
+    next: valid ? getNext(expr) : null,
+    matchesNow: valid ? match(expr) : false
+  };
+});
 
 console.log(cronAnalysis);
 
@@ -437,7 +461,7 @@ const currentMatches = cronAnalysis.filter(item => item.matchesNow);
 ### Caching Results
 
 ```javascript
-import { toString, getNext, isValid, match } from '@devloops/jcron';
+import { toString, getNext, isValid, match, fromCronSyntax } from '@devloops/jcron';
 
 class CronCache {
   constructor() {
@@ -453,7 +477,8 @@ class CronCache {
       return cached.value;
     }
     
-    const value = toString(cronExpr, options);
+    const schedule = fromCronSyntax(cronExpr);
+    const value = toString(schedule, options);
     this.cache.set(key, { value, timestamp: Date.now() });
     return value;
   }
@@ -649,10 +674,11 @@ meetings.forEach(meeting => {
 ### Backup Reminder
 
 ```javascript
-import { getNext, toString } from '@devloops/jcron';
+import { getNext, toString, fromCronSyntax } from '@devloops/jcron';
 
 function createBackupReminder(cronExpression) {
-  const description = toString(cronExpression, { locale: 'en' });
+  const schedule = fromCronSyntax(cronExpression);
+  const description = toString(schedule, { locale: 'en' });
   const nextBackup = getNext(cronExpression);
   
   return {
@@ -672,6 +698,8 @@ console.log(`Is today: ${reminder.isToday}`);
 ## 📱 Mobile Considerations
 
 ```javascript
+import { toString, fromCronSyntax } from '@devloops/jcron';
+
 // Check if running in mobile browser
 const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
@@ -683,7 +711,8 @@ if (isMobile) {
     verbose: false
   };
   
-  console.log(toString('0 9 * * 1-5', mobileOptions));
+  const schedule = fromCronSyntax('0 9 * * 1-5');
+  console.log(toString(schedule, mobileOptions));
   // "at 09:00 on monday through friday" (shortened)
 }
 ```
@@ -691,7 +720,7 @@ if (isMobile) {
 ## 🔧 Advanced Configuration
 
 ```javascript
-import { toString, setDefaultLocale, registerLocale } from '@devloops/jcron';
+import { toString, setDefaultLocale, registerLocale, fromCronSyntax } from '@devloops/jcron';
 
 // Custom locale registration
 const customLocale = {
@@ -708,7 +737,8 @@ registerLocale('no', customLocale);
 setDefaultLocale('no');
 
 // Now all operations use Norwegian
-console.log(toString('0 9 * * 1')); // Uses Norwegian locale
+const schedule = fromCronSyntax('0 9 * * 1');
+console.log(toString(schedule)); // Uses Norwegian locale
 ```
 
 This guide covers the most important client-side utility functions of JCRON for frontend applications. The client-side library focuses on:
@@ -718,5 +748,176 @@ This guide covers the most important client-side utility functions of JCRON for 
 - **✅ Validation**: `isValid()`, `validateCron()`
 - **🎯 Matching**: `match()`, `isTime()`, pattern matching
 - **🔧 Utilities**: Caching, error handling, performance optimization
+
+## 📚 Client-Side API Reference
+
+### Core Functions
+
+#### `fromCronSyntax(expression: string): Schedule`
+Parse a cron expression into a Schedule object.
+
+```javascript
+import { fromCronSyntax } from '@devloops/jcron';
+const schedule = fromCronSyntax('0 9 * * 1-5');
+```
+
+#### `getNext(cronExpression: string, fromTime?: Date): Date`
+Get the next execution time for a cron expression.
+
+```javascript
+import { getNext } from '@devloops/jcron';
+const next = getNext('0 9 * * *'); // Next 9 AM
+const nextFromSpecific = getNext('0 9 * * *', new Date('2025-01-15'));
+```
+
+#### `getPrev(cronExpression: string, fromTime?: Date): Date`
+Get the previous execution time for a cron expression.
+
+```javascript
+import { getPrev } from '@devloops/jcron';
+const prev = getPrev('0 9 * * *'); // Previous 9 AM
+```
+
+#### `getNextN(cronExpression: string, count: number, fromTime?: Date): Date[]`
+Get multiple next execution times.
+
+```javascript
+import { getNextN } from '@devloops/jcron';
+const next5 = getNextN('0 9 * * *', 5); // Next 5 executions
+```
+
+#### `match(cronExpression: string, date?: Date): boolean`
+Check if a date matches a cron expression.
+
+```javascript
+import { match } from '@devloops/jcron';
+const matches = match('0 9 * * *', new Date()); // Does now match 9 AM pattern?
+```
+
+#### `isValid(cronExpression: string): boolean`
+Validate if a cron expression is syntactically correct.
+
+```javascript
+import { isValid } from '@devloops/jcron';
+const valid = isValid('0 9 * * *'); // true
+const invalid = isValid('invalid'); // false
+```
+
+#### `isTime(cronExpression: string, date?: Date, toleranceMs?: number): boolean`
+Check if it's time to execute (within tolerance).
+
+```javascript
+import { isTime } from '@devloops/jcron';
+const shouldExecute = isTime('0 9 * * *', new Date(), 5000); // Within 5 seconds
+```
+
+#### `validateCron(cronExpression: string): { valid: boolean; errors: string[] }`
+Detailed validation with error messages.
+
+```javascript
+import { validateCron } from '@devloops/jcron';
+const result = validateCron('invalid expression');
+// { valid: false, errors: ['Parse error message'] }
+```
+
+### Humanization Functions
+
+#### `toString(schedule: Schedule, options?: HumanizeOptions): string`
+Convert a schedule to human-readable text.
+
+```javascript
+import { toString, fromCronSyntax } from '@devloops/jcron';
+const schedule = fromCronSyntax('0 9 * * 1-5');
+const text = toString(schedule, { locale: 'en' }); // "at 09:00 on Monday through Friday"
+```
+
+#### `toResult(schedule: Schedule, options?: HumanizeOptions): HumanizeResult`
+Get detailed humanization result with metadata.
+
+```javascript
+import { toResult, fromCronSyntax } from '@devloops/jcron';
+const schedule = fromCronSyntax('0 9 * * *');
+const result = toResult(schedule, { locale: 'en', verbose: true });
+// Returns: { description, patternType, frequency, components, warnings }
+```
+
+#### `fromSchedule(schedule: Schedule, options?: HumanizeOptions): string`
+Convenience function to humanize a Schedule object.
+
+```javascript
+import { fromSchedule, fromCronSyntax } from '@devloops/jcron';
+const schedule = fromCronSyntax('0 9 * * *');
+const text = fromSchedule(schedule); // "at 09:00, every day"
+```
+
+### Locale Functions
+
+#### `getSupportedLocales(): string[]`
+Get list of supported locale codes.
+
+```javascript
+import { getSupportedLocales } from '@devloops/jcron';
+const locales = getSupportedLocales(); // ['en', 'tr', 'fr', 'es', ...]
+```
+
+#### `setDefaultLocale(locale: string): void`
+Set the default locale for all humanization operations.
+
+```javascript
+import { setDefaultLocale } from '@devloops/jcron';
+setDefaultLocale('tr'); // All subsequent calls use Turkish
+```
+
+#### `getDetectedLocale(): string`
+Get the auto-detected browser locale.
+
+```javascript
+import { getDetectedLocale } from '@devloops/jcron';
+const locale = getDetectedLocale(); // 'en-US', 'tr-TR', etc.
+```
+
+### Utility Functions
+
+#### `getPattern(cronExpression: string): PatternType`
+Identify the pattern type of a cron expression.
+
+```javascript
+import { getPattern } from '@devloops/jcron';
+const pattern = getPattern('0 9 * * 1-5'); // 'weekly'
+// Returns: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
+```
+
+#### `matchPattern(cronExpression: string, pattern: PatternType): boolean`
+Check if a cron expression matches a specific pattern type.
+
+```javascript
+import { matchPattern } from '@devloops/jcron';
+const isWeekly = matchPattern('0 9 * * 1-5', 'weekly'); // true
+```
+
+### Types
+
+```typescript
+interface HumanizeOptions {
+  locale?: string;
+  verbose?: boolean;
+  caseStyle?: 'lower' | 'upper' | 'title';
+  maxLength?: number;
+  use24HourTime?: boolean;
+  includeSeconds?: boolean;
+  includeTimezone?: boolean;
+  dayFormat?: 'numeric' | 'short' | 'long';
+  monthFormat?: 'numeric' | 'short' | 'long';
+}
+
+interface HumanizeResult {
+  description: string;
+  patternType?: string;
+  frequency?: any;
+  components?: any;
+  warnings?: string[];
+  originalExpression?: string;
+}
+```
 
 For server-side features like job execution, persistence, and the Engine class, see the main README.md.

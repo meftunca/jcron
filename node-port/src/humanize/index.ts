@@ -1,21 +1,21 @@
 // src/humanize/index.ts
 // Main humanize API - cronstrue-like functionality with jcron extensions
 
-import { Engine } from "../engine.js";
-import { Schedule, fromCronSyntax } from "../schedule.js";
-import { Formatters } from "./formatters.js";
-import { enLocale } from "./locales/en.js";
-import { frLocale } from "./locales/fr.js";
-import { trLocale } from "./locales/tr.js";
-import { esLocale } from "./locales/es.js";
-import { deLocale } from "./locales/de.js";
-import { plLocale } from "./locales/pl.js";
-import { ptLocale } from "./locales/pt.js";
-import { itLocale } from "./locales/it.js";
-import { czLocale } from "./locales/cz.js";
-import { nlLocale } from "./locales/nl.js";
-import { ExpressionParser, ParsedExpression } from "./parser.js";
-import { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types.js";
+import { Engine } from "../engine";
+import { Schedule, fromCronSyntax } from "../schedule";
+import { Formatters } from "./formatters";
+import { enLocale } from "./locales/en";
+import { frLocale } from "./locales/fr";
+import { trLocale } from "./locales/tr";
+import { esLocale } from "./locales/es";
+import { deLocale } from "./locales/de";
+import { plLocale } from "./locales/pl";
+import { ptLocale } from "./locales/pt";
+import { itLocale } from "./locales/it";
+import { czLocale } from "./locales/cz";
+import { nlLocale } from "./locales/nl";
+import { ExpressionParser, ParsedExpression } from "./parser";
+import { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types";
 
 // Locale registry with all supported languages
 const locales: Map<string, LocaleStrings> = new Map();
@@ -600,10 +600,10 @@ export const getDetectedLocale = HumanizerClass.getDetectedLocale.bind(Humanizer
 export const setDefaultLocale = HumanizerClass.setDefaultLocale.bind(HumanizerClass);
 
 // Export locale utilities
-export * from "./locales/index.js";
+export * from "./locales/index";
 
 // Export types
-export type { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types.js";
+export type { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types";
 
 // Default export
 export default HumanizerClass;

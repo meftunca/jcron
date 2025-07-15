@@ -17,7 +17,7 @@ export interface RetryOptions {
 /** Runner tarafından dahili olarak yönetilen bir görevin yapısı. */
 export interface ManagedJob {
   readonly id: string;
-  readonly schedule: import("./schedule.js").Schedule;
+  readonly schedule: import("./schedule").Schedule;
   readonly job: IJob;
   nextRun: Date;
   retryOptions: RetryOptions;

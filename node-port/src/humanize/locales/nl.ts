@@ -1,7 +1,7 @@
 // src/humanize/locales/nl.ts
 // Dutch locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const nlLocale: LocaleStrings = {
   // Time-related

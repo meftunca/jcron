@@ -1,7 +1,7 @@
 // src/humanize/formatters.ts
 // Formatting utilities for different components
 
-import { HumanizeOptions, LocaleStrings } from "./types.js";
+import { HumanizeOptions, LocaleStrings } from "./types";
 
 export class Formatters {
   static formatTime(

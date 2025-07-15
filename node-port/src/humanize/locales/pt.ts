@@ -1,7 +1,7 @@
 // src/humanize/locales/pt.ts
 // Portuguese locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const ptLocale: LocaleStrings = {
   // Time-related

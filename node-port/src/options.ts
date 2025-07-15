@@ -1,5 +1,5 @@
 // src/options.ts
-import type { JobOption, ManagedJob } from "./types.js";
+import type { JobOption, ManagedJob } from "./types";
 
 /**
  * Bir göreve yeniden deneme yeteneği kazandırır.

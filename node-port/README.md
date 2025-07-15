@@ -9,11 +9,11 @@ A high-performance, type-safe job scheduler for Node.js and TypeScript, ported f
 ## 🚀 Quick Start
 
 ```bash
-npm install jcron-ts
+npm install @devloops/jcron
 ```
 
 ```typescript
-import { Runner } from 'jcron-ts';
+import { Runner, getNext, toString } from '@devloops/jcron';
 
 const runner = new Runner();
 
@@ -23,6 +23,10 @@ runner.addFuncCron('0 9 * * *', () => {
 });
 
 runner.start();
+
+// Or use utility functions for calculations
+const nextRun = getNext('0 9 * * *');
+console.log('Next execution:', toString('0 9 * * *'));
 ```
 
 ## ✨ Features

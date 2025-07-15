@@ -1,7 +1,7 @@
 // src/humanize/locales/en.ts
 // English locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const enLocale: LocaleStrings = {
   // Time-related

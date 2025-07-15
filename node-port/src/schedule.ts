@@ -1,5 +1,5 @@
 // src/schedule.ts
-import { ParseError } from "./errors.js";
+import { ParseError } from "./errors";
 
 export class Schedule {
   constructor(

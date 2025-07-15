@@ -1,7 +1,7 @@
 // src/humanize/locales/tr.ts
 // Turkish locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const trLocale: LocaleStrings = {
   // Time-related

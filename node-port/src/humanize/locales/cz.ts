@@ -1,7 +1,7 @@
 // src/humanize/locales/cz.ts
 // Czech locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const czLocale: LocaleStrings = {
   // Time-related

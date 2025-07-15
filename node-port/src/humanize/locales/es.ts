@@ -1,7 +1,7 @@
 // src/humanize/locales/es.ts
 // Spanish locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const esLocale: LocaleStrings = {
   // Time-related

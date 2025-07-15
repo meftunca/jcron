@@ -1,7 +1,7 @@
 // src/humanize/locales/it.ts
 // Italian locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const itLocale: LocaleStrings = {
   // Time-related

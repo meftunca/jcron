@@ -1,7 +1,7 @@
 // src/humanize/locales/pl.ts
 // Polish locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const plLocale: LocaleStrings = {
   // Time-related

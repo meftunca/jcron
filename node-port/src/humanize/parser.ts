@@ -1,7 +1,7 @@
 // src/humanize/parser.ts
 // Core parsing logic for cron expressions
 
-import { Schedule } from "../schedule.js";
+import { Schedule } from "../schedule";
 
 export interface ParsedExpression {
   seconds: string[];

@@ -1,7 +1,7 @@
 // src/humanize/locales/fr.ts
 // French locale strings for humanization
 
-import { LocaleStrings } from "../types.js";
+import { LocaleStrings } from "../types";
 
 export const frLocale: LocaleStrings = {
   // Time-related

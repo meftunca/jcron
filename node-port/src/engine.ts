@@ -12,7 +12,7 @@ import {
   subSeconds,
 } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
-import { ParseError } from "./errors.js";
+import { ParseError } from "./errors";
 import { Schedule } from "./schedule";
 
 class ExpandedSchedule {

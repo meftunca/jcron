@@ -1,16 +1,16 @@
 // src/humanize/locales/index.ts
 // All supported locales export
 
-export { enLocale } from "./en.js";
-export { frLocale } from "./fr.js";
-export { trLocale } from "./tr.js";
-export { esLocale } from "./es.js";
-export { deLocale } from "./de.js";
-export { plLocale } from "./pl.js";
-export { ptLocale } from "./pt.js";
-export { itLocale } from "./it.js";
-export { czLocale } from "./cz.js";
-export { nlLocale } from "./nl.js";
+export { enLocale } from "./en";
+export { frLocale } from "./fr";
+export { trLocale } from "./tr";
+export { esLocale } from "./es";
+export { deLocale } from "./de";
+export { plLocale } from "./pl";
+export { ptLocale } from "./pt";
+export { itLocale } from "./it";
+export { czLocale } from "./cz";
+export { nlLocale } from "./nl";
 
 /**
  * All available locales with their display names
