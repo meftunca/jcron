@@ -2,14 +2,221 @@ DROP SCHEMA IF EXISTS jcron CASCADE;
 CREATE SCHEMA jcron;
 
 -- ======================================================================== --
+--                          CUSTOM JCRON DATA TYPES                         --
+-- ======================================================================== --
+
+-- JCRON Schedule validation function
+CREATE OR REPLACE FUNCTION jcron.validate_jcron_schedule(input_text text)
+RETURNS boolean AS $$
+DECLARE
+    schedule_json jsonb;
+    validation_result record;
+BEGIN
+    -- Return false for NULL or empty input
+    IF input_text IS NULL OR trim(input_text) = '' THEN
+        RETURN false;
+    END IF;
+    
+    BEGIN
+        -- Try to parse as JSON first
+        schedule_json := input_text::jsonb;
+        
+        -- Ensure it's an object, not array or scalar
+        IF jsonb_typeof(schedule_json) != 'object' THEN
+            RETURN false;
+        END IF;
+        
+        -- Validate required fields exist and have valid values
+        -- At minimum, we need some time specification
+        IF NOT (
+            schedule_json ? 's' OR schedule_json ? 'm' OR 
+            schedule_json ? 'h' OR schedule_json ? 'D' OR 
+            schedule_json ? 'M' OR schedule_json ? 'dow'
+        ) THEN
+            RETURN false;
+        END IF;
+        
+        -- Test schedule validation using our existing function
+        SELECT * INTO validation_result FROM jcron.validate_schedule(schedule_json);
+        RETURN validation_result.is_valid;
+        
+    EXCEPTION WHEN OTHERS THEN
+        -- If JSON parsing fails or validation throws error
+        RETURN false;
+    END;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Input function: converts text to internal format
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_in(input_text cstring)
+RETURNS jsonb AS $$
+DECLARE
+    schedule_json jsonb;
+BEGIN
+    -- Validate the input
+    IF NOT jcron.validate_jcron_schedule(input_text) THEN
+        RAISE EXCEPTION 'Invalid JCRON schedule format: %', input_text
+            USING HINT = 'Schedule must be valid JSON object with JCRON fields (s,m,h,D,M,dow,Y,W,timezone)';
+    END IF;
+    
+    -- Convert to JSONB
+    schedule_json := input_text::jsonb;
+    
+    -- Add default values for missing fields
+    IF NOT schedule_json ? 's' THEN
+        schedule_json := schedule_json || '{"s": "0"}';
+    END IF;
+    
+    RETURN schedule_json;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Output function: converts internal format to text
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_out(schedule_data jsonb)
+RETURNS cstring AS $$
+BEGIN
+    RETURN schedule_data::text;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Type modifier function (optional, for length constraints)
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_typmod_in(typmod_array cstring[])
+RETURNS integer AS $$
+BEGIN
+    -- No type modifiers needed for now
+    RETURN -1;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Type modifier output function
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_typmod_out(typmod integer)
+RETURNS cstring AS $$
+BEGIN
+    RETURN ''::cstring;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Create the custom data type
+CREATE TYPE jcron.jcron_schedule (
+    INPUT = jcron.jcron_schedule_in,
+    OUTPUT = jcron.jcron_schedule_out,
+    TYPMOD_IN = jcron.jcron_schedule_typmod_in,
+    TYPMOD_OUT = jcron.jcron_schedule_typmod_out,
+    INTERNALLENGTH = VARIABLE,
+    STORAGE = EXTENDED,
+    CATEGORY = 'U',  -- User-defined type
+    PREFERRED = false,
+    ELEMENT = jsonb,
+    DELIMITER = ','
+);
+
+-- Create operators for jcron_schedule type
+
+-- Equality operator
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_eq(left_sched jcron.jcron_schedule, right_sched jcron.jcron_schedule)
+RETURNS boolean AS $$
+BEGIN
+    RETURN (left_sched::jsonb) = (right_sched::jsonb);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OPERATOR jcron.= (
+    LEFTARG = jcron.jcron_schedule,
+    RIGHTARG = jcron.jcron_schedule,
+    FUNCTION = jcron.jcron_schedule_eq,
+    COMMUTATOR = =,
+    NEGATOR = <>,
+    RESTRICT = eqsel,
+    JOIN = eqjoinsel
+);
+
+-- Inequality operator
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_ne(left_sched jcron.jcron_schedule, right_sched jcron.jcron_schedule)
+RETURNS boolean AS $$
+BEGIN
+    RETURN (left_sched::jsonb) <> (right_sched::jsonb);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OPERATOR jcron.<> (
+    LEFTARG = jcron.jcron_schedule,
+    RIGHTARG = jcron.jcron_schedule,
+    FUNCTION = jcron.jcron_schedule_ne,
+    COMMUTATOR = <>,
+    NEGATOR = =,
+    RESTRICT = neqsel,
+    JOIN = neqjoinsel
+);
+
+-- Cast functions
+CREATE OR REPLACE FUNCTION jcron.jsonb_to_jcron_schedule(input_jsonb jsonb)
+RETURNS jcron.jcron_schedule AS $$
+BEGIN
+    RETURN jcron.jcron_schedule_in(input_jsonb::text);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.jcron_schedule_to_jsonb(input_schedule jcron.jcron_schedule)
+RETURNS jsonb AS $$
+BEGIN
+    RETURN input_schedule::jsonb;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Create casts
+CREATE CAST (jsonb AS jcron.jcron_schedule) 
+WITH FUNCTION jcron.jsonb_to_jcron_schedule(jsonb) 
+AS IMPLICIT;
+
+CREATE CAST (jcron.jcron_schedule AS jsonb) 
+WITH FUNCTION jcron.jcron_schedule_to_jsonb(jcron.jcron_schedule) 
+AS IMPLICIT;
+
+-- Helper functions that work with the new type
+CREATE OR REPLACE FUNCTION jcron.schedule_next_run(
+    schedule jcron.jcron_schedule, 
+    from_time timestamptz DEFAULT now()
+)
+RETURNS timestamptz AS $$
+BEGIN
+    RETURN jcron.next_jump(schedule::jsonb, from_time);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION jcron.schedule_prev_run(
+    schedule jcron.jcron_schedule, 
+    from_time timestamptz DEFAULT now()
+)
+RETURNS timestamptz AS $$
+BEGIN
+    RETURN jcron.prev_jump(schedule::jsonb, from_time);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION jcron.schedule_matches(
+    schedule jcron.jcron_schedule, 
+    check_time timestamptz DEFAULT now()
+)
+RETURNS boolean AS $$
+BEGIN
+    RETURN jcron.match(check_time, schedule::jsonb);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Create a domain for even stricter validation (optional)
+CREATE DOMAIN jcron.validated_jcron_schedule AS jcron.jcron_schedule
+    CONSTRAINT valid_jcron_format CHECK (jcron.validate_jcron_schedule(VALUE::text));
+
+-- ======================================================================== --
 --                           1. VERİTABANI YAPILARI                         --
 -- ======================================================================== --
 
--- Enhanced jobs table with timezone and retry support
+-- Enhanced jobs table with new jcron_schedule type
+DROP TABLE IF EXISTS jcron.jobs CASCADE;
 CREATE TABLE jcron.jobs (
     job_id BIGSERIAL PRIMARY KEY,
     job_name TEXT UNIQUE NOT NULL,
-    schedule JSONB NOT NULL CONSTRAINT must_be_a_json_object CHECK (jsonb_typeof(schedule) = 'object'),
+    schedule jcron.jcron_schedule NOT NULL, -- Using our new custom type!
     command TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     timezone TEXT DEFAULT 'UTC',
@@ -19,31 +226,19 @@ CREATE TABLE jcron.jobs (
     last_run_finished_at TIMESTAMPTZ,
     next_run_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    
+    -- Additional constraint to ensure timezone consistency
+    CONSTRAINT timezone_consistency CHECK (
+        (schedule::jsonb->>'timezone') IS NULL OR 
+        (schedule::jsonb->>'timezone') = timezone
+    )
 );
 
-CREATE INDEX ON jcron.jobs (is_active, next_run_at);
-CREATE INDEX ON jcron.jobs (timezone);
-
--- Enhanced job logs with retry information
-CREATE TABLE jcron.job_logs (
-    log_id BIGSERIAL PRIMARY KEY,
-    job_id BIGINT NOT NULL REFERENCES jcron.jobs(job_id) ON DELETE CASCADE,
-    run_started_at TIMESTAMPTZ NOT NULL,
-    run_finished_at TIMESTAMPTZ,
-    status TEXT NOT NULL CHECK (status IN ('running', 'success', 'failed', 'retrying')),
-    output_message TEXT,
-    retry_count INTEGER DEFAULT 0,
-    error_message TEXT,
-    execution_duration_ms INTEGER
-);
-
-CREATE INDEX ON jcron.job_logs (job_id, run_started_at);
-CREATE INDEX ON jcron.job_logs (status);
-
--- Enhanced schedule cache with timezone and week support
+-- Update schedule cache table to use new type
+DROP TABLE IF EXISTS jcron.schedule_cache CASCADE;
 CREATE TABLE jcron.schedule_cache (
-    schedule JSONB PRIMARY KEY,
+    schedule jcron.jcron_schedule PRIMARY KEY,
     seconds_vals INT[],
     minutes_vals INT[],
     hours_vals INT[],
@@ -386,11 +581,12 @@ EXCEPTION
 END;
 $$ LANGUAGE plpgsql STABLE;
 
--- Enhanced cache engine with timezone and week support
-CREATE OR REPLACE FUNCTION jcron.get_expanded_schedule(p_schedule jsonb) RETURNS jcron.schedule_cache AS $$
+-- Enhanced cache engine with new jcron_schedule type
+CREATE OR REPLACE FUNCTION jcron.get_expanded_schedule(p_schedule jcron.jcron_schedule) RETURNS jcron.schedule_cache AS $$
 DECLARE 
     cached_record jcron.schedule_cache;
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
+    schedule_jsonb jsonb := p_schedule::jsonb;
+    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
     has_special BOOLEAN := FALSE;
 BEGIN
     -- Check cache first
@@ -410,21 +606,21 @@ BEGIN
     
     -- Check for special patterns
     has_special := (
-        (p_schedule->>'D') ~ '[L#]' OR 
-        (p_schedule->>'dow') ~ '[L#]' OR
-        (p_schedule->>'W') ~ '[L#]'
+        (schedule_jsonb->>'D') ~ '[L#]' OR 
+        (schedule_jsonb->>'dow') ~ '[L#]' OR
+        (schedule_jsonb->>'W') ~ '[L#]'
     );
     
     -- Build new cache record
     cached_record.schedule := p_schedule;
-    cached_record.seconds_vals := jcron.expand_part(p_schedule, 's');
-    cached_record.minutes_vals := jcron.expand_part(p_schedule, 'm');
-    cached_record.hours_vals := jcron.expand_part(p_schedule, 'h');
-    cached_record.dom_vals := jcron.expand_part(p_schedule, 'D');
-    cached_record.months_vals := jcron.expand_part(p_schedule, 'M');
-    cached_record.dow_vals := jcron.expand_part(p_schedule, 'dow');
-    cached_record.years_vals := jcron.expand_part(p_schedule, 'Y');
-    cached_record.week_vals := jcron.expand_part(p_schedule, 'W');
+    cached_record.seconds_vals := jcron.expand_part(schedule_jsonb, 's');
+    cached_record.minutes_vals := jcron.expand_part(schedule_jsonb, 'm');
+    cached_record.hours_vals := jcron.expand_part(schedule_jsonb, 'h');
+    cached_record.dom_vals := jcron.expand_part(schedule_jsonb, 'D');
+    cached_record.months_vals := jcron.expand_part(schedule_jsonb, 'M');
+    cached_record.dow_vals := jcron.expand_part(schedule_jsonb, 'dow');
+    cached_record.years_vals := jcron.expand_part(schedule_jsonb, 'Y');
+    cached_record.week_vals := jcron.expand_part(schedule_jsonb, 'W');
     cached_record.timezone := target_tz;
     cached_record.has_special_patterns := has_special;
     cached_record.last_used := now();
@@ -441,12 +637,13 @@ $$ LANGUAGE plpgsql VOLATILE;
 --                3. SON KULLANICI FONKSİYONLARI (FİNAL SÜRÜM)              --
 -- ======================================================================== --
 
--- Enhanced match function with timezone and week support
-CREATE OR REPLACE FUNCTION jcron.match(p_ts timestamptz, p_schedule jsonb) RETURNS BOOLEAN AS $$
+-- Enhanced match function with new jcron_schedule type
+CREATE OR REPLACE FUNCTION jcron.match(p_ts timestamptz, p_schedule jcron.jcron_schedule) RETURNS BOOLEAN AS $$
 DECLARE 
     cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
     local_ts TIMESTAMPTZ;
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
+    schedule_jsonb jsonb := p_schedule::jsonb;
+    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
 BEGIN
     -- Convert to target timezone for calculations
     IF target_tz != 'UTC' THEN
@@ -467,12 +664,12 @@ BEGIN
     END IF;
     
     -- Check week of year if specified
-    IF NOT jcron._is_week_match(p_ts, p_schedule) THEN
+    IF NOT jcron._is_week_match(p_ts, schedule_jsonb) THEN
         RETURN FALSE;
     END IF;
     
     -- Check day matching (complex logic for D/dow)
-    RETURN jcron._is_day_match(p_ts, p_schedule);
+    RETURN jcron._is_day_match(p_ts, schedule_jsonb);
 END; 
 $$ LANGUAGE plpgsql STABLE;
 
@@ -534,8 +731,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Enhanced next_jump with intelligent schedule validation and fallback strategies
-CREATE OR REPLACE FUNCTION jcron.next_jump(p_schedule jsonb, p_from_ts timestamptz)
+-- Enhanced next_jump with new jcron_schedule type
+CREATE OR REPLACE FUNCTION jcron.next_jump(p_schedule jcron.jcron_schedule, p_from_ts timestamptz)
 RETURNS timestamptz AS $$
 DECLARE
     ts TIMESTAMPTZ; 
@@ -543,7 +740,8 @@ DECLARE
     cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
     i INT := 0;
     local_ts TIMESTAMPTZ;
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
+    schedule_jsonb jsonb := p_schedule::jsonb;
+    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
     result_ts TIMESTAMPTZ;
     max_search_days INT := 1826; -- 5 years
     week_constraint INT;
@@ -583,11 +781,13 @@ BEGIN
         -- For impossible schedules, try to find the closest valid alternative
         -- For example, if Week 53 is requested but doesn't exist, try Week 52
         DECLARE
-            modified_schedule JSONB := p_schedule;
+            modified_schedule jcron.jcron_schedule;
+            modified_jsonb jsonb := schedule_jsonb;
         BEGIN
             -- Replace impossible week with last week of year
             IF week_constraint = 53 THEN
-                modified_schedule := modified_schedule || '{"W": "52"}';
+                modified_jsonb := modified_jsonb || '{"W": "52"}';
+                modified_schedule := modified_jsonb::jcron.jcron_schedule;
                 RETURN jcron.next_jump(modified_schedule, p_from_ts);
             END IF;
         END;
@@ -598,14 +798,17 @@ BEGIN
         IF i > max_search_days THEN
             -- Instead of throwing error, try relaxed constraints
             DECLARE
-                relaxed_schedule JSONB := p_schedule;
+                relaxed_schedule jcron.jcron_schedule;
+                relaxed_jsonb jsonb := schedule_jsonb;
             BEGIN
                 -- Remove most restrictive constraints one by one
                 IF cache.week_vals IS NOT NULL THEN
-                    relaxed_schedule := relaxed_schedule - 'W';
+                    relaxed_jsonb := relaxed_jsonb - 'W';
+                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
                     RETURN jcron.next_jump(relaxed_schedule, p_from_ts);
                 ELSIF cache.years_vals IS NOT NULL THEN
-                    relaxed_schedule := relaxed_schedule - 'Y';
+                    relaxed_jsonb := relaxed_jsonb - 'Y';
+                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
                     RETURN jcron.next_jump(relaxed_schedule, p_from_ts);
                 ELSE
                     RAISE EXCEPTION 'Could not find a valid day within 5 years.'; 
@@ -625,8 +828,8 @@ BEGIN
         -- Check year, month, week, and day constraints
         IF (cache.years_vals IS NULL OR date_part('year', local_ts)::int = ANY(cache.years_vals)) AND
            (cache.months_vals IS NULL OR date_part('month', local_ts)::int = ANY(cache.months_vals)) AND
-           jcron._is_week_match(search_ts, p_schedule) AND
-           jcron._is_day_match(search_ts, p_schedule)
+           jcron._is_week_match(search_ts, schedule_jsonb) AND
+           jcron._is_day_match(search_ts, schedule_jsonb)
         THEN
             -- Find the next valid time on this day
             FOR h IN 0..23 LOOP
@@ -655,15 +858,16 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql VOLATILE;
 
--- Enhanced prev_jump with intelligent schedule validation and fallback strategies
-CREATE OR REPLACE FUNCTION jcron.prev_jump(p_schedule jsonb, p_from_ts timestamptz)
+-- Enhanced prev_jump with new jcron_schedule type
+CREATE OR REPLACE FUNCTION jcron.prev_jump(p_schedule jcron.jcron_schedule, p_from_ts timestamptz)
 RETURNS timestamptz AS $$
 DECLARE
     search_ts TIMESTAMPTZ; 
     cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
     i INT := 0;
     local_ts TIMESTAMPTZ;
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
+    schedule_jsonb jsonb := p_schedule::jsonb;
+    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
     result_ts TIMESTAMPTZ;
     max_search_days INT := 1826; -- 5 years
     week_constraint INT;
@@ -697,10 +901,12 @@ BEGIN
     -- Handle impossible schedules with fallback
     IF is_impossible_schedule THEN
         DECLARE
-            modified_schedule JSONB := p_schedule;
+            modified_schedule jcron.jcron_schedule;
+            modified_jsonb jsonb := schedule_jsonb;
         BEGIN
             IF week_constraint = 53 THEN
-                modified_schedule := modified_schedule || '{"W": "52"}';
+                modified_jsonb := modified_jsonb || '{"W": "52"}';
+                modified_schedule := modified_jsonb::jcron.jcron_schedule;
                 RETURN jcron.prev_jump(modified_schedule, p_from_ts);
             END IF;
         END;
@@ -711,13 +917,16 @@ BEGIN
         IF i > max_search_days THEN
             -- Try relaxed constraints before giving up
             DECLARE
-                relaxed_schedule JSONB := p_schedule;
+                relaxed_schedule jcron.jcron_schedule;
+                relaxed_jsonb jsonb := schedule_jsonb;
             BEGIN
                 IF cache.week_vals IS NOT NULL THEN
-                    relaxed_schedule := relaxed_schedule - 'W';
+                    relaxed_jsonb := relaxed_jsonb - 'W';
+                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
                     RETURN jcron.prev_jump(relaxed_schedule, p_from_ts);
                 ELSIF cache.years_vals IS NOT NULL THEN
-                    relaxed_schedule := relaxed_schedule - 'Y';
+                    relaxed_jsonb := relaxed_jsonb - 'Y';
+                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
                     RETURN jcron.prev_jump(relaxed_schedule, p_from_ts);
                 ELSE
                     RAISE EXCEPTION 'Could not find a valid day within 5 years.'; 
@@ -737,8 +946,8 @@ BEGIN
         -- Check year, month, week, and day constraints
         IF (cache.years_vals IS NULL OR date_part('year', local_ts)::int = ANY(cache.years_vals)) AND
            (cache.months_vals IS NULL OR date_part('month', local_ts)::int = ANY(cache.months_vals)) AND
-           jcron._is_week_match(search_ts, p_schedule) AND
-           jcron._is_day_match(search_ts, p_schedule)
+           jcron._is_week_match(search_ts, schedule_jsonb) AND
+           jcron._is_day_match(search_ts, schedule_jsonb)
         THEN
             -- Find the previous valid time on this day (go backwards from end of day)
             FOR h IN REVERSE 23..0 LOOP
@@ -1036,8 +1245,8 @@ $$ LANGUAGE plpgsql;
 --                        4. JOB RUNNER API & UTILITIES                      --
 -- ======================================================================== --
 
--- Schedule validation function
-CREATE OR REPLACE FUNCTION jcron.validate_schedule(p_schedule jsonb) 
+-- Schedule validation function with new type
+CREATE OR REPLACE FUNCTION jcron.validate_schedule(p_schedule jcron.jcron_schedule) 
 RETURNS TABLE(is_valid boolean, error_message text) AS $$
 BEGIN
     BEGIN
@@ -1050,10 +1259,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add or update a job
+-- Add or update a job with new jcron_schedule type
 CREATE OR REPLACE FUNCTION jcron.add_job(
     p_job_name text,
-    p_schedule jsonb,
+    p_schedule jcron.jcron_schedule,
     p_command text,
     p_timezone text DEFAULT 'UTC',
     p_max_retries integer DEFAULT 0,
@@ -1062,6 +1271,8 @@ CREATE OR REPLACE FUNCTION jcron.add_job(
 DECLARE
     job_id bigint;
     validation_result record;
+    schedule_with_tz jcron.jcron_schedule;
+    schedule_jsonb jsonb;
 BEGIN
     -- Validate schedule first
     SELECT * INTO validation_result FROM jcron.validate_schedule(p_schedule);
@@ -1072,18 +1283,25 @@ BEGIN
     -- Validate timezone
     PERFORM jcron._convert_timezone(now(), p_timezone);
     
+    -- Add timezone to schedule if not present
+    schedule_jsonb := p_schedule::jsonb;
+    IF NOT schedule_jsonb ? 'timezone' THEN
+        schedule_jsonb := schedule_jsonb || jsonb_build_object('timezone', p_timezone);
+    END IF;
+    schedule_with_tz := schedule_jsonb::jcron.jcron_schedule;
+    
     -- Insert or update job
     INSERT INTO jcron.jobs (
         job_name, schedule, command, timezone, 
         max_retries, retry_delay_seconds, next_run_at
     ) VALUES (
         p_job_name, 
-        p_schedule || jsonb_build_object('timezone', p_timezone), 
+        schedule_with_tz, 
         p_command, 
         p_timezone,
         p_max_retries, 
         p_retry_delay_seconds,
-        jcron.next_jump(p_schedule || jsonb_build_object('timezone', p_timezone), now())
+        jcron.next_jump(schedule_with_tz, now())
     )
     ON CONFLICT (job_name) DO UPDATE SET
         schedule = EXCLUDED.schedule,
@@ -1099,7 +1317,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add job from cron expression string
+-- Add job from cron expression string with new type
 CREATE OR REPLACE FUNCTION jcron.add_job_from_cron(
     p_job_name text,
     p_cron_expression text, 
@@ -1109,15 +1327,19 @@ CREATE OR REPLACE FUNCTION jcron.add_job_from_cron(
     p_retry_delay_seconds integer DEFAULT 300
 ) RETURNS bigint AS $$
 DECLARE
-    parsed_schedule jsonb;
+    parsed_schedule jcron.jcron_schedule;
+    schedule_jsonb jsonb;
 BEGIN
     -- Parse cron expression
-    parsed_schedule := jcron.parse_cron_expression(p_cron_expression);
+    schedule_jsonb := jcron.parse_cron_expression(p_cron_expression);
     
     -- Add timezone if not already present
-    IF NOT parsed_schedule ? 'timezone' THEN
-        parsed_schedule := parsed_schedule || jsonb_build_object('timezone', p_timezone);
+    IF NOT schedule_jsonb ? 'timezone' THEN
+        schedule_jsonb := schedule_jsonb || jsonb_build_object('timezone', p_timezone);
     END IF;
+    
+    -- Convert to jcron_schedule type
+    parsed_schedule := schedule_jsonb::jcron.jcron_schedule;
     
     RETURN jcron.add_job(p_job_name, parsed_schedule, p_command, p_timezone, p_max_retries, p_retry_delay_seconds);
 END;
@@ -1150,13 +1372,13 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Get jobs ready to run
+-- Get jobs ready to run with new type
 CREATE OR REPLACE FUNCTION jcron.get_ready_jobs(p_limit integer DEFAULT 100)
 RETURNS TABLE(
     job_id bigint,
     job_name text,
     command text,
-    schedule jsonb,
+    schedule jcron.jcron_schedule,
     max_retries integer,
     retry_delay_seconds integer,
     next_run_at timestamptz
@@ -1471,9 +1693,10 @@ DO $$
 BEGIN
     RAISE NOTICE '';
     RAISE NOTICE '========================================================';
-    RAISE NOTICE '           JCRON POSTGRESQL PORT v4.0 READY            ';
+    RAISE NOTICE '          JCRON POSTGRESQL PORT v5.0 READY             ';
     RAISE NOTICE '========================================================';
     RAISE NOTICE 'Features enabled:';
+    RAISE NOTICE '  ✓ Custom jcron_schedule data type with validation';
     RAISE NOTICE '  ✓ Enhanced timezone support';
     RAISE NOTICE '  ✓ Week of year matching';
     RAISE NOTICE '  ✓ Predefined schedules (@yearly, @daily, etc.)';
@@ -1483,13 +1706,98 @@ BEGIN
     RAISE NOTICE '  ✓ Comprehensive logging and monitoring';
     RAISE NOTICE '  ✓ Automatic maintenance functions';
     RAISE NOTICE '  ✓ Performance optimized with proper indexing';
+    RAISE NOTICE '  ✓ Database-level schedule format validation';
     RAISE NOTICE '';
     RAISE NOTICE 'Quick start:';
     RAISE NOTICE '  SELECT jcron.add_job_from_cron(''my_job'', ''@daily'', ''echo hello'');';
     RAISE NOTICE '  SELECT * FROM jcron.active_jobs_view;';
+    RAISE NOTICE '  SELECT * FROM jcron.test_jcron_schedule_type();';
     RAISE NOTICE '  SELECT * FROM jcron.run_comprehensive_tests(100);';
+    RAISE NOTICE '';
+    RAISE NOTICE 'New jcron_schedule type examples:';
+    RAISE NOTICE '  CREATE TABLE my_schedules (id SERIAL, sched jcron.jcron_schedule);';
+    RAISE NOTICE '  INSERT INTO my_schedules (sched) VALUES (''{"s":"0","m":"0","h":"9","D":"*","M":"*","dow":"1-5"}'');';
+    RAISE NOTICE '  SELECT jcron.schedule_next_run(sched) FROM my_schedules;';
     RAISE NOTICE '';
     RAISE NOTICE 'For more examples, see documentation or run test functions.';
     RAISE NOTICE '========================================================';
 END
 $$;
+
+-- Test custom jcron_schedule data type
+CREATE OR REPLACE FUNCTION jcron.test_jcron_schedule_type()
+RETURNS TABLE(test_name text, passed boolean, details text) AS $$
+DECLARE
+    test_schedule jcron.jcron_schedule;
+    schedule_jsonb jsonb;
+    next_run timestamptz;
+BEGIN
+    -- Test 1: Valid schedule creation
+    BEGIN
+        test_schedule := '{"s":"0","m":"30","h":"9","D":"*","M":"*","dow":"*"}'::jcron.jcron_schedule;
+        RETURN QUERY SELECT 
+            'Valid Schedule Creation'::text,
+            true::boolean,
+            'Successfully created valid schedule'::text;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Valid Schedule Creation'::text, false::boolean, SQLERRM::text;
+    END;
+    
+    -- Test 2: Invalid schedule rejection
+    BEGIN
+        test_schedule := '{"invalid":"data"}'::jcron.jcron_schedule;
+        RETURN QUERY SELECT 'Invalid Schedule Rejection'::text, false::boolean, 'Should have failed'::text;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Invalid Schedule Rejection'::text, true::boolean, 'Correctly rejected invalid schedule'::text;
+    END;
+    
+    -- Test 3: Type casting to/from JSONB
+    BEGIN
+        schedule_jsonb := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*"}';
+        test_schedule := schedule_jsonb::jcron.jcron_schedule;
+        schedule_jsonb := test_schedule::jsonb;
+        
+        RETURN QUERY SELECT 
+            'Type Casting Test'::text,
+            true::boolean,
+            format('JSONB cast successful: %s', schedule_jsonb::text);
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Type Casting Test'::text, false::boolean, SQLERRM::text;
+    END;
+    
+    -- Test 4: Schedule functionality
+    BEGIN
+        test_schedule := '{"s":"0","m":"0","h":"9","D":"*","M":"*","dow":"1-5"}'::jcron.jcron_schedule;
+        next_run := jcron.schedule_next_run(test_schedule);
+        
+        RETURN QUERY SELECT 
+            'Schedule Functionality Test'::text,
+            (next_run IS NOT NULL)::boolean,
+            format('Next run: %s', next_run);
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Schedule Functionality Test'::text, false::boolean, SQLERRM::text;
+    END;
+    
+    -- Test 5: Schedule validation constraints
+    BEGIN
+        -- This should fail due to invalid field values
+        test_schedule := '{"s":"0","m":"70","h":"9","D":"*","M":"*","dow":"*"}'::jcron.jcron_schedule;
+        RETURN QUERY SELECT 'Validation Constraint Test'::text, false::boolean, 'Should have failed validation'::text;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Validation Constraint Test'::text, true::boolean, 'Correctly caught validation error'::text;
+    END;
+    
+    -- Test 6: Timezone handling in type
+    BEGIN
+        test_schedule := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*","timezone":"America/New_York"}'::jcron.jcron_schedule;
+        next_run := jcron.schedule_next_run(test_schedule);
+        
+        RETURN QUERY SELECT 
+            'Timezone Handling Test'::text,
+            (next_run IS NOT NULL)::boolean,
+            format('Next run with timezone: %s', next_run);
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY SELECT 'Timezone Handling Test'::text, false::boolean, SQLERRM::text;
+    END;
+END;
+$$ LANGUAGE plpgsql;

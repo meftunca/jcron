@@ -114,52 +114,70 @@ export class ExpressionParser {
       .map(String);
   }
 
-  static parseExpression(schedule: Schedule): ParsedExpression {
-    const seconds = this.parseField(schedule.s ?? "0", 0, 59);
-    const minutes = this.parseField(schedule.m ?? "*", 0, 59);
-    const hours = this.parseField(schedule.h ?? "*", 0, 23);
-    const daysOfMonth = this.parseField(schedule.D ?? "*", 1, 31);
-    const months = this.parseField(schedule.M ?? "*", 1, 12);
-    const daysOfWeek = this.parseField(schedule.dow ?? "*", 0, 6);
-    const years = this.parseField(schedule.Y ?? "*", 1970, 3000);
-    const weekOfYear = this.parseField(schedule.woy ?? "*", 1, 53);
+  static parseExpression(schedule: Schedule | any): ParsedExpression {
+    // Ensure we have proper field values, handling null, undefined, and empty strings
+    const getField = (primary: any, fallback: string): string => {
+      if (primary === null || primary === undefined || primary === '') {
+        return fallback;
+      }
+      return String(primary);
+    };
 
-    const hasSpecialChars = [schedule.D, schedule.dow].some(
-      (field) => field && (field.includes("L") || field.includes("#"))
-    );
+    const seconds = this.parseField(getField(schedule.s ?? schedule.seconds, "0"), 0, 59);
+    const minutes = this.parseField(getField(schedule.m ?? schedule.minutes, "*"), 0, 59);
+    const hours = this.parseField(getField(schedule.h ?? schedule.hours, "*"), 0, 23);
+    const daysOfMonth = this.parseField(getField(schedule.D ?? schedule.dayOfMonth, "*"), 1, 31);
+    const months = this.parseField(getField(schedule.M ?? schedule.month, "*"), 1, 12);
+    const daysOfWeek = this.parseField(getField(schedule.dow ?? schedule.dayOfWeek, "*"), 0, 6);
+    const years = this.parseField(getField(schedule.Y ?? schedule.year, "*"), 1970, 3000);
+    const weekOfYear = this.parseField(getField(schedule.woy ?? schedule.weekOfYear, "*"), 1, 53);
+
+    // Check for special characters
+    const checkSpecialChars = (field: any): boolean => {
+      const str = getField(field, "*");
+      return Boolean(str && (str.includes("L") || str.includes("#")));
+    };
+
+    const checkPattern = (field: any, pattern: string): boolean => {
+      const str = getField(field, "*");
+      return Boolean(str && str.includes(pattern));
+    };
+
+    const hasSpecialChars = checkSpecialChars(schedule.D ?? schedule.dayOfMonth) || 
+                           checkSpecialChars(schedule.dow ?? schedule.dayOfWeek);
 
     const hasRanges = [
-      schedule.s,
-      schedule.m,
-      schedule.h,
-      schedule.D,
-      schedule.M,
-      schedule.dow,
-      schedule.Y,
-      schedule.woy,
-    ].some((field) => field && field.includes("-"));
+      schedule.s ?? schedule.seconds,
+      schedule.m ?? schedule.minutes,
+      schedule.h ?? schedule.hours,
+      schedule.D ?? schedule.dayOfMonth,
+      schedule.M ?? schedule.month,
+      schedule.dow ?? schedule.dayOfWeek,
+      schedule.Y ?? schedule.year,
+      schedule.woy ?? schedule.weekOfYear,
+    ].some((field) => checkPattern(field, "-"));
 
     const hasSteps = [
-      schedule.s,
-      schedule.m,
-      schedule.h,
-      schedule.D,
-      schedule.M,
-      schedule.dow,
-      schedule.Y,
-      schedule.woy,
-    ].some((field) => field && field.includes("/"));
+      schedule.s ?? schedule.seconds,
+      schedule.m ?? schedule.minutes,
+      schedule.h ?? schedule.hours,
+      schedule.D ?? schedule.dayOfMonth,
+      schedule.M ?? schedule.month,
+      schedule.dow ?? schedule.dayOfWeek,
+      schedule.Y ?? schedule.year,
+      schedule.woy ?? schedule.weekOfYear,
+    ].some((field) => checkPattern(field, "/"));
 
     const hasLists = [
-      schedule.s,
-      schedule.m,
-      schedule.h,
-      schedule.D,
-      schedule.M,
-      schedule.dow,
-      schedule.Y,
-      schedule.woy,
-    ].some((field) => field && field.includes(","));
+      schedule.s ?? schedule.seconds,
+      schedule.m ?? schedule.minutes,
+      schedule.h ?? schedule.hours,
+      schedule.D ?? schedule.dayOfMonth,
+      schedule.M ?? schedule.month,
+      schedule.dow ?? schedule.dayOfWeek,
+      schedule.Y ?? schedule.year,
+      schedule.woy ?? schedule.weekOfYear,
+    ].some((field) => checkPattern(field, ","));
 
     return {
       seconds,
@@ -170,20 +188,20 @@ export class ExpressionParser {
       daysOfWeek,
       years,
       weekOfYear,
-      timezone: schedule.tz ?? undefined,
+      timezone: schedule.tz ?? schedule.timezone ?? undefined,
       hasSpecialChars,
       hasRanges,
       hasSteps,
       hasLists,
       rawFields: {
-        seconds: schedule.s ?? "0",
-        minutes: schedule.m ?? "*",
-        hours: schedule.h ?? "*",
-        daysOfMonth: schedule.D ?? "*",
-        months: schedule.M ?? "*",
-        daysOfWeek: schedule.dow ?? "*",
-        years: schedule.Y ?? "*",
-        weekOfYear: schedule.woy ?? "*",
+        seconds: getField(schedule.s ?? schedule.seconds, "0"),
+        minutes: getField(schedule.m ?? schedule.minutes, "*"),
+        hours: getField(schedule.h ?? schedule.hours, "*"),
+        daysOfMonth: getField(schedule.D ?? schedule.dayOfMonth, "*"),
+        months: getField(schedule.M ?? schedule.month, "*"),
+        daysOfWeek: getField(schedule.dow ?? schedule.dayOfWeek, "*"),
+        years: getField(schedule.Y ?? schedule.year, "*"),
+        weekOfYear: getField(schedule.woy ?? schedule.weekOfYear, "*"),
       },
     };
   }

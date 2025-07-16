@@ -353,15 +353,16 @@ export class Engine {
     }
 
     const exp = new ExpandedSchedule();
-    const s = schedule.s ?? "0";
-    const m = schedule.m ?? "*";
-    const h = schedule.h ?? "*";
-    const D = schedule.D ?? "*";
-    const M = schedule.M ?? "*";
-    const dow = schedule.dow ?? "*";
-    const Y = schedule.Y ?? "*";
-    const woy = schedule.woy ?? "*"; // Week of Year
-    const tz = schedule.tz ?? "UTC";
+    // Handle both null and empty string values
+    const s = schedule.s && schedule.s !== "" ? schedule.s : "0";
+    const m = schedule.m && schedule.m !== "" ? schedule.m : "*";
+    const h = schedule.h && schedule.h !== "" ? schedule.h : "*";
+    const D = schedule.D && schedule.D !== "" ? schedule.D : "*";
+    const M = schedule.M && schedule.M !== "" ? schedule.M : "*";
+    const dow = schedule.dow && schedule.dow !== "" ? schedule.dow : "*";
+    const Y = schedule.Y && schedule.Y !== "" ? schedule.Y : "*";
+    const woy = schedule.woy && schedule.woy !== "" ? schedule.woy : "*"; // Week of Year
+    const tz = schedule.tz && schedule.tz !== "" ? schedule.tz : "UTC";
 
     try {
       formatInTimeZone(new Date(), tz, "yyyy-MM-dd HH:mm:ssXXX");

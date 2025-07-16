@@ -168,7 +168,7 @@ class HumanizerClass {
    * Humanize a Schedule object
    */
   static fromSchedule(
-    schedule: Schedule,
+    schedule: Schedule | any,
     options: Partial<HumanizeOptions> = {}
   ): string {
     // Input validation
@@ -176,7 +176,30 @@ class HumanizerClass {
       return "Invalid schedule object";
     }
 
-    const result = this.scheduleToResult(schedule, options);
+    // Ensure we have a proper Schedule object
+    let normalizedSchedule: Schedule;
+    try {
+      if (schedule instanceof Schedule) {
+        normalizedSchedule = schedule;
+      } else {
+        // Try to create a proper Schedule from the object
+        normalizedSchedule = new Schedule(
+          schedule.s ?? schedule.seconds ?? null,
+          schedule.m ?? schedule.minutes ?? null,
+          schedule.h ?? schedule.hours ?? null,
+          schedule.D ?? schedule.dayOfMonth ?? null,
+          schedule.M ?? schedule.month ?? null,
+          schedule.dow ?? schedule.dayOfWeek ?? null,
+          schedule.Y ?? schedule.year ?? null,
+          schedule.woy ?? schedule.weekOfYear ?? null,
+          schedule.tz ?? schedule.timezone ?? null
+        );
+      }
+    } catch (error) {
+      return "Invalid schedule object";
+    }
+
+    const result = this.scheduleToResult(normalizedSchedule, options);
     return result.description;
   }
 

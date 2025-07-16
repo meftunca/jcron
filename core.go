@@ -49,6 +49,7 @@ var (
 // --- Çekirdek Veri Yapıları ---
 type Schedule struct {
 	Second, Minute, Hour, DayOfMonth, Month, DayOfWeek, Year, WeekOfYear, Timezone *string
+	EOD                                                                            *EndOfDuration // End of Duration specification
 }
 type ExpandedSchedule struct {
 	SecondsMask, MinutesMask   uint64
@@ -1108,4 +1109,23 @@ func (e *Engine) matchSpecialPatternDirect(pattern string, t time.Time, currentW
 	}
 
 	return false
+}
+
+// EndOf calculates when the schedule should end based on EOD configuration
+// Returns the termination date or zero time if no EOD is configured
+func (s *Schedule) EndOf(fromDate time.Time) time.Time {
+	if s.EOD == nil {
+		return time.Time{} // Zero time indicates no end date
+	}
+	return s.EOD.CalculateEndDate(fromDate)
+}
+
+// EndOfFromNow calculates when the schedule should end from current time
+func (s *Schedule) EndOfFromNow() time.Time {
+	return s.EndOf(time.Now())
+}
+
+// HasEOD returns true if the schedule has an End of Duration configuration
+func (s *Schedule) HasEOD() bool {
+	return s.EOD != nil
 }
