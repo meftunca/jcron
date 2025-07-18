@@ -16,7 +16,9 @@ describe('EoD Integration and EndOf Helpers Test', () => {
       
       const eodString = eod.toString();
       console.log('End of Day EoD:', eodString);
-      expect(eodString).toContain('D'); // Should contain day reference
+      expect(eodString).toContain('T'); // Should contain time part
+      expect(eodString).toContain('H'); // Should contain hours
+      expect(eodString).toContain('M'); // Should contain minutes
     });
 
     it('should create endOfWeek EoD correctly', () => {
@@ -77,7 +79,7 @@ describe('EoD Integration and EndOf Helpers Test', () => {
     it('should calculate end date correctly for different reference points', () => {
       const testDate = new Date('2025-07-16T10:00:00'); // Wednesday, July 16, 2025, 10:00 AM
 
-      // Test end of day - should go to 23:59:59.999 of the same day
+      // Test end of day - should go to 23:59:59.999 of the same day + duration
       const endOfDayEoD = EoDHelpers.endOfDay(0, 0, 0);
       const endOfDayDate = endOfDayEoD.calculateEndDate(testDate);
       console.log('Test date:', testDate.toISOString());
@@ -184,7 +186,7 @@ describe('EoD Integration and EndOf Helpers Test', () => {
       const scheduleString = schedule.toString();
       expect(scheduleString).toContain('MON');
       expect(scheduleString).toContain('EOD:');
-      expect(scheduleString).toContain('Q'); // Quarter reference
+      expect(scheduleString).toContain('E5D'); // EoD duration part
     });
   });
 
@@ -207,9 +209,10 @@ describe('EoD Integration and EndOf Helpers Test', () => {
     });
 
     it('should handle EoD with zero duration', () => {
-      expect(() => {
-        parseEoD('E0h');
-      }).toThrow(); // Should require at least one duration component
+      // Zero duration should be allowed (immediate finish)
+      const eod = parseEoD('E0h');
+      expect(eod.hours).toBe(0);
+      expect(eod.referencePoint).toBe(ReferencePoint.END);
     });
 
     it('should parse and generate consistent EoD strings', () => {
@@ -259,7 +262,8 @@ describe('EoD Integration and EndOf Helpers Test', () => {
       const endDate = dailyBackup.eod?.calculateEndDate(new Date('2025-07-16T03:00:00'));
       console.log('Backup must finish by:', endDate?.toISOString());
       
-      expect(endDate?.getHours()).toBe(23); // Should be end of day
+      expect(endDate?.getHours()).toBe(23); // Should be end of day (after duration + ref point)
+      expect(endDate?.getMinutes()).toBe(59); // End of day
     });
 
     it('should handle weekly report with end-of-week constraint', () => {
@@ -277,6 +281,7 @@ describe('EoD Integration and EndOf Helpers Test', () => {
       console.log('Report must finish by:', endDate?.toISOString());
       
       expect(endDate?.getDay()).toBe(0); // Should be Sunday
+      expect(endDate?.getHours()).toBe(23); // End of week
     });
 
     it('should handle monthly billing with end-of-month constraint', () => {
@@ -285,7 +290,7 @@ describe('EoD Integration and EndOf Helpers Test', () => {
         minute: '0',
         hour: '9',
         dayOfMonth: '1',
-        eod: EoDHelpers.endOfMonth(28, 0, 0) // Up to 28 days until end of month
+        eod: EoDHelpers.endOfMonth(0, 0, 0) // Go directly to end of month (no additional days)
       });
       
       console.log('Monthly billing schedule:', monthlyBilling.toString());

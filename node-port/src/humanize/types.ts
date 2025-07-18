@@ -171,6 +171,10 @@ export interface LocaleStrings {
   utc: string;
   local: string;
 
+  // EOD (End of Duration)
+  endOfDuration: string;
+  untilTheEndOf: string;
+
   // Eklenen: Doğal step ve every day ifadeleri için örnek stringler
   // (Kullanımda string olarak yazıldığı için, interface'e eklemeye gerek yok)
   everyDay: string;

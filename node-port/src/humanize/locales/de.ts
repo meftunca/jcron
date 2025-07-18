@@ -137,4 +137,8 @@ export const deLocale: LocaleStrings = {
   timezone: "Zeitzone",
   utc: "UTC",
   local: "Ortszeit",
+
+  // EOD
+  endOfDuration: "Ende der Dauer",
+  untilTheEndOf: "bis zum Ende von",
 };

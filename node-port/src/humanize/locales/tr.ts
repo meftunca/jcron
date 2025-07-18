@@ -137,4 +137,8 @@ export const trLocale: LocaleStrings = {
   timezone: "saat dilimi",
   utc: "UTC",
   local: "yerel saat",
+
+  // EOD
+  endOfDuration: "süre sonu",
+  untilTheEndOf: "sonuna kadar",
 };

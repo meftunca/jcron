@@ -1,0 +1,117 @@
+🚀 JCRON Comprehensive Benchmark - All Computation Modules
+======================================================================
+
+📊 Core Engine Operations
+--------------------------------------------------
+  Engine.next() - Simple Pattern x 365,449 ops/sec ±0.97% (95 runs sampled)
+  Engine.next() - Business Hours x 46,151 ops/sec ±8.07% (88 runs sampled)
+  Engine.next() - Complex Pattern x 70,892 ops/sec ±4.98% (76 runs sampled)
+  Engine.next() - With Timezone x 78,169 ops/sec ±3.07% (89 runs sampled)
+  Engine.next() - With Week of Year x 719 ops/sec ±8.16% (86 runs sampled)
+  Engine.prev() - Business Hours x 66,731 ops/sec ±4.77% (92 runs sampled)
+  Engine.isMatch() - Simple x 373,415 ops/sec ±3.04% (94 runs sampled)
+  Engine.isMatch() - Complex x 296,268 ops/sec ±1.89% (90 runs sampled)
+  🏆 Fastest: Engine.isMatch() - Simple
+
+📊 Schedule Parsing & Validation
+--------------------------------------------------
+  fromCronSyntax() - Simple x 1,308,477 ops/sec ±1.41% (93 runs sampled)
+  fromCronSyntax() - Complex x 1,228,017 ops/sec ±0.53% (97 runs sampled)
+  fromJCronString() - With Timezone x 928,485 ops/sec ±0.72% (95 runs sampled)
+  fromJCronString() - With WOY x 968,543 ops/sec ±0.47% (98 runs sampled)
+  fromJCronString() - With EoD x 764,037 ops/sec ±3.82% (96 runs sampled)
+  fromJCronString() - Complex JCRON x 613,273 ops/sec ±1.87% (96 runs sampled)
+  Schedule Constructor - Direct x 53,161,566 ops/sec ±4.72% (64 runs sampled)
+  Schedule Constructor - With Timezone x 53,640,136 ops/sec ±4.09% (68 runs sampled)
+  validateSchedule() - Valid x 51,266,534 ops/sec ±4.46% (70 runs sampled)
+  isValidScheduleObject() - Check x 49,160,086 ops/sec ±3.10% (71 runs sampled)
+  🏆 Fastest: Schedule Constructor - With Timezone
+
+📊 Convenience Functions
+--------------------------------------------------
+  getNext() - String Input x 26,774 ops/sec ±4.66% (85 runs sampled)
+  getNext() - Schedule Input x 28,047 ops/sec ±2.30% (86 runs sampled)
+  getPrev() - String Input x 35,451 ops/sec ±0.60% (94 runs sampled)
+  getNextN() - 5 iterations x 7,794 ops/sec ±2.42% (89 runs sampled)
+  getNextN() - 10 iterations x 4,399 ops/sec ±1.23% (94 runs sampled)
+  match() - String Input x 70,218 ops/sec ±1.27% (88 runs sampled)
+  match() - Schedule Input x 57,451 ops/sec ±14.90% (80 runs sampled)
+  isTime() - With Tolerance x 56,340 ops/sec ±5.20% (88 runs sampled)
+  🏆 Fastest: match() - String Input
+
+📊 Validation Functions
+--------------------------------------------------
+  isValid() - Simple Cron x 64,536 ops/sec ±4.97% (89 runs sampled)
+  isValid() - Complex Cron x 36,949 ops/sec ±2.71% (92 runs sampled)
+  isValid() - JCRON with TZ x 37,461 ops/sec ±1.33% (90 runs sampled)
+  isValid() - Invalid Expression x 4,483 ops/sec ±1.85% (94 runs sampled)
+  validateCron() - Valid Expression x 970,527 ops/sec ±5.96% (84 runs sampled)
+  validateCron() - Invalid Expression x 916,161 ops/sec ±0.81% (95 runs sampled)
+  getPattern() - Business Hours x 1,062,783 ops/sec ±2.61% (92 runs sampled)
+  matchPattern() - Weekly Check x 1,091,155 ops/sec ±0.61% (90 runs sampled)
+  🏆 Fastest: matchPattern() - Weekly Check
+
+📊 End-of-Duration (EoD) Operations
+--------------------------------------------------
+  parseEoD() - Simple (E30D) x 5,792,515 ops/sec ±2.56% (91 runs sampled)
+  parseEoD() - Time (E1H30M) x 4,000,195 ops/sec ±18.97% (68 runs sampled)
+  parseEoD() - Complex (E1DT12H M) x 1,057,534 ops/sec ±22.02% (60 runs sampled)
+  parseEoD() - Start (S30M) x 5,709,102 ops/sec ±4.47% (83 runs sampled)
+  createEoD() - Days x 49,830,798 ops/sec ±4.28% (73 runs sampled)
+  createEoD() - Complex x 52,007,700 ops/sec ±4.11% (71 runs sampled)
+  isValidEoD() - Valid x 4,493,189 ops/sec ±5.24% (87 runs sampled)
+  isValidEoD() - Invalid x 437,764 ops/sec ±5.12% (91 runs sampled)
+  endOfDuration() - Calculate x 15,902,580 ops/sec ±0.99% (88 runs sampled)
+  🏆 Fastest: createEoD() - Complex
+
+📊 Humanization Functions
+--------------------------------------------------
+  humanizeToString() - Simple x 498,450 ops/sec ±0.70% (91 runs sampled)
+  humanizeToString() - Business Hours x 198,163 ops/sec ±1.06% (93 runs sampled)
+  humanizeToString() - Complex x 79,343 ops/sec ±3.41% (93 runs sampled)
+  humanizeToResult() - With Options x 199,193 ops/sec ±0.58% (95 runs sampled)
+  humanizeFromSchedule() - Schedule Object x 257,882 ops/sec ±0.76% (93 runs sampled)
+  getSupportedLocales() - List x 3,172,125 ops/sec ±0.46% (99 runs sampled)
+  isLocaleSupported() - Check x 408,785,516 ops/sec ±50.97% (28 runs sampled)
+  getDetectedLocale() - Detect x 11,031,023 ops/sec ±0.81% (93 runs sampled)
+  🏆 Fastest: isLocaleSupported() - Check
+
+📊 Stress Tests
+--------------------------------------------------
+  Batch Processing - 100 getNext() calls x 292 ops/sec ±0.88% (87 runs sampled)
+  Batch Validation - 100 isValid() calls x 395 ops/sec ±3.28% (89 runs sampled)
+  Batch Parsing - 100 fromCronSyntax() calls x 12,081 ops/sec ±0.55% (97 runs sampled)
+  Heavy getNextN() - 50 iterations x 6,485 ops/sec ±1.02% (97 runs sampled)
+  Complex Schedule Matching - 100 isMatch() calls x 2,995 ops/sec ±5.06% (91 runs sampled)
+  EoD Parsing Stress - 100 parseEoD() calls x 54,405 ops/sec ±3.10% (93 runs sampled)
+  Humanization Stress - 50 toString() calls x 3,406 ops/sec ±3.77% (91 runs sampled)
+  🏆 Fastest: EoD Parsing Stress - 100 parseEoD() calls
+
+📊 Cache Performance
+--------------------------------------------------
+  Cache Miss - New Schedule Each Time x 27,433 ops/sec ±4.27% (89 runs sampled)
+  Cache Hit - Reused Schedule x 47,062 ops/sec ±0.54% (91 runs sampled)
+  Parser Cache - Repeated fromCronSyntax() x 1,138,884 ops/sec ±0.87% (95 runs sampled)
+  Validation Cache - Repeated isValid() x 39,886 ops/sec ±1.44% (94 runs sampled)
+  🏆 Fastest: Parser Cache - Repeated fromCronSyntax()
+
+======================================================================
+🎉 Comprehensive Benchmark Complete!
+======================================================================
+
+📝 Total Tests Run: 70
+🔍 Key Performance Areas Tested:
+  ✅ Core Engine Operations (next, prev, isMatch)
+  ✅ Schedule Parsing & Validation
+  ✅ Convenience Functions
+  ✅ Validation Functions
+  ✅ End-of-Duration (EoD) Operations
+  ✅ Humanization Functions
+  ✅ Stress Tests & Batch Operations
+  ✅ Cache Performance
+
+
+=== PERFORMANCE SUMMARY ===
+Generated: Thu Jul 17 07:49:00 +03 2025
+Platform: macOS arm64, Bun v1.2.18
+Total Tests: 70 scenarios across 8 categories

@@ -137,4 +137,8 @@ export const ptLocale: LocaleStrings = {
   timezone: "fuso horário",
   utc: "UTC",
   local: "hora local",
+
+  // EOD
+  endOfDuration: "fim da duração",
+  untilTheEndOf: "até o final de",
 };

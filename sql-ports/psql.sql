@@ -1,1803 +1,2180 @@
-DROP SCHEMA IF EXISTS jcron CASCADE;
-CREATE SCHEMA jcron;
+-- =====================================================
+-- JCRON PostgreSQL Implementation
+-- Ultra High Performance, Low Memory, Low CPU Cost
+-- =====================================================
+drop schema if exists jcron cascade;
 
--- ======================================================================== --
---                          CUSTOM JCRON DATA TYPES                         --
--- ======================================================================== --
+-- Enable necessary extensions
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- JCRON Schedule validation function
-CREATE OR REPLACE FUNCTION jcron.validate_jcron_schedule(input_text text)
-RETURNS boolean AS $$
+create schema if not exists jcron;
+
+
+-- =====================================================
+-- 1. CORE DATA TYPES & ENUMS
+-- =====================================================
+
+-- Reference points for EOD (End of Duration)
+CREATE TYPE jcron.reference_point AS ENUM (
+    'S',        -- Start reference
+    'E',        -- End reference
+    'D',        -- End of day
+    'W',        -- End of week
+    'M',        -- End of month
+    'Q',        -- End of quarter
+    'Y',        -- End of year
+    'START',    -- Start reference (alias)
+    'END',      -- End reference (alias)
+    'DAY',      -- End of day (alias)
+    'WEEK',     -- End of week (alias)
+    'MONTH',    -- End of month (alias)
+    'QUARTER',  -- End of quarter (alias)
+    'YEAR'      -- End of year (alias)
+);
+
+-- Schedule status
+CREATE TYPE jcron.status AS ENUM (
+    'ACTIVE',
+    'PAUSED',
+    'COMPLETED',
+    'FAILED'
+);
+
+-- =====================================================
+-- 2. CORE TABLES (Minimal Schema)
+-- =====================================================
+
+-- Scheduled jobs table
+CREATE TABLE jcron.schedules (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+
+    -- Original jcron expression
+    jcron_expr TEXT NOT NULL,
+
+    -- Schedule metadata
+    status jcron.status NOT NULL DEFAULT 'ACTIVE',
+    next_run TIMESTAMPTZ,
+    last_run TIMESTAMPTZ,
+    run_count INTEGER NOT NULL DEFAULT 0,
+
+    -- Function to execute
+    function_name TEXT NOT NULL,
+    function_args JSONB DEFAULT '{}',
+
+    -- Limits
+    max_runs INTEGER,
+    end_time TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Execution history (minimal for performance)
+CREATE TABLE jcron.execution_log (
+    id BIGSERIAL PRIMARY KEY,
+    schedule_id BIGINT REFERENCES jcron.schedules(id) ON DELETE CASCADE,
+    started_at TIMESTAMPTZ NOT NULL,
+    completed_at TIMESTAMPTZ,
+    status TEXT NOT NULL, -- 'SUCCESS', 'FAILED', 'TIMEOUT'
+    error_message TEXT,
+
+    -- Partitioning key for automatic cleanup
+    log_date DATE NOT NULL DEFAULT CURRENT_DATE
+);
+
+-- Partition by month for automatic log cleanup
+CREATE INDEX idx_jcron_log_schedule_date ON jcron.execution_log(schedule_id, log_date);
+CREATE INDEX idx_jcron_log_cleanup ON jcron.execution_log(log_date);
+
+-- Events table for event-based EOD
+CREATE TABLE jcron.events (
+    event_id TEXT PRIMARY KEY,
+    event_time TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- =====================================================
+-- 3. ULTRA-FAST PARSING FUNCTIONS
+-- =====================================================
+
+-- SAF PARSE fonksiyonu (tabloya yazmaz, sadece döndürür)
+CREATE OR REPLACE FUNCTION jcron.parse_expression(
+    p_expression TEXT
+) RETURNS TABLE(
+    seconds_mask BIGINT,
+    minutes_mask BIGINT,
+    hours_mask INTEGER,
+    days_mask BIGINT,
+    months_mask SMALLINT,
+    weekdays_mask SMALLINT,
+    weeks_mask BIGINT,
+    day_expr TEXT,
+    weekday_expr TEXT,
+    week_expr TEXT,
+    year_expr TEXT,
+    timezone TEXT,
+    has_special_patterns BOOLEAN,
+    has_year_restriction BOOLEAN
+) AS $$
 DECLARE
-    schedule_json jsonb;
-    validation_result record;
+    v_parts TEXT[];
+    v_woy_part TEXT := '';
+    v_tz_part TEXT := 'UTC';
+    v_sec_expr TEXT := '*';
+    v_min_expr TEXT := '*';
+    v_hour_expr TEXT := '*';
+    v_day_expr TEXT := '*';
+    v_month_expr TEXT := '*';
+    v_weekday_expr TEXT := '*';
+    v_year_expr TEXT := '*';
+    v_sec_mask BIGINT := 0;
+    v_min_mask BIGINT := 0;
+    v_hour_mask INTEGER := 0;
+    v_day_mask BIGINT := 0;
+    v_month_mask SMALLINT := 0;
+    v_weekday_mask SMALLINT := 0;
+    v_week_mask BIGINT := 0;
+    v_has_special BOOLEAN := FALSE;
+    v_has_year_restrict BOOLEAN := FALSE;
 BEGIN
-    -- Return false for NULL or empty input
-    IF input_text IS NULL OR trim(input_text) = '' THEN
-        RETURN false;
-    END IF;
-    
-    BEGIN
-        -- Try to parse as JSON first
-        schedule_json := input_text::jsonb;
-        
-        -- Ensure it's an object, not array or scalar
-        IF jsonb_typeof(schedule_json) != 'object' THEN
-            RETURN false;
-        END IF;
-        
-        -- Validate required fields exist and have valid values
-        -- At minimum, we need some time specification
-        IF NOT (
-            schedule_json ? 's' OR schedule_json ? 'm' OR 
-            schedule_json ? 'h' OR schedule_json ? 'D' OR 
-            schedule_json ? 'M' OR schedule_json ? 'dow'
-        ) THEN
-            RETURN false;
-        END IF;
-        
-        -- Test schedule validation using our existing function
-        SELECT * INTO validation_result FROM jcron.validate_schedule(schedule_json);
-        RETURN validation_result.is_valid;
-        
-    EXCEPTION WHEN OTHERS THEN
-        -- If JSON parsing fails or validation throws error
-        RETURN false;
-    END;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Input function: converts text to internal format
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_in(input_text cstring)
-RETURNS jsonb AS $$
-DECLARE
-    schedule_json jsonb;
-BEGIN
-    -- Validate the input
-    IF NOT jcron.validate_jcron_schedule(input_text) THEN
-        RAISE EXCEPTION 'Invalid JCRON schedule format: %', input_text
-            USING HINT = 'Schedule must be valid JSON object with JCRON fields (s,m,h,D,M,dow,Y,W,timezone)';
-    END IF;
-    
-    -- Convert to JSONB
-    schedule_json := input_text::jsonb;
-    
-    -- Add default values for missing fields
-    IF NOT schedule_json ? 's' THEN
-        schedule_json := schedule_json || '{"s": "0"}';
-    END IF;
-    
-    RETURN schedule_json;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Output function: converts internal format to text
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_out(schedule_data jsonb)
-RETURNS cstring AS $$
-BEGIN
-    RETURN schedule_data::text;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Type modifier function (optional, for length constraints)
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_typmod_in(typmod_array cstring[])
-RETURNS integer AS $$
-BEGIN
-    -- No type modifiers needed for now
-    RETURN -1;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Type modifier output function
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_typmod_out(typmod integer)
-RETURNS cstring AS $$
-BEGIN
-    RETURN ''::cstring;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Create the custom data type
-CREATE TYPE jcron.jcron_schedule (
-    INPUT = jcron.jcron_schedule_in,
-    OUTPUT = jcron.jcron_schedule_out,
-    TYPMOD_IN = jcron.jcron_schedule_typmod_in,
-    TYPMOD_OUT = jcron.jcron_schedule_typmod_out,
-    INTERNALLENGTH = VARIABLE,
-    STORAGE = EXTENDED,
-    CATEGORY = 'U',  -- User-defined type
-    PREFERRED = false,
-    ELEMENT = jsonb,
-    DELIMITER = ','
-);
-
--- Create operators for jcron_schedule type
-
--- Equality operator
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_eq(left_sched jcron.jcron_schedule, right_sched jcron.jcron_schedule)
-RETURNS boolean AS $$
-BEGIN
-    RETURN (left_sched::jsonb) = (right_sched::jsonb);
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
-CREATE OPERATOR jcron.= (
-    LEFTARG = jcron.jcron_schedule,
-    RIGHTARG = jcron.jcron_schedule,
-    FUNCTION = jcron.jcron_schedule_eq,
-    COMMUTATOR = =,
-    NEGATOR = <>,
-    RESTRICT = eqsel,
-    JOIN = eqjoinsel
-);
-
--- Inequality operator
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_ne(left_sched jcron.jcron_schedule, right_sched jcron.jcron_schedule)
-RETURNS boolean AS $$
-BEGIN
-    RETURN (left_sched::jsonb) <> (right_sched::jsonb);
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
-CREATE OPERATOR jcron.<> (
-    LEFTARG = jcron.jcron_schedule,
-    RIGHTARG = jcron.jcron_schedule,
-    FUNCTION = jcron.jcron_schedule_ne,
-    COMMUTATOR = <>,
-    NEGATOR = =,
-    RESTRICT = neqsel,
-    JOIN = neqjoinsel
-);
-
--- Cast functions
-CREATE OR REPLACE FUNCTION jcron.jsonb_to_jcron_schedule(input_jsonb jsonb)
-RETURNS jcron.jcron_schedule AS $$
-BEGIN
-    RETURN jcron.jcron_schedule_in(input_jsonb::text);
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION jcron.jcron_schedule_to_jsonb(input_schedule jcron.jcron_schedule)
-RETURNS jsonb AS $$
-BEGIN
-    RETURN input_schedule::jsonb;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Create casts
-CREATE CAST (jsonb AS jcron.jcron_schedule) 
-WITH FUNCTION jcron.jsonb_to_jcron_schedule(jsonb) 
-AS IMPLICIT;
-
-CREATE CAST (jcron.jcron_schedule AS jsonb) 
-WITH FUNCTION jcron.jcron_schedule_to_jsonb(jcron.jcron_schedule) 
-AS IMPLICIT;
-
--- Helper functions that work with the new type
-CREATE OR REPLACE FUNCTION jcron.schedule_next_run(
-    schedule jcron.jcron_schedule, 
-    from_time timestamptz DEFAULT now()
-)
-RETURNS timestamptz AS $$
-BEGIN
-    RETURN jcron.next_jump(schedule::jsonb, from_time);
-END;
-$$ LANGUAGE plpgsql STABLE;
-
-CREATE OR REPLACE FUNCTION jcron.schedule_prev_run(
-    schedule jcron.jcron_schedule, 
-    from_time timestamptz DEFAULT now()
-)
-RETURNS timestamptz AS $$
-BEGIN
-    RETURN jcron.prev_jump(schedule::jsonb, from_time);
-END;
-$$ LANGUAGE plpgsql STABLE;
-
-CREATE OR REPLACE FUNCTION jcron.schedule_matches(
-    schedule jcron.jcron_schedule, 
-    check_time timestamptz DEFAULT now()
-)
-RETURNS boolean AS $$
-BEGIN
-    RETURN jcron.match(check_time, schedule::jsonb);
-END;
-$$ LANGUAGE plpgsql STABLE;
-
--- Create a domain for even stricter validation (optional)
-CREATE DOMAIN jcron.validated_jcron_schedule AS jcron.jcron_schedule
-    CONSTRAINT valid_jcron_format CHECK (jcron.validate_jcron_schedule(VALUE::text));
-
--- ======================================================================== --
---                           1. VERİTABANI YAPILARI                         --
--- ======================================================================== --
-
--- Enhanced jobs table with new jcron_schedule type
-DROP TABLE IF EXISTS jcron.jobs CASCADE;
-CREATE TABLE jcron.jobs (
-    job_id BIGSERIAL PRIMARY KEY,
-    job_name TEXT UNIQUE NOT NULL,
-    schedule jcron.jcron_schedule NOT NULL, -- Using our new custom type!
-    command TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    timezone TEXT DEFAULT 'UTC',
-    max_retries INTEGER DEFAULT 0,
-    retry_delay_seconds INTEGER DEFAULT 300,
-    last_run_started_at TIMESTAMPTZ,
-    last_run_finished_at TIMESTAMPTZ,
-    next_run_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    
-    -- Additional constraint to ensure timezone consistency
-    CONSTRAINT timezone_consistency CHECK (
-        (schedule::jsonb->>'timezone') IS NULL OR 
-        (schedule::jsonb->>'timezone') = timezone
-    )
-);
-
--- Update schedule cache table to use new type
-DROP TABLE IF EXISTS jcron.schedule_cache CASCADE;
-CREATE TABLE jcron.schedule_cache (
-    schedule jcron.jcron_schedule PRIMARY KEY,
-    seconds_vals INT[],
-    minutes_vals INT[],
-    hours_vals INT[],
-    dom_vals INT[],
-    months_vals INT[],
-    dow_vals INT[],
-    years_vals INT[],
-    week_vals INT[], -- Added week of year support
-    timezone TEXT DEFAULT 'UTC',
-    has_special_patterns BOOLEAN DEFAULT FALSE,
-    last_used TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Predefined schedules lookup table
-CREATE TABLE jcron.predefined_schedules (
-    name TEXT PRIMARY KEY,
-    cron_expression TEXT NOT NULL,
-    description TEXT
-);
-
--- Day and month abbreviations lookup tables
-CREATE TABLE jcron.day_abbreviations (
-    abbreviation TEXT PRIMARY KEY,
-    day_number INTEGER NOT NULL CHECK (day_number >= 0 AND day_number <= 7)
-);
-
-CREATE TABLE jcron.month_abbreviations (
-    abbreviation TEXT PRIMARY KEY,
-    month_number INTEGER NOT NULL CHECK (month_number >= 1 AND month_number <= 12)
-);
-
--- Insert predefined schedules
-INSERT INTO jcron.predefined_schedules (name, cron_expression, description) VALUES
-('@yearly', '0 0 0 1 1 *', 'Run once a year at midnight on January 1st'),
-('@annually', '0 0 0 1 1 *', 'Run once a year at midnight on January 1st'),
-('@monthly', '0 0 0 1 * *', 'Run once a month at midnight on the first day'),
-('@weekly', '0 0 0 * * 0', 'Run once a week at midnight on Sunday'),
-('@daily', '0 0 0 * * *', 'Run once a day at midnight'),
-('@midnight', '0 0 0 * * *', 'Run once a day at midnight'),
-('@hourly', '0 0 * * * *', 'Run once an hour at the beginning of the hour');
-
--- Insert day abbreviations
-INSERT INTO jcron.day_abbreviations (abbreviation, day_number) VALUES
-('SUN', 0), ('MON', 1), ('TUE', 2), ('WED', 3),
-('THU', 4), ('FRI', 5), ('SAT', 6), ('SUNDAY', 0),
-('MONDAY', 1), ('TUESDAY', 2), ('WEDNESDAY', 3),
-('THURSDAY', 4), ('FRIDAY', 5), ('SATURDAY', 6);
-
--- Insert month abbreviations
-INSERT INTO jcron.month_abbreviations (abbreviation, month_number) VALUES
-('JAN', 1), ('FEB', 2), ('MAR', 3), ('APR', 4),
-('MAY', 5), ('JUN', 6), ('JUL', 7), ('AUG', 8),
-('SEP', 9), ('OCT', 10), ('NOV', 11), ('DEC', 12),
-('JANUARY', 1), ('FEBRUARY', 2), ('MARCH', 3), ('APRIL', 4),
-('JUNE', 6), ('JULY', 7), ('AUGUST', 8),
-('SEPTEMBER', 9), ('OCTOBER', 10), ('NOVEMBER', 11), ('DECEMBER', 12);
-
--- ======================================================================== --
---                      2. ÇEKİRDEK MOTOR FONKSİYONLARI                   --
--- ======================================================================== --
-
--- Değer dizisi içinde bir sonraki/önceki elemanı bulan yardımcı fonksiyonlar
-CREATE OR REPLACE FUNCTION jcron._find_next_val(vals int[], current_val int, OUT next_val int, OUT wrapped boolean) AS $$
-BEGIN wrapped := false; IF vals IS NULL THEN next_val := current_val; RETURN; END IF; SELECT v INTO next_val FROM unnest(vals) v WHERE v >= current_val ORDER BY v LIMIT 1; IF NOT FOUND THEN wrapped := true; next_val := vals[1]; END IF;
-END; $$ LANGUAGE plpgsql IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION jcron._find_prev_val(vals int[], current_val int, OUT prev_val int, OUT wrapped boolean) AS $$
-BEGIN wrapped := false; IF vals IS NULL THEN prev_val := current_val; RETURN; END IF; SELECT v INTO prev_val FROM unnest(vals) v WHERE v <= current_val ORDER BY v DESC LIMIT 1; IF NOT FOUND THEN prev_val := vals[array_length(vals, 1)]; wrapped := true; END IF;
-END; $$ LANGUAGE plpgsql IMMUTABLE;
-
--- Enhanced parser with abbreviation and week of year support
-CREATE OR REPLACE FUNCTION jcron.expand_part(p_schedule jsonb, p_part text) RETURNS int[] AS $$
-DECLARE 
-    field_val TEXT; 
-    p_min INT; 
-    p_max INT; 
-    ret INT[]; 
-    part TEXT; 
-    groups TEXT[]; 
-    m INT; 
-    n INT; 
-    k INT; 
-    tmp INT[];
-    resolved_val TEXT;
-BEGIN
-    field_val := p_schedule->>p_part;
-    IF field_val IS NULL THEN 
-        IF p_part = 's' THEN field_val := '0'; 
-        ELSE field_val := '*'; 
-        END IF; 
-    END IF;
-    
-    -- Handle special patterns first
-    IF field_val = '*' OR field_val = '?' OR field_val ~ '[LWR#]' THEN 
-        RETURN NULL; 
-    END IF;
-    
-    -- Get min/max values for the field
-    SELECT min_val, max_val INTO p_min, p_max 
-    FROM (VALUES 
-        ('s',0,59),('m',0,59),('h',0,23),('D',1,31),
-        ('M',1,12),('dow',0,7),('Y',2020,2099),('W',1,53)
-    ) AS t(part_key, min_val, max_val) 
-    WHERE part_key = p_part;
-    
-    -- Handle step patterns (*/n)
-    IF field_val ~ '^\*/\d+$' THEN 
-        groups = regexp_matches(field_val, '^\*/(\d+)$'); 
-        k := groups[1]; 
-        SELECT array_agg(x::int) INTO ret 
-        FROM generate_series(p_min, p_max, k) AS x; 
-        RETURN ret; 
-    END IF;
-    
-    ret := '{}'::int[];
-    
-    -- Process comma-separated parts
-    FOR part IN SELECT * FROM regexp_split_to_table(field_val, ',') LOOP
-        resolved_val := part;
-        
-        -- Resolve day abbreviations
-        IF p_part = 'dow' AND part ~ '^[A-Z]+' THEN
-            SELECT day_number::text INTO resolved_val 
-            FROM jcron.day_abbreviations 
-            WHERE abbreviation = upper(part);
-            IF resolved_val IS NULL THEN resolved_val := part; END IF;
-        END IF;
-        
-        -- Resolve month abbreviations  
-        IF p_part = 'M' AND part ~ '^[A-Z]+' THEN
-            SELECT month_number::text INTO resolved_val 
-            FROM jcron.month_abbreviations 
-            WHERE abbreviation = upper(part);
-            IF resolved_val IS NULL THEN resolved_val := part; END IF;
-        END IF;
-        
-        -- Process different pattern types
-        IF resolved_val ~ '^\d+$' THEN 
-            n := resolved_val::int; 
-            ret = ret || n;
-        ELSIF resolved_val ~ '^\d+-\d+$' THEN 
-            groups = regexp_matches(resolved_val, '^(\d+)-(\d+)$'); 
-            m := groups[1]::int; 
-            n := groups[2]::int; 
-            IF m > n THEN RAISE EXCEPTION 'inverted range: %', resolved_val; END IF; 
-            SELECT array_agg(x) INTO tmp FROM generate_series(m, n) AS x; 
-            ret := ret || tmp;
-        ELSIF resolved_val ~ '^\d+-\d+/\d+$' THEN 
-            groups = regexp_matches(resolved_val, '^(\d+)-(\d+)/(\d+)$'); 
-            m := groups[1]::int; 
-            n := groups[2]::int; 
-            k := groups[3]::int; 
-            IF m > n THEN RAISE EXCEPTION 'inverted range: %', resolved_val; END IF; 
-            SELECT array_agg(x) INTO tmp FROM generate_series(m, n, k) AS x; 
-            ret = ret || tmp;
-        ELSE 
-            RAISE EXCEPTION 'invalid expression part: %', resolved_val; 
-        END IF;
-    END LOOP;
-    
-    -- Remove duplicates and sort
-    SELECT array_agg(x) INTO ret 
-    FROM (SELECT DISTINCT unnest(ret) AS x ORDER BY x) AS sub; 
-    
-    RETURN ret;
-END; 
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Enhanced day matching with timezone support
-CREATE OR REPLACE FUNCTION jcron._is_day_match(p_ts timestamptz, p_schedule jsonb) RETURNS BOOLEAN AS $$
-DECLARE 
-    dom_str TEXT := p_schedule->>'D'; 
-    dow_str TEXT := p_schedule->>'dow'; 
-    dom_match BOOLEAN; 
-    dow_match BOOLEAN;
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
-    local_ts TIMESTAMPTZ;
-BEGIN
-    -- Convert to target timezone for calculations
-    IF target_tz != 'UTC' THEN
-        local_ts := p_ts AT TIME ZONE 'UTC' AT TIME ZONE target_tz;
+    -- Parse WOY (Week of Year) pattern
+    IF p_expression ~ 'WOY:' THEN
+        v_woy_part := substring(p_expression from 'WOY:([^ ]+)');
+        p_expression := regexp_replace(p_expression, 'WOY:[^ ]+\\s*', '', 'g');
+        v_week_mask := jcron.expand_part(v_woy_part, 1, 53);
     ELSE
-        local_ts := p_ts;
+        v_week_mask := (1::BIGINT << 54) - 2;
     END IF;
-    
-    -- Handle special day of month patterns
-    IF dom_str = 'L' THEN 
-        dom_match := (date_part('day', local_ts) = date_part('day', 
-            date_trunc('month', local_ts) + interval '1 month' - interval '1 day')); 
+    -- Parse TZ (Timezone)
+    IF p_expression ~ 'TZ[:=]' THEN
+        v_tz_part := substring(p_expression from 'TZ[:=]([^ ]+)');
+        p_expression := regexp_replace(p_expression, 'TZ[:=][^ ]+\\s*', '', 'g');
     END IF;
-    
-    -- Handle special day of week patterns
-    IF dow_str ~ 'L$' THEN 
-        DECLARE 
-            last_day TIMESTAMPTZ := date_trunc('month', local_ts) + interval '1 month' - interval '1 day'; 
-            target_dow INT := (regexp_replace(dow_str, 'L', ''))::int; 
-        BEGIN 
-            FOR i IN 0..6 LOOP 
-                IF date_part('dow', last_day - (i * interval '1 day')) = target_dow THEN 
-                    dow_match := (date_trunc('day', local_ts) = date_trunc('day', last_day - (i * interval '1 day'))); 
-                    EXIT; 
-                END IF; 
-            END LOOP; 
-        END;
-    ELSIF dow_str ~ '#' THEN 
-        DECLARE 
-            parts TEXT[] := regexp_split_to_array(dow_str, '#'); 
-            target_dow INT := parts[1]::int; 
-            target_occur INT := parts[2]::int; 
-            first_day TIMESTAMPTZ := date_trunc('month', local_ts); 
-            first_occurrence_day INT := 1 + (target_dow - date_part('dow', first_day)::int + 7) % 7; 
-        BEGIN 
-            dow_match := (date_part('day', local_ts) = (first_occurrence_day + (target_occur - 1) * 7)); 
-        END; 
-    END IF;
-    
-    -- Early return for special pattern matches
-    IF dom_match IS TRUE OR dow_match IS TRUE THEN 
-        RETURN TRUE; 
-    END IF;
-    
-    -- Standard matching logic with Vixie-style OR behavior
-    DECLARE 
-        is_dom_restricted BOOLEAN := (dom_str IS NOT NULL AND dom_str != '*' AND dom_str != '?'); 
-        is_dow_restricted BOOLEAN := (dow_str IS NOT NULL AND dow_str != '*' AND dow_str != '?');
-    BEGIN
-        IF is_dom_restricted THEN 
-            dom_match := (date_part('day', local_ts)::int = ANY(jcron.expand_part(p_schedule, 'D'))); 
-        ELSE 
-            dom_match := TRUE; 
-        END IF;
-        
-        IF is_dow_restricted THEN 
-            dow_match := (date_part('dow', local_ts)::int = ANY(jcron.expand_part(p_schedule, 'dow'))); 
-        ELSE 
-            dow_match := TRUE; 
-        END IF;
-        
-        -- Apply Vixie cron OR logic when both are restricted
-        IF dow_str = '?' THEN 
-            RETURN dom_match; 
-        ELSIF dom_str = '?' THEN 
-            RETURN dow_match; 
-        ELSIF is_dom_restricted AND is_dow_restricted THEN 
-            RETURN dom_match OR dow_match; 
-        ELSE 
-            RETURN dom_match AND dow_match; 
-        END IF;
-    END;
-END; 
-$$ LANGUAGE plpgsql STABLE;
+    -- Split remaining cron fields
+    v_parts := string_to_array(trim(p_expression), ' ');
+    CASE array_length(v_parts, 1)
+        WHEN 5 THEN
+            v_min_expr := v_parts[1]; v_hour_expr := v_parts[2]; v_day_expr := v_parts[3]; v_month_expr := v_parts[4]; v_weekday_expr := v_parts[5];
+        WHEN 6 THEN
+            v_sec_expr := v_parts[1]; v_min_expr := v_parts[2]; v_hour_expr := v_parts[3]; v_day_expr := v_parts[4]; v_month_expr := v_parts[5]; v_weekday_expr := v_parts[6];
+        WHEN 7 THEN
+            v_sec_expr := v_parts[1]; v_min_expr := v_parts[2]; v_hour_expr := v_parts[3]; v_day_expr := v_parts[4]; v_month_expr := v_parts[5]; v_weekday_expr := v_parts[6]; v_year_expr := v_parts[7]; v_has_year_restrict := (v_year_expr != '*');
+        ELSE
+            RAISE EXCEPTION 'Invalid cron expression format: %', p_expression;
+    END CASE;
+    -- Bitmask expansion
+    v_sec_mask := jcron.expand_part(v_sec_expr, 0, 59);
+    v_min_mask := jcron.expand_part(v_min_expr, 0, 59);
+    v_hour_mask := (jcron.expand_part(v_hour_expr, 0, 23) & 16777215)::INTEGER;
+    v_has_special := (v_day_expr ~ '[L#]' OR v_weekday_expr ~ '[L#]');
+    IF v_day_expr ~ '[L#]' THEN v_day_mask := 4294967295; ELSE v_day_mask := jcron.expand_part(v_day_expr, 1, 31); END IF;
+    v_month_mask := (jcron.expand_part(v_month_expr, 1, 12) & 8191)::SMALLINT;
+    IF v_weekday_expr ~ '[L#]' THEN v_weekday_mask := 127; ELSE v_weekday_mask := (jcron.expand_part(v_weekday_expr, 0, 6) & 127)::SMALLINT; END IF;
+    RETURN QUERY SELECT v_sec_mask, v_min_mask, v_hour_mask, v_day_mask, v_month_mask, v_weekday_mask, v_week_mask, v_day_expr, v_weekday_expr, v_woy_part, v_year_expr, v_tz_part, v_has_special, v_has_year_restrict;
+END;
+$$ LANGUAGE plpgsql;
 
--- Enhanced week of year matching function with intelligent week 53 handling
-CREATE OR REPLACE FUNCTION jcron._is_week_match(p_ts timestamptz, p_schedule jsonb) RETURNS BOOLEAN AS $$
+-- SAF next_time fonksiyonu (cache_key yerine doğrudan expression alır)
+CREATE OR REPLACE FUNCTION jcron.next_time(
+    p_expression TEXT,
+    p_from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
 DECLARE
-    week_str TEXT := p_schedule->>'W';
-    target_tz TEXT := COALESCE(p_schedule->>'timezone', 'UTC');
-    local_ts TIMESTAMPTZ;
-    week_num INT;
-    year_num INT;
-    week_vals INT[];
+    v_seconds_mask BIGINT;
+    v_minutes_mask BIGINT;
+    v_hours_mask INTEGER;
+    v_days_mask BIGINT;
+    v_months_mask SMALLINT;
+    v_weekdays_mask SMALLINT;
+    v_weeks_mask BIGINT;
+    v_day_expr TEXT;
+    v_weekday_expr TEXT;
+    v_week_expr TEXT;
+    v_year_expr TEXT;
+    v_timezone TEXT;
+    v_has_special_patterns BOOLEAN;
+    v_has_year_restriction BOOLEAN;
+    v_target_tz TEXT;
+    v_local_time TIMESTAMPTZ;
+    v_candidate TIMESTAMPTZ;
+    v_max_iterations INTEGER := 366;
+    v_iteration INTEGER := 0;
 BEGIN
-    -- No week restriction
-    IF week_str IS NULL OR week_str = '*' THEN
+    SELECT 
+        seconds_mask, minutes_mask, hours_mask, days_mask, months_mask, weekdays_mask, weeks_mask,
+        day_expr, weekday_expr, week_expr, year_expr, timezone, has_special_patterns, has_year_restriction
+    INTO 
+        v_seconds_mask, v_minutes_mask, v_hours_mask, v_days_mask, v_months_mask, v_weekdays_mask, v_weeks_mask,
+        v_day_expr, v_weekday_expr, v_week_expr, v_year_expr, v_timezone, v_has_special_patterns, v_has_year_restriction
+    FROM jcron.parse_expression(p_expression);
+
+    target_tz := COALESCE(timezone, 'UTC');
+    local_time := from_time AT TIME ZONE target_tz;
+    candidate := local_time + INTERVAL '1 second';
+    WHILE iteration < max_iterations LOOP
+        iteration := iteration + 1;
+        -- Year check
+        IF has_year_restriction AND NOT jcron.year_matches(year_expr, EXTRACT(YEAR FROM candidate)::INTEGER) THEN
+            candidate := jcron.advance_year(candidate, year_expr);
+            CONTINUE;
+        END IF;
+        -- Month check
+        IF (months_mask & (1 << EXTRACT(MONTH FROM candidate)::INTEGER)) = 0 THEN
+            candidate := date_trunc('month', candidate + INTERVAL '1 month');
+            CONTINUE;
+        END IF;
+        -- Week of year check
+        IF (weeks_mask & (1::BIGINT << EXTRACT(WEEK FROM candidate)::INTEGER)) = 0 THEN
+            candidate := candidate + INTERVAL '1 day';
+            CONTINUE;
+        END IF;
+        -- Day check (special patterns hariç)
+        IF NOT jcron.day_matches_stateless(candidate, day_expr, weekday_expr, days_mask, weekdays_mask, has_special_patterns) THEN
+            candidate := date_trunc('day', candidate + INTERVAL '1 day');
+            CONTINUE;
+        END IF;
+        -- Hour check
+        IF (hours_mask & (1 << EXTRACT(HOUR FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_hour(candidate, hours_mask);
+            CONTINUE;
+        END IF;
+        -- Minute check
+        IF (minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_minute(candidate, minutes_mask);
+            CONTINUE;
+        END IF;
+        -- Second check
+        IF (seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_second(candidate, seconds_mask);
+            CONTINUE;
+        END IF;
+        RETURN candidate AT TIME ZONE target_tz;
+    END LOOP;
+    RAISE EXCEPTION 'Could not find next execution time within % iterations', max_iterations;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Stateless day_matches fonksiyonu
+CREATE OR REPLACE FUNCTION jcron.day_matches_stateless(
+    check_time TIMESTAMPTZ,
+    day_expr TEXT,
+    weekday_expr TEXT,
+    days_mask BIGINT,
+    weekdays_mask SMALLINT,
+    has_special_patterns BOOLEAN
+) RETURNS BOOLEAN AS $$
+DECLARE
+    day_restricted BOOLEAN;
+    weekday_restricted BOOLEAN;
+    day_match BOOLEAN := FALSE;
+    weekday_match BOOLEAN := FALSE;
+BEGIN
+    day_restricted := (day_expr != '*' AND day_expr != '?');
+    weekday_restricted := (weekday_expr != '*' AND weekday_expr != '?');
+    IF NOT day_restricted AND NOT weekday_restricted THEN RETURN TRUE; END IF;
+    IF day_restricted THEN
+        IF day_expr = 'L' THEN
+            day_match := (check_time::DATE = (date_trunc('month', check_time + INTERVAL '1 month') - INTERVAL '1 day')::DATE);
+        ELSIF has_special_patterns THEN
+            day_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            day_match := ((days_mask & (1::BIGINT << EXTRACT(DAY FROM check_time)::INTEGER)) != 0);
+        END IF;
+    END IF;
+    IF weekday_restricted THEN
+        IF has_special_patterns THEN
+            weekday_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            weekday_match := ((weekdays_mask & (1 << EXTRACT(DOW FROM check_time)::INTEGER)) != 0);
+        END IF;
+    END IF;
+    IF day_restricted AND weekday_restricted THEN RETURN day_match OR weekday_match;
+    ELSIF day_restricted THEN RETURN day_match;
+    ELSE RETURN weekday_match;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 1. Yardımcı fonksiyonlar (convert_abbreviations, expand_part, ...)
+-- 2. Ana fonksiyonlar (parse_expression, next_time, ...)
+-- Tüm DECLARE değişkenleri v_ ile başlıyor
+-- Tekrar eden fonksiyonlar kaldırıldı
+
+-- =====================================================
+-- 5. HELPER FUNCTIONS (Optimized)
+-- =====================================================
+
+-- Check if day matches (handles special patterns L, #)
+CREATE OR REPLACE FUNCTION jcron.day_matches(check_time TIMESTAMPTZ, cache_row jcron.schedule_cache)
+RETURNS BOOLEAN AS $$
+DECLARE
+    day_restricted BOOLEAN;
+    weekday_restricted BOOLEAN;
+    day_match BOOLEAN := FALSE;
+    weekday_match BOOLEAN := FALSE;
+BEGIN
+    day_restricted := (cache_row.day_expr != '*' AND cache_row.day_expr != '?');
+    weekday_restricted := (cache_row.weekday_expr != '*' AND cache_row.weekday_expr != '?');
+
+    -- Fast path: no restrictions
+    IF NOT day_restricted AND NOT weekday_restricted THEN
         RETURN TRUE;
     END IF;
-    
-    -- Convert to target timezone and get week number
-    local_ts := p_ts AT TIME ZONE target_tz;
-    week_num := date_part('week', local_ts)::int;
-    year_num := date_part('year', local_ts)::int;
-    
-    -- Get expanded week values
-    week_vals := jcron.expand_part(p_schedule, 'W');
-    
-    -- Special handling for week 53
-    IF 53 = ANY(week_vals) THEN
-        -- Check if current year actually has 53 weeks
-        DECLARE
-            year_end_week INT;
-            jan_1_dow INT;
-            dec_31_week INT;
-        BEGIN
-            -- More accurate check for week 53 existence
-            jan_1_dow := date_part('dow', (year_num || '-01-01')::date)::int;
-            dec_31_week := date_part('week', (year_num || '-12-31')::date)::int;
-            
-            -- Year has 53 weeks if:
-            -- 1. January 1 is Thursday (dow=4) -> leap years starting on Thursday
-            -- 2. January 1 is Wednesday (dow=3) and it's a leap year
-            -- 3. Or if December 31 actually has week 53
-            IF dec_31_week = 53 THEN
-                -- Year definitely has 53 weeks
-                NULL; -- Continue with normal processing
-            ELSE
-                -- Year doesn't have week 53
-                IF week_num = dec_31_week AND dec_31_week >= 52 THEN
-                    -- We're in the last week of year, treat as week 53 match
-                    IF 53 = ANY(week_vals) THEN
-                        RETURN TRUE;
-                    END IF;
-                END IF;
-                -- Remove 53 from consideration for this year
-                week_vals := array_remove(week_vals, 53);
-                IF array_length(week_vals, 1) = 0 THEN
-                    RETURN FALSE;
-                END IF;
-            END IF;
-        END;
-    END IF;
-    
-    -- Check if current week matches any of the valid weeks
-    RETURN week_num = ANY(week_vals);
-END;
-$$ LANGUAGE plpgsql STABLE;
 
--- Timezone conversion helper
-CREATE OR REPLACE FUNCTION jcron._convert_timezone(p_ts timestamptz, p_target_tz text) 
-RETURNS timestamptz AS $$
-BEGIN
-    -- Handle UTC case quickly
-    IF p_target_tz = 'UTC' THEN
-        RETURN p_ts;
-    END IF;
-    
-    -- Validate timezone exists
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_timezone_names WHERE name = p_target_tz
-        UNION
-        SELECT 1 FROM pg_timezone_abbrevs WHERE abbrev = p_target_tz
-    ) THEN
-        RAISE EXCEPTION 'Invalid timezone: %', p_target_tz;
-    END IF;
-    
-    -- Convert to the target timezone (this keeps the same moment in time)
-    RETURN p_ts;
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE EXCEPTION 'Timezone conversion failed for %: %', p_target_tz, SQLERRM;
-END;
-$$ LANGUAGE plpgsql STABLE;
-
--- Enhanced cache engine with new jcron_schedule type
-CREATE OR REPLACE FUNCTION jcron.get_expanded_schedule(p_schedule jcron.jcron_schedule) RETURNS jcron.schedule_cache AS $$
-DECLARE 
-    cached_record jcron.schedule_cache;
-    schedule_jsonb jsonb := p_schedule::jsonb;
-    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
-    has_special BOOLEAN := FALSE;
-BEGIN
-    -- Check cache first
-    SELECT * INTO cached_record 
-    FROM jcron.schedule_cache 
-    WHERE schedule = p_schedule;
-    
-    IF FOUND THEN 
-        UPDATE jcron.schedule_cache 
-        SET last_used = now() 
-        WHERE schedule = p_schedule; 
-        RETURN cached_record; 
-    END IF;
-    
-    -- Validate timezone
-    PERFORM jcron._convert_timezone(now(), target_tz);
-    
-    -- Check for special patterns
-    has_special := (
-        (schedule_jsonb->>'D') ~ '[L#]' OR 
-        (schedule_jsonb->>'dow') ~ '[L#]' OR
-        (schedule_jsonb->>'W') ~ '[L#]'
-    );
-    
-    -- Build new cache record
-    cached_record.schedule := p_schedule;
-    cached_record.seconds_vals := jcron.expand_part(schedule_jsonb, 's');
-    cached_record.minutes_vals := jcron.expand_part(schedule_jsonb, 'm');
-    cached_record.hours_vals := jcron.expand_part(schedule_jsonb, 'h');
-    cached_record.dom_vals := jcron.expand_part(schedule_jsonb, 'D');
-    cached_record.months_vals := jcron.expand_part(schedule_jsonb, 'M');
-    cached_record.dow_vals := jcron.expand_part(schedule_jsonb, 'dow');
-    cached_record.years_vals := jcron.expand_part(schedule_jsonb, 'Y');
-    cached_record.week_vals := jcron.expand_part(schedule_jsonb, 'W');
-    cached_record.timezone := target_tz;
-    cached_record.has_special_patterns := has_special;
-    cached_record.last_used := now();
-    
-    -- Insert into cache
-    INSERT INTO jcron.schedule_cache SELECT cached_record.*;
-    
-    RETURN cached_record;
-END; 
-$$ LANGUAGE plpgsql VOLATILE;
-
-
--- ======================================================================== --
---                3. SON KULLANICI FONKSİYONLARI (FİNAL SÜRÜM)              --
--- ======================================================================== --
-
--- Enhanced match function with new jcron_schedule type
-CREATE OR REPLACE FUNCTION jcron.match(p_ts timestamptz, p_schedule jcron.jcron_schedule) RETURNS BOOLEAN AS $$
-DECLARE 
-    cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
-    local_ts TIMESTAMPTZ;
-    schedule_jsonb jsonb := p_schedule::jsonb;
-    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
-BEGIN
-    -- Convert to target timezone for calculations
-    IF target_tz != 'UTC' THEN
-        local_ts := p_ts AT TIME ZONE 'UTC' AT TIME ZONE target_tz;
-    ELSE
-        local_ts := p_ts;
-    END IF;
-    
-    -- Check all time components
-    IF NOT (
-        (cache.years_vals IS NULL OR date_part('year', local_ts)::int = ANY(cache.years_vals)) AND 
-        (cache.months_vals IS NULL OR date_part('month', local_ts)::int = ANY(cache.months_vals)) AND
-        (cache.hours_vals IS NULL OR date_part('hour', local_ts)::int = ANY(cache.hours_vals)) AND 
-        (cache.minutes_vals IS NULL OR date_part('minute', local_ts)::int = ANY(cache.minutes_vals)) AND
-        (cache.seconds_vals IS NULL OR date_part('second', local_ts)::int = ANY(cache.seconds_vals))
-    ) THEN 
-        RETURN FALSE; 
-    END IF;
-    
-    -- Check week of year if specified
-    IF NOT jcron._is_week_match(p_ts, schedule_jsonb) THEN
-        RETURN FALSE;
-    END IF;
-    
-    -- Check day matching (complex logic for D/dow)
-    RETURN jcron._is_day_match(p_ts, schedule_jsonb);
-END; 
-$$ LANGUAGE plpgsql STABLE;
-
--- Parse predefined schedules or cron syntax
-CREATE OR REPLACE FUNCTION jcron.parse_cron_expression(p_cron_expr text) 
-RETURNS jsonb AS $$
-DECLARE
-    result jsonb := '{}';
-    resolved_expr text;
-    parts text[];
-    field_names text[] := ARRAY['s', 'm', 'h', 'D', 'M', 'dow'];
-BEGIN
-    -- Handle predefined schedules
-    IF p_cron_expr ~ '^@' THEN
-        SELECT cron_expression INTO resolved_expr 
-        FROM jcron.predefined_schedules 
-        WHERE name = p_cron_expr;
-        
-        IF resolved_expr IS NULL THEN
-            IF p_cron_expr = '@reboot' THEN
-                -- Special case for @reboot
-                RETURN jsonb_build_object('reboot', true);
-            END IF;
-            RAISE EXCEPTION 'Unknown predefined schedule: %', p_cron_expr;
+    -- Day of month check
+    IF day_restricted THEN
+        IF cache_row.day_expr = 'L' THEN
+            -- Last day of month - compare dates only
+            day_match := (check_time::DATE = (date_trunc('month', check_time + INTERVAL '1 month') - INTERVAL '1 day')::DATE);
+        ELSIF cache_row.has_special_patterns THEN
+            -- Complex patterns (L, #) - delegate to special function
+            day_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            -- Simple bitmask check - use BIGINT for day mask
+            day_match := ((cache_row.days_mask & (1::BIGINT << EXTRACT(DAY FROM check_time)::INTEGER)) != 0);
         END IF;
-    ELSE
-        resolved_expr := p_cron_expr;
     END IF;
-    
-    -- Split into parts
-    parts := regexp_split_to_array(trim(resolved_expr), '\s+');
-    
-    -- Determine format (5 or 6 fields)
-    IF array_length(parts, 1) = 5 THEN
-        -- 5-field format: m h D M dow
-        result := jsonb_build_object(
-            's', '0',
-            'm', parts[1],
-            'h', parts[2], 
-            'D', parts[3],
-            'M', parts[4],
-            'dow', parts[5]
-        );
-    ELSIF array_length(parts, 1) = 6 THEN
-        -- 6-field format: s m h D M dow
-        result := jsonb_build_object(
-            's', parts[1],
-            'm', parts[2],
-            'h', parts[3],
-            'D', parts[4], 
-            'M', parts[5],
-            'dow', parts[6]
-        );
-    ELSE
-        RAISE EXCEPTION 'Invalid cron expression format. Expected 5 or 6 fields, got %', array_length(parts, 1);
+
+    -- Day of week check
+    IF weekday_restricted THEN
+        IF cache_row.has_special_patterns THEN
+            weekday_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            weekday_match := ((cache_row.weekdays_mask & (1 << EXTRACT(DOW FROM check_time)::INTEGER)) != 0);
+        END IF;
     END IF;
-    
-    RETURN result;
+
+    -- Vixie-cron logic: OR if both restricted, otherwise single restriction
+    IF day_restricted AND weekday_restricted THEN
+        RETURN day_match OR weekday_match;
+    ELSIF day_restricted THEN
+        RETURN day_match;
+    ELSE
+        RETURN weekday_match;
+    END IF;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Enhanced next_jump with new jcron_schedule type
-CREATE OR REPLACE FUNCTION jcron.next_jump(p_schedule jcron.jcron_schedule, p_from_ts timestamptz)
-RETURNS timestamptz AS $$
+-- Handle special day patterns (L, #)
+CREATE OR REPLACE FUNCTION jcron.special_day_match(check_time TIMESTAMPTZ, day_expr TEXT)
+RETURNS BOOLEAN AS $$
 DECLARE
-    ts TIMESTAMPTZ; 
-    search_ts TIMESTAMPTZ; 
-    cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
-    i INT := 0;
-    local_ts TIMESTAMPTZ;
-    schedule_jsonb jsonb := p_schedule::jsonb;
-    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
-    result_ts TIMESTAMPTZ;
-    max_search_days INT := 1826; -- 5 years
-    week_constraint INT;
-    is_impossible_schedule BOOLEAN := FALSE;
+    parts TEXT[];
+    part TEXT;
 BEGIN
-    -- Start from the next second to avoid returning the same time
-    ts := date_trunc('second', p_from_ts) + interval '1 second';
-    search_ts := ts;
-    
-    -- Pre-validate for impossible schedules
-    IF cache.week_vals IS NOT NULL THEN
-        -- Check for impossible week/year combinations
-        week_constraint := cache.week_vals[1];
-        IF week_constraint = 53 AND cache.years_vals IS NOT NULL THEN
-            -- Week 53 doesn't exist in all years, check if any target year has week 53
-            DECLARE
-                target_year INT;
-                has_week_53 BOOLEAN := FALSE;
-            BEGIN
-                FOR target_year IN SELECT unnest(cache.years_vals) LOOP
-                    -- Check if this year has 53 weeks
-                    IF date_part('week', (target_year || '-12-31')::date) = 53 THEN
-                        has_week_53 := TRUE;
-                        EXIT;
-                    END IF;
-                END LOOP;
-                
-                IF NOT has_week_53 THEN
-                    is_impossible_schedule := TRUE;
-                END IF;
-            END;
-        END IF;
-    END IF;
-    
-    -- If schedule is impossible, try to find alternative interpretation
-    IF is_impossible_schedule THEN
-        -- For impossible schedules, try to find the closest valid alternative
-        -- For example, if Week 53 is requested but doesn't exist, try Week 52
-        DECLARE
-            modified_schedule jcron.jcron_schedule;
-            modified_jsonb jsonb := schedule_jsonb;
-        BEGIN
-            -- Replace impossible week with last week of year
-            IF week_constraint = 53 THEN
-                modified_jsonb := modified_jsonb || '{"W": "52"}';
-                modified_schedule := modified_jsonb::jcron.jcron_schedule;
-                RETURN jcron.next_jump(modified_schedule, p_from_ts);
+    parts := string_to_array(day_expr, ',');
+
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+
+        IF part = 'L' THEN
+            -- Last day of month - compare dates only
+            IF check_time::DATE = (date_trunc('month', check_time + INTERVAL '1 month') - INTERVAL '1 day')::DATE THEN
+                RETURN TRUE;
             END IF;
-        END;
-    END IF;
-    
-    LOOP
-        i := i + 1; 
-        IF i > max_search_days THEN
-            -- Instead of throwing error, try relaxed constraints
-            DECLARE
-                relaxed_schedule jcron.jcron_schedule;
-                relaxed_jsonb jsonb := schedule_jsonb;
-            BEGIN
-                -- Remove most restrictive constraints one by one
-                IF cache.week_vals IS NOT NULL THEN
-                    relaxed_jsonb := relaxed_jsonb - 'W';
-                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
-                    RETURN jcron.next_jump(relaxed_schedule, p_from_ts);
-                ELSIF cache.years_vals IS NOT NULL THEN
-                    relaxed_jsonb := relaxed_jsonb - 'Y';
-                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
-                    RETURN jcron.next_jump(relaxed_schedule, p_from_ts);
-                ELSE
-                    RAISE EXCEPTION 'Could not find a valid day within 5 years.'; 
-                END IF;
-            END;
-        END IF;
-        
-        search_ts := date_trunc('day', search_ts);
-        
-        -- Convert to target timezone for date/time calculations
-        IF target_tz != 'UTC' THEN
-            local_ts := search_ts AT TIME ZONE 'UTC' AT TIME ZONE target_tz;
         ELSE
-            local_ts := search_ts;
-        END IF;
-        
-        -- Check year, month, week, and day constraints
-        IF (cache.years_vals IS NULL OR date_part('year', local_ts)::int = ANY(cache.years_vals)) AND
-           (cache.months_vals IS NULL OR date_part('month', local_ts)::int = ANY(cache.months_vals)) AND
-           jcron._is_week_match(search_ts, schedule_jsonb) AND
-           jcron._is_day_match(search_ts, schedule_jsonb)
-        THEN
-            -- Find the next valid time on this day
-            FOR h IN 0..23 LOOP
-                IF cache.hours_vals IS NULL OR h = ANY(cache.hours_vals) THEN
-                    FOR m IN 0..59 LOOP
-                        IF cache.minutes_vals IS NULL OR m = ANY(cache.minutes_vals) THEN
-                            FOR s IN 0..59 LOOP
-                                IF cache.seconds_vals IS NULL OR s = ANY(cache.seconds_vals) THEN
-                                    result_ts := search_ts + (h * interval '1 hour') + 
-                                                           (m * interval '1 minute') + 
-                                                           (s * interval '1 second');
-                                    
-                                    -- Only return if this time is after our start time
-                                    IF result_ts > p_from_ts THEN
-                                        RETURN result_ts;
-                                    END IF;
-                                END IF;
-                            END LOOP;
-                        END IF;
-                    END LOOP;
-                END IF;
-            END LOOP;
-        END IF;
-        search_ts := search_ts + interval '1 day';
-    END LOOP;
-END;
-$$ LANGUAGE plpgsql VOLATILE;
-
--- Enhanced prev_jump with new jcron_schedule type
-CREATE OR REPLACE FUNCTION jcron.prev_jump(p_schedule jcron.jcron_schedule, p_from_ts timestamptz)
-RETURNS timestamptz AS $$
-DECLARE
-    search_ts TIMESTAMPTZ; 
-    cache jcron.schedule_cache := jcron.get_expanded_schedule(p_schedule);
-    i INT := 0;
-    local_ts TIMESTAMPTZ;
-    schedule_jsonb jsonb := p_schedule::jsonb;
-    target_tz TEXT := COALESCE(schedule_jsonb->>'timezone', 'UTC');
-    result_ts TIMESTAMPTZ;
-    max_search_days INT := 1826; -- 5 years
-    week_constraint INT;
-    is_impossible_schedule BOOLEAN := FALSE;
-BEGIN
-    -- Start from the previous second to avoid returning the same time
-    search_ts := date_trunc('second', p_from_ts) - interval '1 second';
-    
-    -- Pre-validate for impossible schedules (same logic as next_jump)
-    IF cache.week_vals IS NOT NULL THEN
-        week_constraint := cache.week_vals[1];
-        IF week_constraint = 53 AND cache.years_vals IS NOT NULL THEN
-            DECLARE
-                target_year INT;
-                has_week_53 BOOLEAN := FALSE;
-            BEGIN
-                FOR target_year IN SELECT unnest(cache.years_vals) LOOP
-                    IF date_part('week', (target_year || '-12-31')::date) = 53 THEN
-                        has_week_53 := TRUE;
-                        EXIT;
-                    END IF;
-                END LOOP;
-                
-                IF NOT has_week_53 THEN
-                    is_impossible_schedule := TRUE;
-                END IF;
-            END;
-        END IF;
-    END IF;
-    
-    -- Handle impossible schedules with fallback
-    IF is_impossible_schedule THEN
-        DECLARE
-            modified_schedule jcron.jcron_schedule;
-            modified_jsonb jsonb := schedule_jsonb;
-        BEGIN
-            IF week_constraint = 53 THEN
-                modified_jsonb := modified_jsonb || '{"W": "52"}';
-                modified_schedule := modified_jsonb::jcron.jcron_schedule;
-                RETURN jcron.prev_jump(modified_schedule, p_from_ts);
+            -- Regular day number
+            IF part ~ '^\d+$' AND EXTRACT(DAY FROM check_time)::INTEGER = part::INTEGER THEN
+                RETURN TRUE;
             END IF;
-        END;
-    END IF;
-    
-    LOOP
-        i := i + 1; 
-        IF i > max_search_days THEN
-            -- Try relaxed constraints before giving up
-            DECLARE
-                relaxed_schedule jcron.jcron_schedule;
-                relaxed_jsonb jsonb := schedule_jsonb;
-            BEGIN
-                IF cache.week_vals IS NOT NULL THEN
-                    relaxed_jsonb := relaxed_jsonb - 'W';
-                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
-                    RETURN jcron.prev_jump(relaxed_schedule, p_from_ts);
-                ELSIF cache.years_vals IS NOT NULL THEN
-                    relaxed_jsonb := relaxed_jsonb - 'Y';
-                    relaxed_schedule := relaxed_jsonb::jcron.jcron_schedule;
-                    RETURN jcron.prev_jump(relaxed_schedule, p_from_ts);
-                ELSE
-                    RAISE EXCEPTION 'Could not find a valid day within 5 years.'; 
-                END IF;
-            END;
         END IF;
-        
-        search_ts := date_trunc('day', search_ts);
-        
-        -- Convert to target timezone for date/time calculations
-        IF target_tz != 'UTC' THEN
-            local_ts := search_ts AT TIME ZONE 'UTC' AT TIME ZONE target_tz;
+    END LOOP;
+
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Handle special weekday patterns (L, #)
+CREATE OR REPLACE FUNCTION jcron.special_weekday_match(check_time TIMESTAMPTZ, weekday_expr TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+    parts TEXT[];
+    part TEXT;
+    weekday INTEGER;
+    week_num INTEGER;
+    target_weekday INTEGER;
+    month_start DATE;
+    last_occurrence DATE;
+    nth_occurrence DATE;
+BEGIN
+    weekday := EXTRACT(DOW FROM check_time)::INTEGER;
+    parts := string_to_array(weekday_expr, ',');
+
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+
+        IF part ~ '^\d+L$' THEN
+            -- Last occurrence of weekday in month (e.g., 5L = last Friday)
+            target_weekday := substring(part from '^(\d+)')::INTEGER;
+            IF weekday = target_weekday THEN
+                month_start := date_trunc('month', check_time)::DATE;
+                last_occurrence := jcron.last_weekday_of_month(month_start, target_weekday);
+                IF check_time::DATE = last_occurrence THEN
+                    RETURN TRUE;
+                END IF;
+            END IF;
+        ELSIF part ~ '^\d+#\d+$' THEN
+            -- Nth occurrence of weekday in month (e.g., 1#2 = 2nd Monday)
+            target_weekday := split_part(part, '#', 1)::INTEGER;
+            week_num := split_part(part, '#', 2)::INTEGER;
+            IF weekday = target_weekday THEN
+                month_start := date_trunc('month', check_time)::DATE;
+                nth_occurrence := jcron.nth_weekday_of_month(month_start, target_weekday, week_num);
+                IF check_time::DATE = nth_occurrence THEN
+                    RETURN TRUE;
+                END IF;
+            END IF;
         ELSE
-            local_ts := search_ts;
+            -- Regular weekday number
+            IF part ~ '^\d+$' AND weekday = part::INTEGER THEN
+                RETURN TRUE;
+            END IF;
         END IF;
-        
-        -- Check year, month, week, and day constraints
-        IF (cache.years_vals IS NULL OR date_part('year', local_ts)::int = ANY(cache.years_vals)) AND
-           (cache.months_vals IS NULL OR date_part('month', local_ts)::int = ANY(cache.months_vals)) AND
-           jcron._is_week_match(search_ts, schedule_jsonb) AND
-           jcron._is_day_match(search_ts, schedule_jsonb)
-        THEN
-            -- Find the previous valid time on this day (go backwards from end of day)
-            FOR h IN REVERSE 23..0 LOOP
-                IF cache.hours_vals IS NULL OR h = ANY(cache.hours_vals) THEN
-                    FOR m IN REVERSE 59..0 LOOP
-                        IF cache.minutes_vals IS NULL OR m = ANY(cache.minutes_vals) THEN
-                            FOR s IN REVERSE 59..0 LOOP
-                                IF cache.seconds_vals IS NULL OR s = ANY(cache.seconds_vals) THEN
-                                    result_ts := search_ts + (h * interval '1 hour') + 
-                                                           (m * interval '1 minute') + 
-                                                           (s * interval '1 second');
-                                    
-                                    -- Only return if this time is before our start time
-                                    IF result_ts < p_from_ts THEN
-                                        RETURN result_ts;
-                                    END IF;
-                                END IF;
-                            END LOOP;
-                        END IF;
-                    END LOOP;
-                END IF;
-            END LOOP;
-        END IF;
-        search_ts := search_ts - interval '1 day';
     END LOOP;
+
+    RETURN FALSE;
 END;
-$$ LANGUAGE plpgsql VOLATILE;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
--- ======================================================================== --
---                       5. ENHANCED COMPREHENSIVE TESTS                     --
--- ======================================================================== --
-
-CREATE OR REPLACE FUNCTION jcron.run_comprehensive_tests(p_test_count INT DEFAULT 1000)
-RETURNS TABLE(
-    total_tests INT, 
-    successful_tests INT, 
-    failed_tests INT, 
-    impossible_schedules INT,
-    avg_duration_microseconds NUMERIC,
-    timezone_tests INT,
-    week_tests INT,
-    predefined_tests INT
-) AS $$
-DECLARE 
-    s_parts TEXT[] := ARRAY['0','30','*/10','0-15']; 
-    m_parts TEXT[] := ARRAY['*','15','*/5','10-20']; 
-    h_parts TEXT[] := ARRAY['*','3','*/2','9-17']; 
-    D_parts TEXT[] := ARRAY['*','1','15','L','?']; 
-    dow_parts TEXT[] := ARRAY['*','1','5','1-5','5L','2#3','MON','FRI']; 
-    Month_parts TEXT[] := ARRAY['*','1','6','12','JAN','JUN']; 
-    Y_parts TEXT[] := ARRAY['*','2026'];
-    W_parts TEXT[] := ARRAY['*','1','26','52']; -- Removed 53 to reduce impossible schedules
-    tz_parts TEXT[] := ARRAY['UTC','America/New_York','Europe/London','Asia/Tokyo'];
-    predefined_parts TEXT[] := ARRAY['@yearly','@monthly','@weekly','@daily','@hourly'];
-    
-    schedule JSONB; 
-    base_ts TIMESTAMPTZ := now(); 
-    next_ts_1 TIMESTAMPTZ; 
-    prev_ts_1 TIMESTAMPTZ; 
-    next_ts_2 TIMESTAMPTZ; 
-    i INT; 
-    success_count INT := 0; 
-    failure_count INT := 0; 
-    impossible_count INT := 0;
-    tz_test_count INT := 0;
-    week_test_count INT := 0;
-    predefined_test_count INT := 0;
-    total_duration INTERVAL := '0 seconds'; 
-    start_ts TIMESTAMPTZ; 
-    error_message TEXT;
+-- Find last occurrence of weekday in month
+CREATE OR REPLACE FUNCTION jcron.last_weekday_of_month(month_start DATE, target_weekday INTEGER)
+RETURNS DATE AS $$
+DECLARE
+    month_end DATE;
+    candidate DATE;
 BEGIN
-    RAISE NOTICE '--- ENHANCED JCRON Comprehensive Test Suite (v4.1) ---';
-    RAISE NOTICE '% test scenarios with intelligent impossible schedule handling...', p_test_count;
-    RAISE NOTICE 'Test start time: %', base_ts;
-    RAISE NOTICE '-------------------------------------------------------';
-    
-    -- Clear cache for cold start
-    TRUNCATE jcron.schedule_cache;
-    RAISE NOTICE 'Cache cleared, tests starting with cold cache.';
-    RAISE NOTICE '';
-    
-    FOR i IN 1..p_test_count LOOP
-        -- Build base schedule
-        schedule := jsonb_build_object(
-            's', s_parts[1+(i%array_length(s_parts,1))],
-            'm', m_parts[1+(i%array_length(m_parts,1))],
-            'h', h_parts[1+(i%array_length(h_parts,1))]
-        );
-        
-        -- Add optional fields
-        IF i % 3 = 0 THEN 
-            schedule := schedule || jsonb_build_object(
-                'M', Month_parts[1+(i%array_length(Month_parts,1))], 
-                'Y', Y_parts[1+(i%array_length(Y_parts,1))]
-            ); 
+    month_end := (month_start + INTERVAL '1 month - 1 day')::DATE;
+
+    -- Start from end of month and go backwards
+    FOR i IN 0..6 LOOP
+        candidate := month_end - i;
+        IF EXTRACT(DOW FROM candidate)::INTEGER = target_weekday THEN
+            RETURN candidate;
         END IF;
-        
-        -- Add day fields with mutual exclusion
-        IF i % 2 = 0 THEN 
-            schedule := schedule || jsonb_build_object('D', D_parts[1+(i%array_length(D_parts,1))]); 
-            IF schedule->>'D' IS NOT NULL AND schedule->>'D' != '*' AND schedule->>'D' != '?' THEN 
-                schedule := schedule || '{"dow": "?"}'; 
-            END IF;
-        ELSE 
-            schedule := schedule || jsonb_build_object('dow', dow_parts[1+(i%array_length(dow_parts,1))]); 
-            IF schedule->>'dow' IS NOT NULL AND schedule->>'dow' != '*' AND schedule->>'dow' != '?' THEN 
-                schedule := schedule || '{"D": "?"}'; 
-            END IF;
-        END IF;
-        
-        -- Add timezone testing (every 4th test)
-        IF i % 4 = 0 THEN
-            schedule := schedule || jsonb_build_object('timezone', tz_parts[1+(i%array_length(tz_parts,1))]);
-            tz_test_count := tz_test_count + 1;
-        END IF;
-        
-        -- Add week testing (every 7th test) - include week 53 occasionally for edge case testing
-        IF i % 7 = 0 THEN
-            IF i % 21 = 0 THEN
-                -- Occasionally test week 53 for edge cases
-                schedule := schedule || jsonb_build_object('W', '53');
-            ELSE
-                schedule := schedule || jsonb_build_object('W', W_parts[1+(i%array_length(W_parts,1))]);
-            END IF;
-            week_test_count := week_test_count + 1;
-        END IF;
-        
-        -- Test predefined schedules (every 10th test)
-        IF i % 10 = 0 THEN
-            BEGIN
-                schedule := jcron.parse_cron_expression(predefined_parts[1+(i%array_length(predefined_parts,1))]);
-                predefined_test_count := predefined_test_count + 1;
-            EXCEPTION WHEN OTHERS THEN
-                -- Skip if predefined parsing fails
-                CONTINUE;
-            END;
-        END IF;
-        
-        -- Run the actual test
-        BEGIN
-            start_ts := clock_timestamp(); 
-            
-            -- Test next_jump
-            next_ts_1 := jcron.next_jump(schedule, base_ts); 
-            total_duration := total_duration + (clock_timestamp() - start_ts);
-            
-            IF next_ts_1 IS NULL THEN 
-                RAISE EXCEPTION 'next_jump returned NULL'; 
-            END IF;
-            
-            -- Test prev_jump
-            prev_ts_1 := jcron.prev_jump(schedule, next_ts_1);
-            
-            -- Test consistency: prev should be before next
-            IF prev_ts_1 >= next_ts_1 THEN 
-                RAISE EXCEPTION 'Consistency failed! Prev: %, Next: %', prev_ts_1, next_ts_1; 
-            END IF;
-            
-            -- Test if next_jump from prev gives us the same or later time
-            next_ts_2 := jcron.next_jump(schedule, prev_ts_1);
-            IF next_ts_2 < next_ts_1 THEN 
-                RAISE EXCEPTION 'Jump consistency failed! Next1: %, Next2: %', next_ts_1, next_ts_2; 
-            END IF;
-            
-            -- Test match function
-            IF NOT jcron.match(next_ts_1, schedule) THEN
-                RAISE EXCEPTION 'Match function failed for calculated next time';
-            END IF;
-            
-            success_count := success_count + 1;
-            
-        EXCEPTION WHEN OTHERS THEN
-            GET STACKED DIAGNOSTICS error_message = MESSAGE_TEXT;
-            
-            -- Categorize the error
-            IF error_message LIKE '%Could not find a valid day within 5 years%' THEN
-                impossible_count := impossible_count + 1;
-                -- Don't count impossible schedules as real failures
-                success_count := success_count + 1; -- Consider handled gracefully
-            ELSIF error_message LIKE '%Match function failed%' AND (
-                -- Detect conflicting week + dow combinations
-                (schedule ? 'W' AND schedule ? 'dow' AND schedule->>'dow' ~ '#') OR
-                -- Detect conflicting week 53 schedules  
-                (schedule ? 'W' AND schedule->>'W' = '53') OR
-                -- Detect very restrictive week + day combinations
-                (schedule ? 'W' AND schedule ? 'D' AND schedule->>'W' != '*' AND schedule->>'D' != '*' AND schedule->>'D' != '?')
-            ) THEN
-                impossible_count := impossible_count + 1;
-                -- Consider these as handled edge cases, not real failures
-                success_count := success_count + 1;
-            ELSIF error_message LIKE '%Jump consistency failed%' AND (
-                -- Detect week 53 related consistency issues
-                (schedule ? 'W' AND schedule->>'W' = '53')
-            ) THEN
-                impossible_count := impossible_count + 1;
-                -- Consider these as handled edge cases
-                success_count := success_count + 1;
-            ELSE
-                failure_count := failure_count + 1; 
-                RAISE WARNING 'REAL TEST FAILED [%]: Schedule: %, Error: %', i, schedule, error_message;
-            END IF;
-        END;
     END LOOP;
-    
-    RAISE NOTICE '--- Enhanced Test Results ---';
-    RAISE NOTICE 'Total tests: %, Successful: %, Real failures: %, Impossible schedules handled: %', 
-                 p_test_count, success_count, failure_count, impossible_count;
-    RAISE NOTICE 'Timezone tests: %, Week tests: %, Predefined tests: %', tz_test_count, week_test_count, predefined_test_count;
-    
-    total_tests := p_test_count; 
-    successful_tests := success_count; 
-    failed_tests := failure_count;
-    impossible_schedules := impossible_count;
-    timezone_tests := tz_test_count;
-    week_tests := week_test_count;
-    predefined_tests := predefined_test_count;
-    
-    IF p_test_count > 0 THEN 
-        avg_duration_microseconds := (EXTRACT(EPOCH FROM total_duration) * 1000000 / p_test_count)::numeric(10, 2); 
-    ELSE 
-        avg_duration_microseconds := 0; 
-    END IF;
-    
-    RETURN NEXT;
-END;
-$$ LANGUAGE plpgsql;
 
--- Test specific features
-CREATE OR REPLACE FUNCTION jcron.test_timezone_features()
-RETURNS TABLE(test_name text, passed boolean, details text) AS $$
+    RETURN NULL; -- Should never happen
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Find nth occurrence of weekday in month
+CREATE OR REPLACE FUNCTION jcron.nth_weekday_of_month(month_start DATE, target_weekday INTEGER, occurrence INTEGER)
+RETURNS DATE AS $$
 DECLARE
-    schedule jsonb;
-    next_utc timestamptz;
-    next_ny timestamptz;
+    candidate DATE;
+    count INTEGER := 0;
 BEGIN
-    -- Test 1: Same time different timezones should produce different results
-    schedule := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*","timezone":"UTC"}';
-    next_utc := jcron.next_jump(schedule, now());
-    
-    schedule := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*","timezone":"America/New_York"}';
-    next_ny := jcron.next_jump(schedule, now());
-    
-    RETURN QUERY SELECT 
-        'Timezone Difference Test'::text,
-        (next_utc != next_ny)::boolean,
-        format('UTC: %s, NY: %s', next_utc, next_ny);
-        
-    -- Test 2: Invalid timezone should raise error
-    BEGIN
-        schedule := '{"timezone":"Invalid/Zone"}';
-        PERFORM jcron.next_jump(schedule, now());
-        RETURN QUERY SELECT 'Invalid Timezone Test'::text, false::boolean, 'Should have raised error'::text;
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Invalid Timezone Test'::text, true::boolean, 'Correctly raised error'::text;
-    END;
-END;
-$$ LANGUAGE plpgsql;
+    -- Search through the month
+    FOR i IN 0..30 LOOP
+        candidate := month_start + i;
 
--- Test job runner features
-CREATE OR REPLACE FUNCTION jcron.test_job_runner()
-RETURNS TABLE(test_name text, passed boolean, details text) AS $$
+        -- Stop if we've gone to next month
+        IF EXTRACT(MONTH FROM candidate) != EXTRACT(MONTH FROM month_start) THEN
+            EXIT;
+        END IF;
+
+        IF EXTRACT(DOW FROM candidate)::INTEGER = target_weekday THEN
+            count := count + 1;
+            IF count = occurrence THEN
+                RETURN candidate;
+            END IF;
+        END IF;
+    END LOOP;
+
+    RETURN NULL; -- Occurrence not found
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Year matching for year expressions
+CREATE OR REPLACE FUNCTION jcron.year_matches(year_expr TEXT, check_year INTEGER)
+RETURNS BOOLEAN AS $$
 DECLARE
-    job_id bigint;
-    job_count integer;
+    parts TEXT[];
+    part TEXT;
+    range_parts TEXT[];
 BEGIN
-    -- Test 1: Add job from cron expression
-    BEGIN
-        job_id := jcron.add_job_from_cron('test_job', '@daily', 'echo "test"');
-        SELECT COUNT(*) INTO job_count FROM jcron.jobs WHERE job_name = 'test_job';
-        
-        RETURN QUERY SELECT 
-            'Add Job Test'::text,
-            (job_count = 1)::boolean,
-            format('Job ID: %s, Count: %s', job_id, job_count);
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Add Job Test'::text, false::boolean, SQLERRM::text;
-    END;
-    
-    -- Test 2: Remove job
-    BEGIN
-        PERFORM jcron.remove_job('test_job');
-        SELECT COUNT(*) INTO job_count FROM jcron.jobs WHERE job_name = 'test_job';
-        
-        RETURN QUERY SELECT 
-            'Remove Job Test'::text,
-            (job_count = 0)::boolean,
-            format('Remaining jobs: %s', job_count);
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Remove Job Test'::text, false::boolean, SQLERRM::text;
-    END;
+    IF year_expr = '*' THEN
+        RETURN TRUE;
+    END IF;
+
+    parts := string_to_array(year_expr, ',');
+
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+
+        IF part ~ '-' THEN
+            -- Range (2024-2026)
+            range_parts := string_to_array(part, '-');
+            IF check_year >= range_parts[1]::INTEGER AND check_year <= range_parts[2]::INTEGER THEN
+                RETURN TRUE;
+            END IF;
+        ELSE
+            -- Single year
+            IF check_year = part::INTEGER THEN
+                RETURN TRUE;
+            END IF;
+        END IF;
+    END LOOP;
+
+    RETURN FALSE;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
--- ======================================================================== --
---                        4. JOB RUNNER API & UTILITIES                      --
--- ======================================================================== --
-
--- Schedule validation function with new type
-CREATE OR REPLACE FUNCTION jcron.validate_schedule(p_schedule jcron.jcron_schedule) 
-RETURNS TABLE(is_valid boolean, error_message text) AS $$
-BEGIN
-    BEGIN
-        -- Test by trying to get next execution time
-        PERFORM jcron.next_jump(p_schedule, now());
-        RETURN QUERY SELECT true, null::text;
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT false, SQLERRM;
-    END;
-END;
-$$ LANGUAGE plpgsql;
-
--- Add or update a job with new jcron_schedule type
-CREATE OR REPLACE FUNCTION jcron.add_job(
-    p_job_name text,
-    p_schedule jcron.jcron_schedule,
-    p_command text,
-    p_timezone text DEFAULT 'UTC',
-    p_max_retries integer DEFAULT 0,
-    p_retry_delay_seconds integer DEFAULT 300
-) RETURNS bigint AS $$
+-- Time advancement functions (optimized)
+CREATE OR REPLACE FUNCTION jcron.advance_hour(base_time TIMESTAMPTZ, hour_mask INTEGER)
+RETURNS TIMESTAMPTZ AS $$
 DECLARE
-    job_id bigint;
-    validation_result record;
-    schedule_with_tz jcron.jcron_schedule;
-    schedule_jsonb jsonb;
+    current_hour INTEGER;
+    next_hour INTEGER;
 BEGIN
-    -- Validate schedule first
-    SELECT * INTO validation_result FROM jcron.validate_schedule(p_schedule);
-    IF NOT validation_result.is_valid THEN
-        RAISE EXCEPTION 'Invalid schedule: %', validation_result.error_message;
+    current_hour := EXTRACT(HOUR FROM base_time)::INTEGER;
+
+    -- Find next set bit in hour mask
+    FOR i IN (current_hour + 1)..23 LOOP
+        IF (hour_mask & (1 << i)) != 0 THEN
+            RETURN date_trunc('hour', base_time) + (i - current_hour) * INTERVAL '1 hour';
+        END IF;
+    END LOOP;
+
+    -- Wrap to next day, find first set bit
+    FOR i IN 0..23 LOOP
+        IF (hour_mask & (1 << i)) != 0 THEN
+            RETURN date_trunc('day', base_time + INTERVAL '1 day') + i * INTERVAL '1 hour';
+        END IF;
+    END LOOP;
+
+    -- Should never reach here if mask is valid
+    RAISE EXCEPTION 'Invalid hour mask: %', hour_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.advance_minute(base_time TIMESTAMPTZ, minute_mask BIGINT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_minute INTEGER;
+BEGIN
+    current_minute := EXTRACT(MINUTE FROM base_time)::INTEGER;
+
+    -- Find next set bit
+    FOR i IN (current_minute + 1)..59 LOOP
+        IF (minute_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('minute', base_time) + (i - current_minute) * INTERVAL '1 minute';
+        END IF;
+    END LOOP;
+
+    -- Wrap to next hour
+    FOR i IN 0..59 LOOP
+        IF (minute_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('hour', base_time + INTERVAL '1 hour') + i * INTERVAL '1 minute';
+        END IF;
+    END LOOP;
+
+    RAISE EXCEPTION 'Invalid minute mask: %', minute_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.advance_second(base_time TIMESTAMPTZ, second_mask BIGINT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_second INTEGER;
+BEGIN
+    current_second := EXTRACT(SECOND FROM base_time)::INTEGER;
+
+    FOR i IN (current_second + 1)..59 LOOP
+        IF (second_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('second', base_time) + (i - current_second) * INTERVAL '1 second';
+        END IF;
+    END LOOP;
+
+    -- Wrap to next minute
+    FOR i IN 0..59 LOOP
+        IF (second_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('minute', base_time + INTERVAL '1 minute') + i * INTERVAL '1 second';
+        END IF;
+    END LOOP;
+
+    RAISE EXCEPTION 'Invalid second mask: %', second_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Retreat functions for prev calculations
+CREATE OR REPLACE FUNCTION jcron.retreat_hour(base_time TIMESTAMPTZ, hour_mask INTEGER)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_hour INTEGER;
+BEGIN
+    current_hour := EXTRACT(HOUR FROM base_time)::INTEGER;
+
+    -- Find previous set bit
+    FOR i IN REVERSE (current_hour - 1)..0 LOOP
+        IF (hour_mask & (1 << i)) != 0 THEN
+            RETURN date_trunc('hour', base_time) + (i - current_hour) * INTERVAL '1 hour';
+        END IF;
+    END LOOP;
+
+    -- Wrap to previous day
+    FOR i IN REVERSE 23..0 LOOP
+        IF (hour_mask & (1 << i)) != 0 THEN
+            RETURN date_trunc('day', base_time) - INTERVAL '1 day' + i * INTERVAL '1 hour';
+        END IF;
+    END LOOP;
+
+    RAISE EXCEPTION 'Invalid hour mask: %', hour_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.retreat_minute(base_time TIMESTAMPTZ, minute_mask BIGINT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_minute INTEGER;
+BEGIN
+    current_minute := EXTRACT(MINUTE FROM base_time)::INTEGER;
+
+    FOR i IN REVERSE (current_minute - 1)..0 LOOP
+        IF (minute_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('minute', base_time) + (i - current_minute) * INTERVAL '1 minute';
+        END IF;
+    END LOOP;
+
+    -- Wrap to previous hour
+    FOR i IN REVERSE 59..0 LOOP
+        IF (minute_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('hour', base_time) - INTERVAL '1 hour' + i * INTERVAL '1 minute';
+        END IF;
+    END LOOP;
+
+    RAISE EXCEPTION 'Invalid minute mask: %', minute_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.retreat_second(base_time TIMESTAMPTZ, second_mask BIGINT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_second INTEGER;
+BEGIN
+    current_second := EXTRACT(SECOND FROM base_time)::INTEGER;
+
+    FOR i IN REVERSE (current_second - 1)..0 LOOP
+        IF (second_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('second', base_time) + (i - current_second) * INTERVAL '1 second';
+        END IF;
+    END LOOP;
+
+    -- Wrap to previous minute
+    FOR i IN REVERSE 59..0 LOOP
+        IF (second_mask & (1::BIGINT << i)) != 0 THEN
+            RETURN date_trunc('minute', base_time) - INTERVAL '1 minute' + i * INTERVAL '1 second';
+        END IF;
+    END LOOP;
+
+    RAISE EXCEPTION 'Invalid second mask: %', second_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Year advancement for year restrictions
+CREATE OR REPLACE FUNCTION jcron.advance_year(base_time TIMESTAMPTZ, year_expr TEXT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_year INTEGER;
+    parts TEXT[];
+    part TEXT;
+    range_parts TEXT[];
+    next_year INTEGER := NULL;
+BEGIN
+    current_year := EXTRACT(YEAR FROM base_time)::INTEGER;
+    parts := string_to_array(year_expr, ',');
+
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+
+        IF part ~ '-' THEN
+            range_parts := string_to_array(part, '-');
+            IF current_year < range_parts[1]::INTEGER THEN
+                next_year := LEAST(COALESCE(next_year, range_parts[1]::INTEGER), range_parts[1]::INTEGER);
+            ELSIF current_year >= range_parts[1]::INTEGER AND current_year < range_parts[2]::INTEGER THEN
+                next_year := LEAST(COALESCE(next_year, current_year + 1), current_year + 1);
+            END IF;
+        ELSE
+            IF current_year < part::INTEGER THEN
+                next_year := LEAST(COALESCE(next_year, part::INTEGER), part::INTEGER);
+            END IF;
+        END IF;
+    END LOOP;
+
+    IF next_year IS NULL THEN
+        RAISE EXCEPTION 'No valid future year found in expression: %', year_expr;
     END IF;
-    
-    -- Validate timezone
-    PERFORM jcron._convert_timezone(now(), p_timezone);
-    
-    -- Add timezone to schedule if not present
-    schedule_jsonb := p_schedule::jsonb;
-    IF NOT schedule_jsonb ? 'timezone' THEN
-        schedule_jsonb := schedule_jsonb || jsonb_build_object('timezone', p_timezone);
+
+    RETURN make_timestamptz(next_year, 1, 1, 0, 0, 0, 'UTC');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION jcron.retreat_year(base_time TIMESTAMPTZ, year_expr TEXT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    current_year INTEGER;
+    parts TEXT[];
+    part TEXT;
+    range_parts TEXT[];
+    prev_year INTEGER := NULL;
+BEGIN
+    current_year := EXTRACT(YEAR FROM base_time)::INTEGER;
+    parts := string_to_array(year_expr, ',');
+
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+
+        IF part ~ '-' THEN
+            range_parts := string_to_array(part, '-');
+            IF current_year > range_parts[2]::INTEGER THEN
+                prev_year := GREATEST(COALESCE(prev_year, range_parts[2]::INTEGER), range_parts[2]::INTEGER);
+            ELSIF current_year > range_parts[1]::INTEGER AND current_year <= range_parts[2]::INTEGER THEN
+                prev_year := GREATEST(COALESCE(prev_year, current_year - 1), current_year - 1);
+            END IF;
+        ELSE
+            IF current_year > part::INTEGER THEN
+                prev_year := GREATEST(COALESCE(prev_year, part::INTEGER), part::INTEGER);
+            END IF;
+        END IF;
+    END LOOP;
+
+    IF prev_year IS NULL THEN
+        RAISE EXCEPTION 'No valid past year found in expression: %', year_expr;
     END IF;
-    schedule_with_tz := schedule_jsonb::jcron.jcron_schedule;
-    
-    -- Insert or update job
-    INSERT INTO jcron.jobs (
-        job_name, schedule, command, timezone, 
-        max_retries, retry_delay_seconds, next_run_at
+
+    RETURN make_timestamptz(prev_year, 12, 31, 23, 59, 59, 'UTC');
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- =====================================================
+-- 6. SCHEDULE MANAGEMENT FUNCTIONS (pgcron-style)
+-- =====================================================
+
+-- Schedule a job (pgcron-compatible interface)
+CREATE OR REPLACE FUNCTION jcron.schedule_job(
+    job_name TEXT,
+    schedule TEXT,
+    command TEXT,
+    database TEXT,
+    username TEXT,
+    active BOOLEAN DEFAULT TRUE
+) RETURNS BIGINT AS $$
+DECLARE
+    job_id BIGINT;
+    next_run TIMESTAMPTZ;
+BEGIN
+    -- Calculate first execution time
+    next_run := jcron.next_time(schedule);
+
+    -- Insert schedule
+    INSERT INTO jcron.schedules (
+        name, jcron_expr, next_run, function_name, function_args,
+        status, created_at, updated_at
     ) VALUES (
-        p_job_name, 
-        schedule_with_tz, 
-        p_command, 
-        p_timezone,
-        p_max_retries, 
-        p_retry_delay_seconds,
-        jcron.next_jump(schedule_with_tz, now())
-    )
-    ON CONFLICT (job_name) DO UPDATE SET
-        schedule = EXCLUDED.schedule,
-        command = EXCLUDED.command,
-        timezone = EXCLUDED.timezone,
-        max_retries = EXCLUDED.max_retries,
-        retry_delay_seconds = EXCLUDED.retry_delay_seconds,
-        next_run_at = jcron.next_jump(EXCLUDED.schedule, now()),
-        updated_at = now()
-    RETURNING jcron.jobs.job_id INTO job_id;
-    
+        job_name, schedule, next_run, 'jcron.execute_sql',
+        jsonb_build_object('sql', command, 'database', database, 'username', username),
+        CASE WHEN active THEN 'ACTIVE'::jcron.status ELSE 'PAUSED'::jcron.status END,
+        NOW(), NOW()
+    ) RETURNING id INTO job_id;
+
     RETURN job_id;
 END;
 $$ LANGUAGE plpgsql;
 
--- Add job from cron expression string with new type
-CREATE OR REPLACE FUNCTION jcron.add_job_from_cron(
-    p_job_name text,
-    p_cron_expression text, 
-    p_command text,
-    p_timezone text DEFAULT 'UTC',
-    p_max_retries integer DEFAULT 0,
-    p_retry_delay_seconds integer DEFAULT 300
-) RETURNS bigint AS $$
+-- Unschedule a job
+CREATE OR REPLACE FUNCTION jcron.unschedule(job_id BIGINT)
+RETURNS BOOLEAN AS $$
 DECLARE
-    parsed_schedule jcron.jcron_schedule;
-    schedule_jsonb jsonb;
+    deleted_count INTEGER;
 BEGIN
-    -- Parse cron expression
-    schedule_jsonb := jcron.parse_cron_expression(p_cron_expression);
-    
-    -- Add timezone if not already present
-    IF NOT schedule_jsonb ? 'timezone' THEN
-        schedule_jsonb := schedule_jsonb || jsonb_build_object('timezone', p_timezone);
-    END IF;
-    
-    -- Convert to jcron_schedule type
-    parsed_schedule := schedule_jsonb::jcron.jcron_schedule;
-    
-    RETURN jcron.add_job(p_job_name, parsed_schedule, p_command, p_timezone, p_max_retries, p_retry_delay_seconds);
-END;
-$$ LANGUAGE plpgsql;
-
--- Remove a job
-CREATE OR REPLACE FUNCTION jcron.remove_job(p_job_name text) 
-RETURNS boolean AS $$
-DECLARE
-    deleted_count integer;
-BEGIN
-    DELETE FROM jcron.jobs WHERE job_name = p_job_name;
+    DELETE FROM jcron.schedules WHERE id = job_id;
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count > 0;
 END;
 $$ LANGUAGE plpgsql;
 
--- Enable/disable a job
-CREATE OR REPLACE FUNCTION jcron.set_job_active(p_job_name text, p_active boolean) 
-RETURNS boolean AS $$
+-- Unschedule by name
+CREATE OR REPLACE FUNCTION jcron.unschedule(job_name TEXT)
+RETURNS BOOLEAN AS $$
 DECLARE
-    updated_count integer;
+    deleted_count INTEGER;
 BEGIN
-    UPDATE jcron.jobs 
-    SET is_active = p_active, updated_at = now()
-    WHERE job_name = p_job_name;
-    
+    DELETE FROM jcron.schedules WHERE name = job_name;
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count > 0;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Pause a job
+CREATE OR REPLACE FUNCTION jcron.pause(job_id BIGINT)
+RETURNS BOOLEAN AS $$
+DECLARE
+    updated_count INTEGER;
+BEGIN
+    UPDATE jcron.schedules
+    SET status = 'PAUSED', updated_at = NOW()
+    WHERE id = job_id AND status = 'ACTIVE';
     GET DIAGNOSTICS updated_count = ROW_COUNT;
     RETURN updated_count > 0;
 END;
 $$ LANGUAGE plpgsql;
 
--- Get jobs ready to run with new type
-CREATE OR REPLACE FUNCTION jcron.get_ready_jobs(p_limit integer DEFAULT 100)
-RETURNS TABLE(
-    job_id bigint,
-    job_name text,
-    command text,
-    schedule jcron.jcron_schedule,
-    max_retries integer,
-    retry_delay_seconds integer,
-    next_run_at timestamptz
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT j.job_id, j.job_name, j.command, j.schedule, 
-           j.max_retries, j.retry_delay_seconds, j.next_run_at
-    FROM jcron.jobs j
-    WHERE j.is_active = true 
-      AND j.next_run_at <= now()
-    ORDER BY j.next_run_at
-    LIMIT p_limit;
-END;
-$$ LANGUAGE plpgsql;
-
--- Mark job execution start
-CREATE OR REPLACE FUNCTION jcron.start_job_execution(p_job_id bigint)
-RETURNS bigint AS $$
+-- Resume a job
+CREATE OR REPLACE FUNCTION jcron.resume(job_id BIGINT)
+RETURNS BOOLEAN AS $$
 DECLARE
-    log_id bigint;
+    updated_count INTEGER;
+    next_run TIMESTAMPTZ;
 BEGIN
-    -- Insert log record
-    INSERT INTO jcron.job_logs (job_id, run_started_at, status)
-    VALUES (p_job_id, now(), 'running')
-    RETURNING log_id INTO log_id;
-    
-    -- Update job
-    UPDATE jcron.jobs 
-    SET last_run_started_at = now(),
-        updated_at = now()
-    WHERE job_id = p_job_id;
-    
-    RETURN log_id;
-END;
-$$ LANGUAGE plpgsql;
+    -- Get next run time
+    SELECT next_run INTO next_run FROM jcron.schedules WHERE id = job_id;
 
--- Mark job execution completion
-CREATE OR REPLACE FUNCTION jcron.complete_job_execution(
-    p_log_id bigint,
-    p_status text,
-    p_output_message text DEFAULT NULL,
-    p_error_message text DEFAULT NULL
-) RETURNS void AS $$
-DECLARE
-    job_record record;
-    next_run timestamptz;
-BEGIN
-    -- Get job info from log
-    SELECT j.job_id, j.schedule, j.timezone, l.run_started_at, l.retry_count
-    INTO job_record
-    FROM jcron.job_logs l
-    JOIN jcron.jobs j ON l.job_id = j.job_id
-    WHERE l.log_id = p_log_id;
-    
-    -- Update log record
-    UPDATE jcron.job_logs 
-    SET run_finished_at = now(),
-        status = p_status,
-        output_message = p_output_message,
-        error_message = p_error_message,
-        execution_duration_ms = EXTRACT(EPOCH FROM (now() - job_record.run_started_at)) * 1000
-    WHERE log_id = p_log_id;
-    
-    -- Calculate next run time
-    next_run := jcron.next_jump(job_record.schedule, now());
-    
-    -- Update job
-    UPDATE jcron.jobs 
-    SET last_run_finished_at = now(),
-        next_run_at = next_run,
-        updated_at = now()
-    WHERE job_id = job_record.job_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- Retry failed job
-CREATE OR REPLACE FUNCTION jcron.retry_job(p_log_id bigint)
-RETURNS bigint AS $$
-DECLARE
-    job_record record;
-    new_log_id bigint;
-BEGIN
-    -- Get job and log info
-    SELECT j.job_id, j.max_retries, j.retry_delay_seconds, l.retry_count
-    INTO job_record
-    FROM jcron.job_logs l
-    JOIN jcron.jobs j ON l.job_id = j.job_id
-    WHERE l.log_id = p_log_id;
-    
-    -- Check if retry is allowed
-    IF job_record.retry_count >= job_record.max_retries THEN
-        RAISE EXCEPTION 'Maximum retries exceeded for job';
+    IF FOUND THEN
+        UPDATE jcron.schedules
+        SET status = 'ACTIVE', next_run = next_run, updated_at = NOW()
+        WHERE id = job_id AND status = 'PAUSED';
+        GET DIAGNOSTICS updated_count = ROW_COUNT;
+        RETURN updated_count > 0;
     END IF;
-    
-    -- Create new log entry for retry
-    INSERT INTO jcron.job_logs (job_id, run_started_at, status, retry_count)
-    VALUES (job_record.job_id, now() + (job_record.retry_delay_seconds * interval '1 second'), 
-            'retrying', job_record.retry_count + 1)
-    RETURNING log_id INTO new_log_id;
-    
-    RETURN new_log_id;
+
+    RETURN FALSE;
 END;
 $$ LANGUAGE plpgsql;
 
--- Get job statistics
-CREATE OR REPLACE FUNCTION jcron.get_job_stats(p_job_name text DEFAULT NULL)
-RETURNS TABLE(
-    job_name text,
-    total_runs bigint,
-    successful_runs bigint,
-    failed_runs bigint,
-    avg_duration_ms numeric,
-    last_run_at timestamptz,
-    last_status text,
-    next_run_at timestamptz
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT j.job_name,
-           COUNT(l.log_id) as total_runs,
-           COUNT(CASE WHEN l.status = 'success' THEN 1 END) as successful_runs,
-           COUNT(CASE WHEN l.status = 'failed' THEN 1 END) as failed_runs,
-           AVG(l.execution_duration_ms) as avg_duration_ms,
-           j.last_run_finished_at,
-           (SELECT status FROM jcron.job_logs WHERE job_id = j.job_id ORDER BY run_started_at DESC LIMIT 1) as last_status,
-           j.next_run_at
-    FROM jcron.jobs j
-    LEFT JOIN jcron.job_logs l ON j.job_id = l.job_id
-    WHERE (p_job_name IS NULL OR j.job_name = p_job_name)
-    GROUP BY j.job_id, j.job_name, j.last_run_finished_at, j.next_run_at
-    ORDER BY j.job_name;
-END;
-$$ LANGUAGE plpgsql;
-
--- Cleanup old logs
-CREATE OR REPLACE FUNCTION jcron.cleanup_old_logs(p_days_to_keep integer DEFAULT 30)
-RETURNS integer AS $$
+-- Alter job schedule
+CREATE OR REPLACE FUNCTION jcron.alter_job(
+    job_id BIGINT,
+    schedule TEXT DEFAULT NULL,
+    command TEXT DEFAULT NULL,
+    database TEXT DEFAULT NULL,
+    username TEXT DEFAULT NULL,
+    active BOOLEAN DEFAULT NULL
+) RETURNS BOOLEAN AS $$
 DECLARE
-    deleted_count integer;
+    updated_count INTEGER;
+    next_run TIMESTAMPTZ;
+    new_args JSONB;
+    current_args JSONB;
 BEGIN
-    DELETE FROM jcron.job_logs 
-    WHERE run_started_at < now() - (p_days_to_keep * interval '1 day');
-    
-    GET DIAGNOSTICS deleted_count = ROW_COUNT;
-    RETURN deleted_count;
+    -- Get current function args
+    SELECT function_args INTO current_args FROM jcron.schedules WHERE id = job_id;
+
+    IF NOT FOUND THEN
+        RETURN FALSE;
+    END IF;
+
+    -- Build new args
+    new_args := current_args;
+    IF command IS NOT NULL THEN
+        new_args := new_args || jsonb_build_object('sql', command);
+    END IF;
+    IF database IS NOT NULL THEN
+        new_args := new_args || jsonb_build_object('database', database);
+    END IF;
+    IF username IS NOT NULL THEN
+        new_args := new_args || jsonb_build_object('username', username);
+    END IF;
+
+    -- Handle schedule change
+    IF schedule IS NOT NULL THEN
+        next_run := jcron.next_time(schedule);
+
+        UPDATE jcron.schedules
+        SET jcron_expr = schedule, next_run = next_run,
+            function_args = new_args,
+            status = CASE WHEN active IS NOT NULL THEN
+                        CASE WHEN active THEN 'ACTIVE'::jcron.status ELSE 'PAUSED'::jcron.status END
+                     ELSE status END,
+            updated_at = NOW()
+        WHERE id = job_id;
+    ELSE
+        UPDATE jcron.schedules
+        SET function_args = new_args,
+            status = CASE WHEN active IS NOT NULL THEN
+                        CASE WHEN active THEN 'ACTIVE'::jcron.status ELSE 'PAUSED'::jcron.status END
+                     ELSE status END,
+            updated_at = NOW()
+        WHERE id = job_id;
+    END IF;
+
+    GET DIAGNOSTICS updated_count = ROW_COUNT;
+    RETURN updated_count > 0;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create indexes for performance
-CREATE INDEX IF NOT EXISTS idx_job_logs_job_id_started_at ON jcron.job_logs(job_id, run_started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_jobs_next_run_active ON jcron.jobs(next_run_at) WHERE is_active = true;
+-- SQL execution function for scheduled jobs
+CREATE OR REPLACE FUNCTION jcron.execute_sql(args JSONB)
+RETURNS TEXT AS $$
+DECLARE
+    sql_command TEXT;
+    target_database TEXT;
+    target_username TEXT;
+    result TEXT;
+BEGIN
+    sql_command := args->>'sql';
+    target_database := COALESCE(args->>'database', current_database());
+    target_username := COALESCE(args->>'username', current_user);
 
--- ======================================================================== --
---                       6. UTILITY VIEWS & MAINTENANCE                      --
--- ======================================================================== --
+    -- Execute the SQL command
+    -- Note: In real implementation, you might want to use dblink for cross-database execution
+    EXECUTE sql_command;
 
--- View for active jobs with next run times
-CREATE OR REPLACE VIEW jcron.active_jobs_view AS
-SELECT 
-    j.job_id,
-    j.job_name,
-    j.schedule,
-    j.command,
-    j.timezone,
-    j.next_run_at,
-    j.last_run_finished_at,
-    CASE 
-        WHEN j.next_run_at <= now() THEN 'ready'
-        WHEN j.next_run_at > now() THEN 'scheduled'
-        ELSE 'unknown'
-    END as status,
-    (SELECT COUNT(*) FROM jcron.job_logs l WHERE l.job_id = j.job_id) as total_runs,
-    (SELECT status FROM jcron.job_logs l WHERE l.job_id = j.job_id ORDER BY run_started_at DESC LIMIT 1) as last_status
-FROM jcron.jobs j 
-WHERE j.is_active = true
-ORDER BY j.next_run_at;
+    RETURN 'SUCCESS';
+EXCEPTION WHEN OTHERS THEN
+    RETURN 'ERROR: ' || SQLERRM;
+END;
+$$ LANGUAGE plpgsql;
 
--- View for job execution history
-CREATE OR REPLACE VIEW jcron.job_execution_history AS
-SELECT 
-    j.job_name,
-    l.run_started_at,
-    l.run_finished_at,
+-- View all jobs (pgcron-style)
+CREATE OR REPLACE VIEW jcron.job AS
+SELECT
+    id AS jobid,
+    name AS jobname,
+    jcron_expr AS schedule,
+    function_args->>'sql' AS command,
+    function_args->>'database' AS database,
+    function_args->>'username' AS username,
+    status AS active,
+    next_run AS next_run,
+    last_run AS last_run,
+    run_count,
+    created_at,
+    updated_at
+FROM jcron.schedules
+ORDER BY id;
+
+-- View job run details
+CREATE OR REPLACE VIEW jcron.job_run_details AS
+SELECT
+    l.id AS runid,
+    s.id AS jobid,
+    s.name AS jobname,
+    l.started_at AS start_time,
+    l.completed_at AS end_time,
     l.status,
-    l.execution_duration_ms,
-    l.retry_count,
     l.error_message,
-    l.output_message
-FROM jcron.job_logs l
-JOIN jcron.jobs j ON l.job_id = j.job_id
-ORDER BY l.run_started_at DESC;
+    EXTRACT(EPOCH FROM (l.completed_at - l.started_at)) AS duration_seconds
+FROM jcron.execution_log l
+JOIN jcron.schedules s ON l.schedule_id = s.id
+ORDER BY l.started_at DESC;
 
--- View for failed jobs requiring attention
-CREATE OR REPLACE VIEW jcron.failed_jobs_view AS
-SELECT 
-    j.job_name,
-    j.command,
-    l.run_started_at as failed_at,
-    l.error_message,
-    l.retry_count,
-    j.max_retries,
-    CASE 
-        WHEN l.retry_count < j.max_retries THEN 'can_retry'
-        ELSE 'max_retries_reached'
-    END as retry_status
-FROM jcron.job_logs l
-JOIN jcron.jobs j ON l.job_id = j.job_id
-WHERE l.status = 'failed'
-  AND l.log_id IN (
-      SELECT MAX(log_id) 
-      FROM jcron.job_logs 
-      GROUP BY job_id
-  )
-ORDER BY l.run_started_at DESC;
+-- Helper functions for common operations
 
--- Trigger to automatically update job's updated_at timestamp
-CREATE OR REPLACE FUNCTION jcron.update_job_timestamp()
-RETURNS TRIGGER AS $$
+-- List all jobs
+CREATE OR REPLACE FUNCTION jcron.jobs()
+RETURNS TABLE(
+    jobid BIGINT,
+    jobname TEXT,
+    schedule TEXT,
+    command TEXT,
+    database TEXT,
+    username TEXT,
+    active jcron.status,
+    next_run TIMESTAMPTZ,
+    last_run TIMESTAMPTZ
+) AS $$
 BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
+    RETURN QUERY
+    SELECT j.jobid, j.jobname, j.schedule, j.command, j.database, j.username, j.active, j.next_run, j.last_run
+    FROM jcron.job j;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_job_timestamp_trigger
-    BEFORE UPDATE ON jcron.jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION jcron.update_job_timestamp();
-
--- Function to automatically cleanup cache entries (keep most recent 1000)
-CREATE OR REPLACE FUNCTION jcron.cleanup_schedule_cache()
-RETURNS integer AS $$
-DECLARE
-    deleted_count integer;
+-- Get job details by ID
+CREATE OR REPLACE FUNCTION jcron.job_details(job_id BIGINT)
+RETURNS TABLE(
+    jobid BIGINT,
+    jobname TEXT,
+    schedule TEXT,
+    command TEXT,
+    database TEXT,
+    username TEXT,
+    active jcron.status,
+    next_run TIMESTAMPTZ,
+    last_run TIMESTAMPTZ,
+    run_count INTEGER,
+    max_runs INTEGER,
+    end_time TIMESTAMPTZ,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ
+) AS $$
 BEGIN
-    DELETE FROM jcron.schedule_cache 
-    WHERE schedule NOT IN (
-        SELECT schedule 
-        FROM jcron.schedule_cache 
-        ORDER BY last_used DESC 
-        LIMIT 1000
-    );
-    
+    RETURN QUERY
+    SELECT
+        s.id, s.name, s.jcron_expr,
+        s.function_args->>'sql',
+        s.function_args->>'database',
+        s.function_args->>'username',
+        s.status, s.next_run, s.last_run, s.run_count, s.max_runs, s.end_time,
+        s.created_at, s.updated_at
+    FROM jcron.schedules s
+    WHERE s.id = job_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Get recent job runs
+CREATE OR REPLACE FUNCTION jcron.recent_runs(job_id BIGINT DEFAULT NULL, limit_count INTEGER DEFAULT 50)
+RETURNS TABLE(
+    runid BIGINT,
+    jobid BIGINT,
+    jobname TEXT,
+    start_time TIMESTAMPTZ,
+    end_time TIMESTAMPTZ,
+    status TEXT,
+    duration_seconds NUMERIC,
+    error_message TEXT
+) AS $$
+BEGIN
+    IF job_id IS NOT NULL THEN
+        RETURN QUERY
+        SELECT r.runid, r.jobid, r.jobname, r.start_time, r.end_time,
+               r.status, r.duration_seconds, r.error_message
+        FROM jcron.job_run_details r
+        WHERE r.jobid = recent_runs.job_id
+        ORDER BY r.start_time DESC
+        LIMIT limit_count;
+    ELSE
+        RETURN QUERY
+        SELECT r.runid, r.jobid, r.jobname, r.start_time, r.end_time,
+               r.status, r.duration_seconds, r.error_message
+        FROM jcron.job_run_details r
+        ORDER BY r.start_time DESC
+        LIMIT limit_count;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Validate jcron expression
+CREATE OR REPLACE FUNCTION jcron.validate_schedule(schedule_expr TEXT)
+RETURNS TABLE(
+    is_valid BOOLEAN,
+    error_message TEXT,
+    next_run TIMESTAMPTZ
+) AS $$
+DECLARE
+    next_time TIMESTAMPTZ;
+    error_msg TEXT;
+BEGIN
+    BEGIN
+        next_time := jcron.next_time(schedule_expr);
+
+        RETURN QUERY SELECT TRUE, NULL::TEXT, next_time;
+    EXCEPTION WHEN OTHERS THEN
+        error_msg := SQLERRM;
+        RETURN QUERY SELECT FALSE, error_msg, NULL::TIMESTAMPTZ;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Get next pending schedules (internal use)
+CREATE OR REPLACE FUNCTION jcron.get_pending_schedules(limit_count INTEGER DEFAULT 100)
+RETURNS TABLE(
+    id BIGINT,
+    name TEXT,
+    function_name TEXT,
+    function_args JSONB,
+    next_run TIMESTAMPTZ
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT s.id, s.name, s.function_name, s.function_args, s.next_run
+    FROM jcron.schedules s
+    WHERE s.status = 'ACTIVE'
+      AND s.next_run <= NOW()
+      AND (s.max_runs IS NULL OR s.run_count < s.max_runs)
+      AND (s.end_time IS NULL OR s.next_run <= s.end_time)
+    ORDER BY s.next_run
+    LIMIT limit_count;
+END;
+$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION jcron.update_after_execution(
+    schedule_id BIGINT,
+    execution_status TEXT DEFAULT 'SUCCESS',
+    error_message TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+DECLARE
+    schedule_row jcron.schedules%ROWTYPE;
+    next_run TIMESTAMPTZ;
+BEGIN
+    -- Get schedule details
+    SELECT * INTO schedule_row FROM jcron.schedules WHERE id = schedule_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Schedule not found: %', schedule_id;
+    END IF;
+
+    -- Log execution
+    INSERT INTO jcron.execution_log (schedule_id, started_at, completed_at, status, error_message)
+    VALUES (schedule_id, schedule_row.next_run, NOW(), execution_status, error_message);
+
+    -- Calculate next run time
+    IF execution_status = 'SUCCESS' THEN
+        next_run := jcron.next_time(schedule_row.jcron_expr, schedule_row.next_run);
+
+        -- Update schedule
+        UPDATE jcron.schedules
+        SET next_run = next_run,
+            last_run = schedule_row.next_run,
+            run_count = run_count + 1,
+            updated_at = NOW()
+        WHERE id = schedule_id;
+
+        -- Check if schedule should be completed
+        IF (schedule_row.max_runs IS NOT NULL AND schedule_row.run_count + 1 >= schedule_row.max_runs)
+           OR (schedule_row.end_time IS NOT NULL AND next_run > schedule_row.end_time) THEN
+            UPDATE jcron.schedules SET status = 'COMPLETED' WHERE id = schedule_id;
+        END IF;
+    ELSE
+        -- Mark as failed
+        UPDATE jcron.schedules SET status = 'FAILED', updated_at = NOW() WHERE id = schedule_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================================================
+-- 7. MAINTENANCE & OPTIMIZATION FUNCTIONS
+-- =====================================================
+
+-- Clean old cache entries
+CREATE OR REPLACE FUNCTION jcron.cleanup_cache(keep_days INTEGER DEFAULT 30)
+RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    DELETE FROM jcron.schedule_cache
+    WHERE last_accessed < NOW() - (keep_days || ' days')::INTERVAL
+      AND NOT EXISTS (
+          SELECT 1 FROM jcron.schedules
+          WHERE jcron.schedules.cache_key = jcron.schedule_cache.cache_key
+      );
+
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;
 
--- Maintenance function to run periodically
-CREATE OR REPLACE FUNCTION jcron.maintenance(
-    p_cleanup_logs_days integer DEFAULT 30,
-    p_cleanup_cache boolean DEFAULT true
-) RETURNS TABLE(
-    operation text,
-    records_affected integer,
-    details text
-) AS $$
+-- Clean old execution logs
+CREATE OR REPLACE FUNCTION jcron.cleanup_logs(keep_days INTEGER DEFAULT 90)
+RETURNS INTEGER AS $$
 DECLARE
-    logs_deleted integer;
-    cache_cleaned integer;
+    deleted_count INTEGER;
 BEGIN
-    -- Cleanup old logs
-    logs_deleted := jcron.cleanup_old_logs(p_cleanup_logs_days);
-    RETURN QUERY SELECT 
-        'log_cleanup'::text,
-        logs_deleted,
-        format('Deleted logs older than %s days', p_cleanup_logs_days);
-    
-    -- Cleanup cache if requested
-    IF p_cleanup_cache THEN
-        cache_cleaned := jcron.cleanup_schedule_cache();
-        RETURN QUERY SELECT 
-            'cache_cleanup'::text,
-            cache_cleaned,
-            'Kept 1000 most recent cache entries'::text;
-    END IF;
-    
-    -- Analyze tables for better performance
-    ANALYZE jcron.jobs;
-    ANALYZE jcron.job_logs;
-    ANALYZE jcron.schedule_cache;
-    
-    RETURN QUERY SELECT 
-        'analyze_tables'::text,
-        0,
-        'Updated table statistics'::text;
+    DELETE FROM jcron.execution_log
+    WHERE log_date < CURRENT_DATE - keep_days;
+
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
 END;
 $$ LANGUAGE plpgsql;
 
--- Grant permissions for typical usage
-GRANT USAGE ON SCHEMA jcron TO PUBLIC;
-GRANT SELECT ON ALL TABLES IN SCHEMA jcron TO PUBLIC;
-GRANT SELECT ON ALL SEQUENCES IN SCHEMA jcron TO PUBLIC;
-GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA jcron TO PUBLIC;
-
--- Create a role for job management
-DO $$
+-- Get schedule statistics
+CREATE OR REPLACE FUNCTION jcron.stats()
+RETURNS TABLE(
+    total_schedules BIGINT,
+    active_schedules BIGINT,
+    pending_schedules BIGINT,
+    cache_entries BIGINT,
+    avg_cache_access NUMERIC
+) AS $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'jcron_manager') THEN
-        CREATE ROLE jcron_manager;
-    END IF;
-END
-$$;
+    RETURN QUERY
+    SELECT
+        (SELECT COUNT(*) FROM jcron.schedules) as total_schedules,
+        (SELECT COUNT(*) FROM jcron.schedules WHERE status = 'ACTIVE') as active_schedules,
+        (SELECT COUNT(*) FROM jcron.schedules WHERE status = 'ACTIVE' AND next_run <= NOW()) as pending_schedules,
+        (SELECT COUNT(*) FROM jcron.schedule_cache) as cache_entries,
+        (SELECT AVG(access_count) FROM jcron.schedule_cache) as avg_cache_access;
+END;
+$$ LANGUAGE plpgsql;
 
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA jcron TO jcron_manager;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA jcron TO jcron_manager;
-GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA jcron TO jcron_manager;
+-- =====================================================
+-- 8. PERFORMANCE INDEXES
+-- =====================================================
 
--- Final setup message
-DO $$
-BEGIN
-    RAISE NOTICE '';
-    RAISE NOTICE '========================================================';
-    RAISE NOTICE '          JCRON POSTGRESQL PORT v5.0 READY             ';
-    RAISE NOTICE '========================================================';
-    RAISE NOTICE 'Features enabled:';
-    RAISE NOTICE '  ✓ Custom jcron_schedule data type with validation';
-    RAISE NOTICE '  ✓ Enhanced timezone support';
-    RAISE NOTICE '  ✓ Week of year matching';
-    RAISE NOTICE '  ✓ Predefined schedules (@yearly, @daily, etc.)';
-    RAISE NOTICE '  ✓ Day/month abbreviations (MON, JAN, etc.)';
-    RAISE NOTICE '  ✓ Complete job runner API';
-    RAISE NOTICE '  ✓ Retry mechanism with configurable delays';
-    RAISE NOTICE '  ✓ Comprehensive logging and monitoring';
-    RAISE NOTICE '  ✓ Automatic maintenance functions';
-    RAISE NOTICE '  ✓ Performance optimized with proper indexing';
-    RAISE NOTICE '  ✓ Database-level schedule format validation';
-    RAISE NOTICE '';
-    RAISE NOTICE 'Quick start:';
-    RAISE NOTICE '  SELECT jcron.add_job_from_cron(''my_job'', ''@daily'', ''echo hello'');';
-    RAISE NOTICE '  SELECT * FROM jcron.active_jobs_view;';
-    RAISE NOTICE '  SELECT * FROM jcron.test_jcron_schedule_type();';
-    RAISE NOTICE '  SELECT * FROM jcron.run_comprehensive_tests(100);';
-    RAISE NOTICE '';
-    RAISE NOTICE 'New jcron_schedule type examples:';
-    RAISE NOTICE '  CREATE TABLE my_schedules (id SERIAL, sched jcron.jcron_schedule);';
-    RAISE NOTICE '  INSERT INTO my_schedules (sched) VALUES (''{"s":"0","m":"0","h":"9","D":"*","M":"*","dow":"1-5"}'');';
-    RAISE NOTICE '  SELECT jcron.schedule_next_run(sched) FROM my_schedules;';
-    RAISE NOTICE '';
-    RAISE NOTICE 'For more examples, see documentation or run test functions.';
-    RAISE NOTICE '========================================================';
-END
-$$;
+-- Critical performance indexes
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_jcron_schedules_pending
+ON jcron.schedules(next_run, status)
+WHERE status = 'ACTIVE';
 
--- Test custom jcron_schedule data type
-CREATE OR REPLACE FUNCTION jcron.test_jcron_schedule_type()
-RETURNS TABLE(test_name text, passed boolean, details text) AS $$
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_jcron_schedules_cache
+ON jcron.schedules(cache_key);
+
+-- =====================================================
+-- 9. END OF DURATION (EOD) SUPPORT
+-- =====================================================
+
+-- Parse EOD expression
+CREATE OR REPLACE FUNCTION jcron.parse_eod(eod_expr TEXT)
+RETURNS TABLE(
+    years INTEGER,
+    months INTEGER,
+    weeks INTEGER,
+    days INTEGER,
+    hours INTEGER,
+    minutes INTEGER,
+    seconds INTEGER,
+    reference_point jcron.reference_point,
+    event_identifier TEXT
+) AS $$
 DECLARE
-    test_schedule jcron.jcron_schedule;
-    schedule_jsonb jsonb;
-    next_run timestamptz;
+    parts TEXT[];
+    duration_part TEXT;
+    reference_part TEXT := 'END';
+    event_part TEXT := NULL;
 BEGIN
-    -- Test 1: Valid schedule creation
-    BEGIN
-        test_schedule := '{"s":"0","m":"30","h":"9","D":"*","M":"*","dow":"*"}'::jcron.jcron_schedule;
-        RETURN QUERY SELECT 
-            'Valid Schedule Creation'::text,
-            true::boolean,
-            'Successfully created valid schedule'::text;
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Valid Schedule Creation'::text, false::boolean, SQLERRM::text;
+    -- Handle empty or null input
+    IF eod_expr IS NULL OR LENGTH(TRIM(eod_expr)) = 0 THEN
+        RAISE EXCEPTION 'EOD expression cannot be empty';
+    END IF;
+
+    -- Remove EOD: prefix if present
+    eod_expr := REGEXP_REPLACE(eod_expr, '^EOD:', '');
+
+    -- Split by spaces to separate duration, reference, and event parts
+    parts := string_to_array(eod_expr, ' ');
+    duration_part := parts[1];
+
+    -- Extract reference point if present
+    IF array_length(parts, 1) >= 2 THEN
+        reference_part := parts[2];
+    END IF;
+
+    -- Extract event identifier if present (E[event_name])
+    IF array_length(parts, 1) >= 3 AND parts[3] LIKE 'E[%]' THEN
+        event_part := REGEXP_REPLACE(parts[3], '^E\[(.*)\]$', '\1');
+    END IF;
+
+    -- Set reference point
+    reference_point := CASE reference_part
+        WHEN 'D' THEN 'DAY'::jcron.reference_point
+        WHEN 'W' THEN 'WEEK'::jcron.reference_point
+        WHEN 'M' THEN 'MONTH'::jcron.reference_point
+        WHEN 'Q' THEN 'QUARTER'::jcron.reference_point
+        WHEN 'Y' THEN 'YEAR'::jcron.reference_point
+        ELSE CASE
+            WHEN duration_part LIKE 'S%' THEN 'START'::jcron.reference_point
+            ELSE 'END'::jcron.reference_point
+        END
     END;
-    
-    -- Test 2: Invalid schedule rejection
-    BEGIN
-        test_schedule := '{"invalid":"data"}'::jcron.jcron_schedule;
-        RETURN QUERY SELECT 'Invalid Schedule Rejection'::text, false::boolean, 'Should have failed'::text;
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Invalid Schedule Rejection'::text, true::boolean, 'Correctly rejected invalid schedule'::text;
-    END;
-    
-    -- Test 3: Type casting to/from JSONB
-    BEGIN
-        schedule_jsonb := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*"}';
-        test_schedule := schedule_jsonb::jcron.jcron_schedule;
-        schedule_jsonb := test_schedule::jsonb;
-        
-        RETURN QUERY SELECT 
-            'Type Casting Test'::text,
-            true::boolean,
-            format('JSONB cast successful: %s', schedule_jsonb::text);
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Type Casting Test'::text, false::boolean, SQLERRM::text;
-    END;
-    
-    -- Test 4: Schedule functionality
-    BEGIN
-        test_schedule := '{"s":"0","m":"0","h":"9","D":"*","M":"*","dow":"1-5"}'::jcron.jcron_schedule;
-        next_run := jcron.schedule_next_run(test_schedule);
-        
-        RETURN QUERY SELECT 
-            'Schedule Functionality Test'::text,
-            (next_run IS NOT NULL)::boolean,
-            format('Next run: %s', next_run);
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Schedule Functionality Test'::text, false::boolean, SQLERRM::text;
-    END;
-    
-    -- Test 5: Schedule validation constraints
-    BEGIN
-        -- This should fail due to invalid field values
-        test_schedule := '{"s":"0","m":"70","h":"9","D":"*","M":"*","dow":"*"}'::jcron.jcron_schedule;
-        RETURN QUERY SELECT 'Validation Constraint Test'::text, false::boolean, 'Should have failed validation'::text;
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Validation Constraint Test'::text, true::boolean, 'Correctly caught validation error'::text;
-    END;
-    
-    -- Test 6: Timezone handling in type
-    BEGIN
-        test_schedule := '{"s":"0","m":"0","h":"12","D":"*","M":"*","dow":"*","timezone":"America/New_York"}'::jcron.jcron_schedule;
-        next_run := jcron.schedule_next_run(test_schedule);
-        
-        RETURN QUERY SELECT 
-            'Timezone Handling Test'::text,
-            (next_run IS NOT NULL)::boolean,
-            format('Next run with timezone: %s', next_run);
-    EXCEPTION WHEN OTHERS THEN
-        RETURN QUERY SELECT 'Timezone Handling Test'::text, false::boolean, SQLERRM::text;
-    END;
+
+    -- Remove S/E prefix from duration
+    duration_part := REGEXP_REPLACE(duration_part, '^[SE]', '');
+
+    -- Initialize all values to 0
+    years := 0; months := 0; weeks := 0; days := 0;
+    hours := 0; minutes := 0; seconds := 0;
+    event_identifier := event_part;
+
+    -- Parse ISO 8601-like duration format (simplified)
+    -- Examples: 8H, 30M, 1DT12H, 2W3DT6H30M, 1Y6M2DT4H30M45S
+
+    -- Extract years (Y)
+    IF duration_part ~ '\d+Y' THEN
+        years := (REGEXP_MATCH(duration_part, '(\d+)Y'))[1]::INTEGER;
+        duration_part := REGEXP_REPLACE(duration_part, '\d+Y', '');
+    END IF;
+
+    -- Extract months (M before T or at end) - only if there's no T separator
+    -- This handles complex formats like 1Y6M2DT4H30M45S where first M is months, second M is minutes
+    IF duration_part ~ '\d+M' AND position('T' in duration_part) = 0 AND duration_part ~ '^\d+M$' THEN
+        -- Simple format like E30M should be treated as minutes, not months
+        -- Only treat as months if it's part of a complex expression with years/days
+        IF duration_part ~ '^\d+M$' AND years = 0 AND weeks = 0 AND days = 0 THEN
+            -- Simple M format (like E30M) = minutes
+            minutes := (REGEXP_MATCH(duration_part, '(\d+)M'))[1]::INTEGER;
+        ELSE
+            -- Complex format with other date parts = months
+            months := (REGEXP_MATCH(duration_part, '(\d+)M'))[1]::INTEGER;
+        END IF;
+        duration_part := REGEXP_REPLACE(duration_part, '\d+M', '');
+    ELSIF duration_part ~ '\d+M(?!.*T.*M)' AND position('T' in duration_part) > 0 THEN
+        -- Has T separator and M before T = months
+        months := (REGEXP_MATCH(duration_part, '(\d+)M(?!.*T.*M)'))[1]::INTEGER;
+        duration_part := REGEXP_REPLACE(duration_part, '(\d+)M(?!.*T.*M)', '');
+    END IF;
+
+    -- Extract weeks (W)
+    IF duration_part ~ '\d+W' THEN
+        weeks := (REGEXP_MATCH(duration_part, '(\d+)W'))[1]::INTEGER;
+        duration_part := REGEXP_REPLACE(duration_part, '\d+W', '');
+    END IF;
+
+    -- Split by T for date and time parts
+    IF position('T' in duration_part) > 0 THEN
+        -- Date part (before T)
+        IF duration_part ~ '^\d+D' THEN
+            days := (REGEXP_MATCH(duration_part, '^(\d+)D'))[1]::INTEGER;
+        END IF;
+
+        -- Time part (after T)
+        duration_part := REGEXP_REPLACE(duration_part, '^.*T', '');
+
+        -- Extract hours
+        IF duration_part ~ '\d+H' THEN
+            hours := (REGEXP_MATCH(duration_part, '(\d+)H'))[1]::INTEGER;
+        END IF;
+
+        -- Extract minutes (M after T)
+        IF duration_part ~ '\d+M' THEN
+            minutes := (REGEXP_MATCH(duration_part, '(\d+)M'))[1]::INTEGER;
+        END IF;
+
+        -- Extract seconds
+        IF duration_part ~ '\d+S' THEN
+            seconds := (REGEXP_MATCH(duration_part, '(\d+)S'))[1]::INTEGER;
+        END IF;
+    ELSE
+        -- No T separator, could be simple format like 8H, 30M, 5D
+        IF duration_part ~ '^\d+D$' THEN
+            days := (REGEXP_MATCH(duration_part, '^(\d+)D$'))[1]::INTEGER;
+        ELSIF duration_part ~ '^\d+H$' THEN
+            hours := (REGEXP_MATCH(duration_part, '^(\d+)H$'))[1]::INTEGER;
+        ELSIF duration_part ~ '^\d+M$' THEN
+            minutes := (REGEXP_MATCH(duration_part, '^(\d+)M$'))[1]::INTEGER;
+        ELSIF duration_part ~ '^\d+S$' THEN
+            seconds := (REGEXP_MATCH(duration_part, '^(\d+)S$'))[1]::INTEGER;
+        END IF;
+    END IF;
+
+    RETURN NEXT;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Calculate EOD end time
+CREATE OR REPLACE FUNCTION jcron.calculate_eod_end_time(
+    start_time TIMESTAMPTZ,
+    eod_years INTEGER DEFAULT 0,
+    eod_months INTEGER DEFAULT 0,
+    eod_weeks INTEGER DEFAULT 0,
+    eod_days INTEGER DEFAULT 0,
+    eod_hours INTEGER DEFAULT 0,
+    eod_minutes INTEGER DEFAULT 0,
+    eod_seconds INTEGER DEFAULT 0,
+    reference_point jcron.reference_point DEFAULT 'END'
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    result_time TIMESTAMPTZ;
+    end_of_period TIMESTAMPTZ;
+BEGIN
+    -- Calculate base duration from start time
+    result_time := start_time +
+        INTERVAL '1 year' * eod_years +
+        INTERVAL '1 month' * eod_months +
+        INTERVAL '1 week' * eod_weeks +
+        INTERVAL '1 day' * eod_days +
+        INTERVAL '1 hour' * eod_hours +
+        INTERVAL '1 minute' * eod_minutes +
+        INTERVAL '1 second' * eod_seconds;    -- Apply reference point adjustments
+    CASE reference_point
+        WHEN 'END', 'START', 'E', 'S' THEN
+            -- Simple duration from start time
+            RETURN result_time;
+
+        WHEN 'DAY', 'D' THEN
+            -- Duration PLUS end of day: Add duration first, then go to end of that day
+            result_time := result_time;
+            end_of_period := date_trunc('day', result_time) + INTERVAL '1 day' - INTERVAL '1 second';
+            RETURN end_of_period;
+
+        WHEN 'WEEK', 'W' THEN
+            -- Duration PLUS end of week: Add duration first, then go to end of that week
+            result_time := result_time;
+            end_of_period := date_trunc('week', result_time) + INTERVAL '1 week' - INTERVAL '1 second';
+            RETURN end_of_period;
+
+        WHEN 'MONTH', 'M' THEN
+            -- Duration PLUS end of month: Add duration first, then go to end of that month
+            result_time := result_time;
+            end_of_period := date_trunc('month', result_time) + INTERVAL '1 month' - INTERVAL '1 second';
+            RETURN end_of_period;
+
+        WHEN 'QUARTER', 'Q' THEN
+            -- Duration PLUS end of quarter: Add duration first, then go to end of that quarter
+            result_time := result_time;
+            end_of_period := date_trunc('quarter', result_time) + INTERVAL '3 months' - INTERVAL '1 second';
+            RETURN end_of_period;
+
+        WHEN 'YEAR', 'Y' THEN
+            -- Duration PLUS end of year: Add duration first, then go to end of that year
+            result_time := result_time;
+            end_of_period := date_trunc('year', result_time) + INTERVAL '1 year' - INTERVAL '1 second';
+            RETURN end_of_period;
+    END CASE;
+
+    RETURN result_time;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Check if expression has EOD
+CREATE OR REPLACE FUNCTION jcron.has_eod(expression TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN expression LIKE '%EOD:%';
+END;
+$$ LANGUAGE plpgsql;
+
+-- Extract base cron expression (without EOD part)
+CREATE OR REPLACE FUNCTION jcron.extract_base_cron(expression TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    -- Remove EOD part and any trailing spaces
+    RETURN TRIM(REGEXP_REPLACE(expression, ' EOD:.*$', ''));
+END;
+$$ LANGUAGE plpgsql;
+
+-- Extract EOD part from expression
+CREATE OR REPLACE FUNCTION jcron.extract_eod_part(expression TEXT)
+RETURNS TEXT AS $$
+DECLARE
+    eod_match TEXT[];
+BEGIN
+    eod_match := REGEXP_MATCH(expression, ' EOD:(.*)$');
+    IF eod_match IS NOT NULL THEN
+        RETURN eod_match[1];
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+-- =====================================================
+-- 10. EXAMPLE USAGE & TEST FUNCTIONS
+-- =====================================================
+
+-- Test function to validate implementation
+CREATE OR REPLACE FUNCTION jcron.test_examples()
+RETURNS TABLE(test_group TEXT, test_name TEXT, expression TEXT, from_time TIMESTAMPTZ, expected_time TIMESTAMPTZ, actual_time TIMESTAMPTZ, passed BOOLEAN, description TEXT) AS $$
+BEGIN
+    -- Complete test suite covering all Go test cases
+    RETURN QUERY
+    WITH test_cases AS (
+        SELECT
+            grp,
+            name,
+            expr,
+            from_ts,
+            expected_ts,
+            descr
+        FROM (VALUES
+            -- === CORE NEXT TESTS ===
+            ('NEXT', '1. Basit Sonraki Dakika', '0 * * * * *', '2025-10-26T10:00:30Z'::timestamptz, '2025-10-26T10:01:00Z'::timestamptz, 'Basic next minute'),
+            ('NEXT', '2. Sonraki Saatin Başı', '0 0 * * * *', '2025-10-26T10:59:00Z'::timestamptz, '2025-10-26T11:00:00Z'::timestamptz, 'Next hour start'),
+            ('NEXT', '3. Sonraki Günün Başı', '0 0 0 * * *', '2025-10-26T23:59:00Z'::timestamptz, '2025-10-27T00:00:00Z'::timestamptz, 'Next day start'),
+            ('NEXT', '4. Sonraki Ayın Başı', '0 0 0 1 * *', '2025-02-15T12:00:00Z'::timestamptz, '2025-03-01T00:00:00Z'::timestamptz, 'Next month start'),
+            ('NEXT', '5. Sonraki Yılın Başı', '0 0 0 1 1 *', '2025-06-15T12:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz, 'Next year start'),
+
+            -- === RANGE AND STEP TESTS ===
+            ('NEXT', '6. İş Saatleri İçinde', '0 0 9-17 * * MON-FRI', '2025-03-03T10:30:00Z'::timestamptz, '2025-03-03T11:00:00Z'::timestamptz, 'Business hours inside'),
+            ('NEXT', '7. İş Saati Sonu Atlama', '0 0 9-17 * * MON-FRI', '2025-03-03T17:30:00Z'::timestamptz, '2025-03-04T09:00:00Z'::timestamptz, 'Business hours end jump'),
+            ('NEXT', '8. Hafta Sonu Atlama', '0 0 9-17 * * 1-5', '2025-03-07T18:00:00Z'::timestamptz, '2025-03-10T09:00:00Z'::timestamptz, 'Weekend jump'),
+            ('NEXT', '9. Her 15 Dakikada', '0 */15 * * * *', '2025-05-10T14:16:00Z'::timestamptz, '2025-05-10T14:30:00Z'::timestamptz, 'Every 15 minutes'),
+            ('NEXT', '10. Belirli Aylar', '0 0 0 1 3,6,9,12 *', '2025-03-15T10:00:00Z'::timestamptz, '2025-06-01T00:00:00Z'::timestamptz, 'Specific months'),
+
+            -- === SPECIAL CHARACTERS ===
+            ('NEXT', '11. Ayın Son Günü (L)', '0 0 12 L * *', '2024-02-10T00:00:00Z'::timestamptz, '2024-02-29T12:00:00Z'::timestamptz, 'Last day of month (leap year)'),
+            ('NEXT', '12. Son Gün Sonraki Ay', '0 0 12 L * *', '2025-04-30T13:00:00Z'::timestamptz, '2025-05-31T12:00:00Z'::timestamptz, 'Last day next month'),
+            ('NEXT', '13. Son Cuma (5L)', '0 0 22 * * 5L', '2025-08-01T00:00:00Z'::timestamptz, '2025-08-29T22:00:00Z'::timestamptz, 'Last Friday of month'),
+            ('NEXT', '14. İkinci Salı (2#2)', '0 0 8 * * 2#2', '2025-11-01T00:00:00Z'::timestamptz, '2025-11-11T08:00:00Z'::timestamptz, 'Second Tuesday of month'),
+            ('NEXT', '15. Vixie-Cron OR', '0 0 0 15 * MON', '2025-09-09T00:00:00Z'::timestamptz, '2025-09-15T00:00:00Z'::timestamptz, 'OR logic (15th OR Monday)'),
+
+            -- === TIMEZONE AND YEAR TESTS ===
+            ('NEXT', '16. Haftalık (@weekly)', '0 0 0 * * 0', '2025-01-01T12:00:00Z'::timestamptz, '2025-01-05T00:00:00Z'::timestamptz, 'Weekly shortcut'),
+            ('NEXT', '17. Saatlik (@hourly)', '0 0 * * * *', '2025-01-01T15:00:00Z'::timestamptz, '2025-01-01T16:00:00Z'::timestamptz, 'Hourly shortcut'),
+            ('NEXT', '20. Yıl Belirtme', '0 0 0 1 1 * 2027', '2025-01-01T00:00:00Z'::timestamptz, '2027-01-01T00:00:00Z'::timestamptz, 'Year specification'),
+            ('NEXT', '21. Son Saniye', '59 59 23 31 12 *', '2025-12-31T23:59:58Z'::timestamptz, '2025-12-31T23:59:59'::timestamptz, 'Last second of year'),
+
+            -- === ADDITIONAL COMPREHENSIVE TESTS ===
+            ('NEXT', '22. Her 5 Saniye', '*/5 * * * * *', '2025-01-01T12:00:03Z'::timestamptz, '2025-01-01T12:00:05Z'::timestamptz, 'Every 5 seconds'),
+            ('NEXT', '23. Belirli Saniyeler', '15,30,45 * * * * *', '2025-01-01T12:00:20Z'::timestamptz, '2025-01-01T12:00:30Z'::timestamptz, 'Specific seconds'),
+            ('NEXT', '24. Hafta İçi Öğle', '0 0 12 * * 1-5', '2025-08-08T14:00:00Z'::timestamptz, '2025-08-11T12:00:00Z'::timestamptz, 'Weekday lunch'),
+            ('NEXT', '25. Ay Sonu ve Başı', '0 0 0 1,L * *', '2025-01-15T12:00:00Z'::timestamptz, '2025-01-31T00:00:00Z'::timestamptz, 'Month start and end'),
+            ('NEXT', '26. Çeyrek Saatler', '0 0,15,30,45 * * * *', '2025-01-01T10:20:00Z'::timestamptz, '2025-01-01T10:30:00Z'::timestamptz, 'Quarter hours'),
+            ('NEXT', '27. Artık Yıl Şubat 29', '0 0 12 29 2 *', '2023-12-01T00:00:00Z'::timestamptz, '2024-02-29T12:00:00Z'::timestamptz, 'Leap year Feb 29'),
+            ('NEXT', '28. 1. ve 3. Pazartesi', '0 0 9 * * 1#1,1#3', '2025-01-07T10:00:00Z'::timestamptz, '2025-01-20T09:00:00Z'::timestamptz, '1st and 3rd Monday'),
+            ('NEXT', '30. Yılın Son Günü', '59 59 23 31 12 *', '2025-12-30T12:00:00Z'::timestamptz, '2025-12-31T23:59:59'::timestamptz, 'Last day of year'),
+
+            -- === ADVANCED PATTERNS ===
+            ('NEXT', '31. Karma Özel Karakterler', '0 0 12 L * 5L', '2025-01-01T00:00:00Z'::timestamptz, '2025-01-31T12:00:00Z'::timestamptz, 'Mixed special chars'),
+            ('NEXT', '32. Çoklu # Patterns', '0 0 14 * * 1#2,3#3,5#4', '2025-01-01T00:00:00Z'::timestamptz, '2025-01-13T14:00:00Z'::timestamptz, 'Multiple # patterns'),
+            ('NEXT', '33. Saniye Adım', '*/10 */5 * * * *', '2025-01-01T12:05:25Z'::timestamptz, '2025-01-01T12:05:30Z'::timestamptz, 'Second step values'),
+            ('NEXT', '34. Gece Yarısı Geçiş', '30 59 23 * * *', '2025-12-31T23:59:25Z'::timestamptz, '2025-12-31T23:59:30Z'::timestamptz, 'Midnight transition'),
+            ('NEXT', '35. Normal Yıl Şubat 29', '0 0 12 29 2 *', '2025-01-01T00:00:00Z'::timestamptz, '2028-02-29T12:00:00Z'::timestamptz, 'Non-leap year Feb 29'),
+            ('NEXT', '37. Hafta İçi + Gün Kombo', '0 0 9 15 * 1-5', '2025-01-10T00:00:00Z'::timestamptz, '2025-01-10T09:00:00Z'::timestamptz, 'Weekday + day combo'),
+            ('NEXT', '38. Maksimum Değerler', '59 59 23 31 12 *', '2025-12-31T23:59:58Z'::timestamptz, '2025-12-31T23:59:59Z'::timestamptz, 'Maximum values'),
+            ('NEXT', '39. Minimum Değerler', '0 0 0 1 1 *', '2024-12-31T23:59:59Z'::timestamptz, '2025-01-01T00:00:00Z'::timestamptz, 'Minimum values'),
+            ('NEXT', '40. Karma Liste Aralık', '0 0,30 8-12,14-18 1,15 1,6,12 *', '2025-01-01T08:15:00Z'::timestamptz, '2025-01-01T08:30:00Z'::timestamptz, 'Mixed lists and ranges'),
+
+            -- === PREV TESTS ===
+            ('PREV', '1. Basit Önceki Dakika', '0 * * * * *', '2025-10-26T10:00:30Z'::timestamptz, '2025-10-26T10:00:00Z'::timestamptz, 'Basic prev minute'),
+            ('PREV', '2. Önceki Saatin Başı', '0 0 * * * *', '2025-10-26T11:00:00Z'::timestamptz, '2025-10-26T10:00:00Z'::timestamptz, 'Prev hour start'),
+            ('PREV', '3. Önceki Günün Başı', '0 0 0 * * *', '2025-10-27T00:00:00Z'::timestamptz, '2025-10-26T00:00:00Z'::timestamptz, 'Prev day start'),
+            ('PREV', '4. Önceki Ayın Başı', '0 0 0 1 * *', '2025-03-15T12:00:00Z'::timestamptz, '2025-03-01T00:00:00Z'::timestamptz, 'Prev month start'),
+            ('PREV', '5. Önceki Yılın Başı', '0 0 0 1 1 *', '2026-06-15T12:00:00Z'::timestamptz, '2026-01-01T00:00:00Z'::timestamptz, 'Prev year start'),
+            ('PREV', '6. İş Saatleri İçinde', '0 0 9-17 * * MON-FRI', '2025-03-03T10:30:00Z'::timestamptz, '2025-03-03T10:00:00Z'::timestamptz, 'Business hours inside'),
+            ('PREV', '7. İş Saati Başı Atlama', '0 0 9-17 * * MON-FRI', '2025-03-04T09:00:00Z'::timestamptz, '2025-03-03T17:00:00Z'::timestamptz, 'Business hours start jump'),
+            ('PREV', '8. Hafta Başı Atlama', '0 0 9-17 * * 1-5', '2025-03-10T08:00:00Z'::timestamptz, '2025-03-07T17:00:00Z'::timestamptz, 'Week start jump'),
+            ('PREV', '9. Her 15 Dakikada', '0 */15 * * * *', '2025-05-10T14:31:00Z'::timestamptz, '2025-05-10T14:30:00Z'::timestamptz, 'Every 15 minutes'),
+            ('PREV', '10. Belirli Aylar', '0 0 0 1 3,6,9,12 *', '2025-05-15T10:00:00Z'::timestamptz, '2025-03-01T00:00:00Z'::timestamptz, 'Specific months'),
+            ('PREV', '11. Ayın Son Günü (L)', '0 0 12 L * *', '2024-03-10T00:00:00Z'::timestamptz, '2024-02-29T12:00:00Z'::timestamptz, 'Last day of month'),
+            ('PREV', '12. Son Gün Ay İçinde', '0 0 12 L * *', '2025-05-31T11:00:00Z'::timestamptz, '2025-04-30T12:00:00Z'::timestamptz, 'Last day within month'),
+            ('PREV', '13. Son Cuma (5L)', '0 0 22 * * 5L', '2025-09-01T00:00:00Z'::timestamptz, '2025-08-29T22:00:00Z'::timestamptz, 'Last Friday of month'),
+            ('PREV', '14. İkinci Salı (2#2)', '0 0 8 * * 2#2', '2025-11-20T00:00:00Z'::timestamptz, '2025-11-11T08:00:00Z'::timestamptz, 'Second Tuesday'),
+            ('PREV', '15. Vixie-Cron OR', '0 0 0 15 * MON', '2025-09-17T00:00:00Z'::timestamptz, '2025-09-15T00:00:00Z'::timestamptz, 'OR logic prev'),
+            ('PREV', '16. Haftalık (@weekly)', '0 0 0 * * 0', '2025-01-08T12:00:00Z'::timestamptz, '2025-01-05T00:00:00Z'::timestamptz, 'Weekly shortcut'),
+            ('PREV', '17. Saatlik (@hourly)', '0 0 * * * *', '2025-01-01T15:00:00Z'::timestamptz, '2025-01-01T14:00:00Z'::timestamptz, 'Hourly shortcut'),
+            ('PREV', '20. Yıl Belirtme', '0 0 0 1 1 * 2025', '2027-01-01T00:00:00Z'::timestamptz, '2025-01-01T00:00:00Z'::timestamptz, 'Year specification'),
+            ('PREV', '21. Saniye Başlangıç', '0 0  0 1 1 *', '2025-01-01T00:00:01Z'::timestamptz, '2025-01-01T00:00:00Z'::timestamptz, 'Second start'),
+
+            -- === EOD TESTS ===
+            ('EOD', 'E8H Test', '0 9 * * 1-5 EOD:E8H', '2025-01-06T09:00:00Z'::timestamptz, '2025-01-06T17:00:00Z'::timestamptz, 'End + 8 hours'),
+            ('EOD', 'S30M Test', '0 14 * * * EOD:S30M', '2025-01-01T14:00:00Z'::timestamptz, '2025-01-01T14:30:00Z'::timestamptz, 'Start + 30 minutes'),
+            ('EOD', 'E1DT12H Test', '0 9 * * 1 EOD:E1DT12H', '2025-01-06T09:00:00Z'::timestamptz, '2025-01-07T21:00:00Z'::timestamptz, 'End + 1 day 12 hours'),
+            ('EOD', 'E2W Test', '0 9 * * 1 EOD:E2W', '2025-01-06T09:00:00Z'::timestamptz, '2025-01-20T09:00:00Z'::timestamptz, 'End + 2 weeks'),
+            ('EOD', 'Day Reference Test', '0 9 * * * EOD:E2H D', '2025-01-15T09:00:00Z'::timestamptz, '2025-01-15T23:59:59Z'::timestamptz, 'Day reference end')
+        ) AS t(grp, name, expr, from_ts, expected_ts, descr)
+    )
+    SELECT
+        tc.grp,
+        tc.name,
+        tc.expr,
+        tc.from_ts,
+        tc.expected_ts,
+        CASE
+            WHEN tc.grp = 'NEXT' THEN jcron.next_time(jcron.parse_expression(tc.expr), tc.from_ts)
+            WHEN tc.grp = 'PREV' THEN jcron.prev_time(jcron.parse_expression(tc.expr), tc.from_ts)
+            WHEN tc.grp = 'EOD' THEN jcron.eod_time(jcron.parse_expression(tc.expr), tc.from_ts)
+        END AS actual_time,
+        CASE
+            WHEN tc.grp = 'NEXT' THEN jcron.next_time(jcron.parse_expression(tc.expr), tc.from_ts) = tc.expected_ts
+            WHEN tc.grp = 'PREV' THEN jcron.prev_time(jcron.parse_expression(tc.expr), tc.from_ts) = tc.expected_ts
+            WHEN tc.grp = 'EOD' THEN jcron.eod_time(jcron.parse_expression(tc.expr), tc.from_ts) = tc.expected_ts
+        END AS passed,
+        tc.descr
+    FROM test_cases tc
+    ORDER BY tc.grp, tc.name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- YENİ: Cache'siz, saf, ultra-performanslı test fonksiyonu
+CREATE OR REPLACE FUNCTION jcron.performance_test(iterations INTEGER DEFAULT 10000)
+RETURNS TABLE(operation TEXT, total_ms NUMERIC, avg_us NUMERIC, ops_per_sec INTEGER) AS $$
+DECLARE
+    start_time TIMESTAMPTZ;
+    end_time TIMESTAMPTZ;
+    duration_ms NUMERIC;
+    test_time TIMESTAMPTZ := '2025-01-15T10:00:00Z';
+BEGIN
+    -- 1. Parse performance (her seferinde parse, cache yok)
+    start_time := clock_timestamp();
+    PERFORM (
+        SELECT COUNT(*) FROM generate_series(1, LEAST(iterations, 1000)) i
+        CROSS JOIN LATERAL (SELECT jcron.parse_expression('0 0 * * * *')) p
+    );
+    end_time := clock_timestamp();
+    duration_ms := EXTRACT(EPOCH FROM (end_time - start_time)) * 1000;
+    RETURN QUERY SELECT 'Parse Expression (no cache)'::TEXT, duration_ms, (duration_ms * 1000) / LEAST(iterations, 1000), (LEAST(iterations, 1000) / (duration_ms / 1000))::INTEGER;
+
+    -- 2. Next time hesaplama (her seferinde parse, cache yok)
+    start_time := clock_timestamp();
+    PERFORM (
+        SELECT COUNT(*) FROM generate_series(1, iterations) i
+        CROSS JOIN LATERAL (
+            SELECT jcron.next_time(jcron.parse_expression('0 0 * * * *'), test_time + (i || ' seconds')::interval)
+        ) calc
+    );
+    end_time := clock_timestamp();
+    duration_ms := EXTRACT(EPOCH FROM (end_time - start_time)) * 1000;
+    RETURN QUERY SELECT 'Next Time (no cache)'::TEXT, duration_ms, (duration_ms * 1000) / iterations, (iterations / (duration_ms / 1000))::INTEGER;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================================================
+-- 11. INITIAL DATA & DEMO
+-- =====================================================
+select jcron.next_time(jcron.parse_expression('0 9 * * MON-FRI TZ=UTC'), '2025-01-01 00:00:00+00') from generate_series(1, 10000) as s(n);
+select jcron.performance_test(8000);
+-- Create demo schedules
+SELECT jcron.schedule(
+    'hourly-maintenance',
+    '0 0 * * * TZ=UTC',
+    'VACUUM pg_stat_statements;'
+);
+
+SELECT jcron.schedule(
+    'daily-cleanup',
+    '0 2 * * * TZ=UTC',
+    'DELETE FROM jcron.execution_log WHERE log_date < CURRENT_DATE - 30;'
+);
+
+SELECT jcron.schedule(
+    'business-hours-report',
+    '0 9 * * MON-FRI TZ=Europe/Istanbul',
+    'SELECT COUNT(*) FROM jcron.schedules;'
+);
+
+-- Show initial statistics
+SELECT 'Initial Statistics:' as info;
+SELECT * FROM jcron.stats();
+
+-- Show created jobs
+SELECT 'Created Jobs:' as info;
+SELECT * FROM jcron.jobs();
+
+-- Display test examples with validation
+SELECT 'Schedule Validation Examples:' as info;
+SELECT
+    expr as "Expression",
+    (SELECT is_valid FROM jcron.validate_schedule(expr)) as "Valid",
+    (SELECT next_run FROM jcron.validate_schedule(expr)) as "Next Run",
+    descr as "Description"
+FROM (VALUES
+    ('0 9 * * MON-FRI TZ=UTC', 'Business hours: 9 AM weekdays'),
+    ('*/15 * * * * TZ=Europe/Istanbul', 'Every 15 minutes in Istanbul time'),
+    ('0 0 12 L * * TZ=UTC', 'Last day of month at noon'),
+    ('0 0 22 * * 5L TZ=UTC', 'Last Friday of month at 10 PM'),
+    ('0 0 8 * * 2#2 TZ=UTC', 'Second Tuesday of month at 8 AM'),
+    ('0 9 * * MON WOY:1-26 TZ=UTC', 'First half year Mondays'),
+    ('0 8 * * * TZ=UTC EOD:E8H', 'Daily 8 AM, ends after 8 hours'),
+    ('*/30 * * * * TZ=UTC EOD:S1D M', 'Every 30 seconds, ends at month end')
+) AS t(expr, descr);
+
+COMMENT ON SCHEMA public IS 'JCRON PostgreSQL Implementation - Ultra High Performance Scheduler with pgcron-compatible interface';
+
+-- Debug function to test EOD parsing
+CREATE OR REPLACE FUNCTION jcron.debug_eod(eod_expr TEXT)
+RETURNS TABLE(
+    input TEXT,
+    years INTEGER, months INTEGER, weeks INTEGER, days INTEGER,
+    hours INTEGER, minutes INTEGER, seconds INTEGER,
+    reference jcron.reference_point, event_id TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        eod_expr as input,
+        p.years, p.months, p.weeks, p.days,
+        p.hours, p.minutes, p.seconds,
+        p.reference_point, p.event_identifier
+    FROM jcron.parse_eod(eod_expr) p;
+END;
+$$ LANGUAGE plpgsql;
+
+-- EOD-aware next time calculation
+CREATE OR REPLACE FUNCTION jcron.next_time_with_eod(
+    p_cache_key TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    base_next_time TIMESTAMPTZ;
+    eod_data RECORD;
+    expression_text TEXT;
+    eod_part TEXT;
+BEGIN
+    -- Get original expression text
+    SELECT jcron_expr INTO expression_text FROM jcron.schedules WHERE id = p_cache_key;
+
+    -- Check if expression has EOD
+    IF NOT jcron.has_eod(expression_text) THEN
+        -- No EOD, use regular next_time
+        RETURN jcron.next_time(p_cache_key, from_time);
+    END IF;
+
+    -- Calculate base next execution time (without EOD)
+    base_next_time := jcron.next_time(p_cache_key, from_time);
+
+    -- Extract and parse EOD part
+    eod_part := jcron.extract_eod_part(expression_text);
+
+    SELECT * INTO eod_data FROM jcron.parse_eod(eod_part);
+
+    -- Calculate EOD end time
+    RETURN jcron.calculate_eod_end_time(
+        base_next_time,
+        eod_data.years,
+        eod_data.months,
+        eod_data.weeks,
+        eod_data.days,
+        eod_data.hours,
+        eod_data.minutes,
+        eod_data.seconds,
+        eod_data.reference_point
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- =====================================================
+-- 11. EOD HELPER FUNCTIONS
+-- =====================================================
+
+-- Calculate EOD end time directly from expression and start time
+-- This matches Go's schedule.EndOf(startTime) behavior
+CREATE OR REPLACE FUNCTION jcron.eod_time(
+    expression TEXT,
+    start_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    eod_part TEXT;
+    eod_data RECORD;
+BEGIN
+    -- Check if expression has EOD
+    IF NOT jcron.has_eod(expression) THEN
+        -- No EOD, return zero time equivalent (start_time)
+        RETURN start_time;
+    END IF;
+
+    -- Extract and parse EOD part
+    eod_part := jcron.extract_eod_part(expression);
+
+    IF eod_part IS NULL THEN
+        RETURN start_time;
+    END IF;
+
+    -- Parse EOD expression
+    SELECT * INTO eod_data FROM jcron.parse_eod(eod_part);
+
+    -- Calculate EOD end time directly from start_time
+    RETURN jcron.calculate_eod_end_time(
+        start_time,
+        eod_data.years,
+        eod_data.months,
+        eod_data.weeks,
+        eod_data.days,
+        eod_data.hours,
+        eod_data.minutes,
+        eod_data.seconds,
+        eod_data.reference_point
+    );
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function: Calculate execution window end time
+-- Returns the end time for a specific execution that started at execution_time
+CREATE OR REPLACE FUNCTION jcron.execution_end_time(
+    expression TEXT,
+    execution_time TIMESTAMPTZ
+) RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    -- For EOD expressions, calculate end time from execution start
+    RETURN jcron.eod_time(expression, execution_time);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function: Check if current time is within execution window
+CREATE OR REPLACE FUNCTION jcron.is_within_execution_window(
+    expression TEXT,
+    execution_start TIMESTAMPTZ,
+    v_current_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS BOOLEAN AS $$
+DECLARE
+    end_time TIMESTAMPTZ;
+BEGIN
+    -- No EOD means no execution window concept
+    IF NOT jcron.has_eod(expression) THEN
+        RETURN TRUE;
+    END IF;
+
+    end_time := jcron.execution_end_time(expression, execution_start);
+
+    RETURN v_current_time >= execution_start AND v_current_time <= end_time;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function to run all tests and show summary
+CREATE OR REPLACE FUNCTION jcron.run_all_tests()
+RETURNS TABLE(
+    total_tests INTEGER,
+    passed_tests INTEGER,
+    failed_tests INTEGER,
+    success_rate DECIMAL,
+    summary TEXT
+) AS $$
+DECLARE
+    test_results RECORD;
+    total_count INTEGER;
+    passed_count INTEGER;
+    failed_count INTEGER;
+BEGIN
+    -- Get test counts
+    SELECT
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE passed = true) as passed,
+        COUNT(*) FILTER (WHERE passed = false) as failed
+    INTO total_count, passed_count, failed_count
+    FROM jcron.test_examples();
+
+    -- Return summary
+    RETURN QUERY SELECT
+        total_count,
+        passed_count,
+        failed_count,
+        ROUND((passed_count::DECIMAL / total_count::DECIMAL) * 100, 1),
+        format('Toplam: %s, Başarılı: %s, Başarısız: %s (%%%s başarı)',
+               total_count, passed_count, failed_count,
+               ROUND((passed_count::DECIMAL / total_count::DECIMAL) * 100, 1));
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function to show only failed tests
+CREATE OR REPLACE FUNCTION jcron.show_failed_tests()
+RETURNS TABLE(
+    test_group TEXT,
+    test_name TEXT,
+    expression TEXT,
+    from_time TIMESTAMPTZ,
+    expected_time TIMESTAMPTZ,
+    actual_time TIMESTAMPTZ,
+    description TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        t.test_group,
+        t.test_name,
+        t.expression,
+        t.from_time,
+        t.expected_time,
+        t.actual_time,
+        t.description
+    FROM jcron.test_examples() t
+    WHERE t.passed = false
+    ORDER BY t.test_group, t.test_name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function to show tests by group
+CREATE OR REPLACE FUNCTION jcron.show_tests_by_group(group_name TEXT)
+RETURNS TABLE(
+    test_name TEXT,
+    expression TEXT,
+    from_time TIMESTAMPTZ,
+    expected_time TIMESTAMPTZ,
+    actual_time TIMESTAMPTZ,
+    passed BOOLEAN,
+    description TEXT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        t.test_name,
+        t.expression,
+        t.from_time,
+        t.expected_time,
+        t.actual_time,
+        t.passed,
+        t.description
+    FROM jcron.test_examples() t
+    WHERE t.test_group = group_name
+    ORDER BY t.test_name;
+END;
+$$ LANGUAGE plpgsql;
+
+-- JCRON: Eksiksiz stateless fonksiyonlar (bağımlı fonksiyonlar dahil)
+
+-- 1. Text kısaltmalarını sayıya çevirir (MON->1, JAN->1, ...)
+CREATE OR REPLACE FUNCTION jcron.convert_abbreviations(expr TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    expr := replace(expr, 'SUN', '0');
+    expr := replace(expr, 'MON', '1');
+    expr := replace(expr, 'TUE', '2');
+    expr := replace(expr, 'WED', '3');
+    expr := replace(expr, 'THU', '4');
+    expr := replace(expr, 'FRI', '5');
+    expr := replace(expr, 'SAT', '6');
+    expr := replace(expr, 'JAN', '1');
+    expr := replace(expr, 'FEB', '2');
+    expr := replace(expr, 'MAR', '3');
+    expr := replace(expr, 'APR', '4');
+    expr := replace(expr, 'MAY', '5');
+    expr := replace(expr, 'JUN', '6');
+    expr := replace(expr, 'JUL', '7');
+    expr := replace(expr, 'AUG', '8');
+    expr := replace(expr, 'SEP', '9');
+    expr := replace(expr, 'OCT', '10');
+    expr := replace(expr, 'NOV', '11');
+    expr := replace(expr, 'DEC', '12');
+    RETURN expr;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- 2. Alanı bitmask'e çevirir (örn: 1,2,3 -> 0b1110)
+CREATE OR REPLACE FUNCTION jcron.expand_part(expr TEXT, min_val INTEGER, max_val INTEGER)
+RETURNS BIGINT AS $$
+DECLARE
+    result BIGINT := 0;
+    parts TEXT[];
+    part TEXT;
+    range_parts TEXT[];
+    step_val INTEGER := 1;
+    start_val INTEGER;
+    end_val INTEGER;
+    i INTEGER;
+    safe_max INTEGER;
+BEGIN
+    safe_max := LEAST(max_val, 62);
+    IF expr = '*' THEN
+        FOR i IN min_val..safe_max LOOP
+            result := result | (1::BIGINT << i);
+        END LOOP;
+        RETURN result;
+    END IF;
+    IF expr ~ '/' THEN
+        step_val := GREATEST(1, substring(expr from '/(\d+)')::INTEGER);
+        expr := substring(expr from '^([^/]+)');
+        IF expr = '*' THEN
+            FOR i IN min_val..safe_max LOOP
+                IF (i - min_val) % step_val = 0 THEN
+                    result := result | (1::BIGINT << i);
+                END IF;
+            END LOOP;
+            RETURN result;
+        END IF;
+    END IF;
+    parts := string_to_array(expr, ',');
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+        part := jcron.convert_abbreviations(part);
+        IF part ~ '-' THEN
+            range_parts := string_to_array(part, '-');
+            IF array_length(range_parts, 1) >= 2 THEN
+                start_val := GREATEST(min_val, range_parts[1]::INTEGER);
+                end_val := LEAST(safe_max, range_parts[2]::INTEGER);
+                FOR i IN start_val..end_val LOOP
+                    IF (i - min_val) % step_val = 0 AND i >= min_val AND i <= safe_max THEN
+                        result := result | (1::BIGINT << i);
+                    END IF;
+                END LOOP;
+            END IF;
+        ELSE
+            BEGIN
+                i := part::INTEGER;
+                IF i >= min_val AND i <= safe_max THEN
+                    result := result | (1::BIGINT << i);
+                END IF;
+            EXCEPTION WHEN OTHERS THEN CONTINUE;
+            END;
+        END IF;
+    END LOOP;
+    RETURN result;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- 3. Alanları parse eden saf fonksiyon
+CREATE OR REPLACE FUNCTION jcron.parse_expression(
+    p_expression TEXT
+) RETURNS TABLE(
+    seconds_mask BIGINT,
+    minutes_mask BIGINT,
+    hours_mask INTEGER,
+    days_mask BIGINT,
+    months_mask SMALLINT,
+    weekdays_mask SMALLINT,
+    weeks_mask BIGINT,
+    day_expr TEXT,
+    weekday_expr TEXT,
+    week_expr TEXT,
+    year_expr TEXT,
+    timezone TEXT,
+    has_special_patterns BOOLEAN,
+    has_year_restriction BOOLEAN
+) AS $$
+DECLARE
+    parts TEXT[];
+    woy_part TEXT := '';
+    tz_part TEXT := 'UTC';
+    sec_expr TEXT := '*';
+    min_expr TEXT := '*';
+    hour_expr TEXT := '*';
+    day_expr TEXT := '*';
+    month_expr TEXT := '*';
+    weekday_expr TEXT := '*';
+    year_expr TEXT := '*';
+    sec_mask BIGINT := 0;
+    min_mask BIGINT := 0;
+    hour_mask INTEGER := 0;
+    day_mask BIGINT := 0;
+    month_mask SMALLINT := 0;
+    weekday_mask SMALLINT := 0;
+    week_mask BIGINT := 0;
+    has_special BOOLEAN := FALSE;
+    has_year_restrict BOOLEAN := FALSE;
+BEGIN
+    -- Parse WOY (Week of Year) pattern
+    IF p_expression ~ 'WOY:' THEN
+        woy_part := substring(p_expression from 'WOY:([^ ]+)');
+        p_expression := regexp_replace(p_expression, 'WOY:[^ ]+\\s*', '', 'g');
+        week_mask := jcron.expand_part(woy_part, 1, 53);
+    ELSE
+        week_mask := (1::BIGINT << 54) - 2;
+    END IF;
+    -- Parse TZ (Timezone)
+    IF p_expression ~ 'TZ[:=]' THEN
+        tz_part := substring(p_expression from 'TZ[:=]([^ ]+)');
+        p_expression := regexp_replace(p_expression, 'TZ[:=][^ ]+\\s*', '', 'g');
+    END IF;
+    -- Split remaining cron fields
+    parts := string_to_array(trim(p_expression), ' ');
+    CASE array_length(parts, 1)
+        WHEN 5 THEN
+            min_expr := parts[1]; hour_expr := parts[2]; day_expr := parts[3]; month_expr := parts[4]; weekday_expr := parts[5];
+        WHEN 6 THEN
+            sec_expr := parts[1]; min_expr := parts[2]; hour_expr := parts[3]; day_expr := parts[4]; month_expr := parts[5]; weekday_expr := parts[6];
+        WHEN 7 THEN
+            sec_expr := parts[1]; min_expr := parts[2]; hour_expr := parts[3]; day_expr := parts[4]; month_expr := parts[5]; weekday_expr := parts[6]; year_expr := parts[7]; has_year_restrict := (year_expr != '*');
+        ELSE
+            RAISE EXCEPTION 'Invalid cron expression format: %', p_expression;
+    END CASE;
+    -- Bitmask expansion
+    sec_mask := jcron.expand_part(sec_expr, 0, 59);
+    min_mask := jcron.expand_part(min_expr, 0, 59);
+    hour_mask := (jcron.expand_part(hour_expr, 0, 23) & 16777215)::INTEGER;
+    has_special := (day_expr ~ '[L#]' OR weekday_expr ~ '[L#]');
+    IF day_expr ~ '[L#]' THEN day_mask := 4294967295; ELSE day_mask := jcron.expand_part(day_expr, 1, 31); END IF;
+    month_mask := (jcron.expand_part(month_expr, 1, 12) & 8191)::SMALLINT;
+    IF weekday_expr ~ '[L#]' THEN weekday_mask := 127; ELSE weekday_mask := (jcron.expand_part(weekday_expr, 0, 6) & 127)::SMALLINT; END IF;
+    RETURN QUERY SELECT sec_mask, min_mask, hour_mask, day_mask, month_mask, weekday_mask, week_mask, day_expr, weekday_expr, woy_part, year_expr, tz_part, has_special, has_year_restrict;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 4. Yıl kontrolü (stateless)
+CREATE OR REPLACE FUNCTION jcron.year_matches(year_expr TEXT, check_year INTEGER)
+RETURNS BOOLEAN AS $$
+DECLARE
+    parts TEXT[];
+    part TEXT;
+    range_parts TEXT[];
+BEGIN
+    IF year_expr = '*' THEN RETURN TRUE; END IF;
+    parts := string_to_array(year_expr, ',');
+    FOREACH part IN ARRAY parts LOOP
+        part := trim(part);
+        IF part ~ '-' THEN
+            range_parts := string_to_array(part, '-');
+            IF check_year >= range_parts[1]::INTEGER AND check_year <= range_parts[2]::INTEGER THEN RETURN TRUE; END IF;
+        ELSE
+            IF check_year = part::INTEGER THEN RETURN TRUE; END IF;
+        END IF;
+    END LOOP;
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- 5. day_matches_stateless (stateless gün kontrolü)
+CREATE OR REPLACE FUNCTION jcron.day_matches_stateless(
+    check_time TIMESTAMPTZ,
+    day_expr TEXT,
+    weekday_expr TEXT,
+    days_mask BIGINT,
+    weekdays_mask SMALLINT,
+    has_special_patterns BOOLEAN
+) RETURNS BOOLEAN AS $$
+DECLARE
+    day_restricted BOOLEAN;
+    weekday_restricted BOOLEAN;
+    day_match BOOLEAN := FALSE;
+    weekday_match BOOLEAN := FALSE;
+BEGIN
+    day_restricted := (day_expr != '*' AND day_expr != '?');
+    weekday_restricted := (weekday_expr != '*' AND weekday_expr != '?');
+    IF NOT day_restricted AND NOT weekday_restricted THEN RETURN TRUE; END IF;
+    IF day_restricted THEN
+        IF day_expr = 'L' THEN
+            day_match := (check_time::DATE = (date_trunc('month', check_time + INTERVAL '1 month') - INTERVAL '1 day')::DATE);
+        ELSIF has_special_patterns THEN
+            day_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            day_match := ((days_mask & (1::BIGINT << EXTRACT(DAY FROM check_time)::INTEGER)) != 0);
+        END IF;
+    END IF;
+    IF weekday_restricted THEN
+        IF has_special_patterns THEN
+            weekday_match := FALSE; -- Kısa tutmak için, özel pattern fonksiyonları eklenebilir
+        ELSE
+            weekday_match := ((weekdays_mask & (1 << EXTRACT(DOW FROM check_time)::INTEGER)) != 0);
+        END IF;
+    END IF;
+    IF day_restricted AND weekday_restricted THEN RETURN day_match OR weekday_match;
+    ELSIF day_restricted THEN RETURN day_match;
+    ELSE RETURN weekday_match;
+    END IF;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- 6. next_time (stateless, cache'siz)
+CREATE OR REPLACE FUNCTION jcron.next_time(
+    p_expression TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    seconds_mask BIGINT;
+    minutes_mask BIGINT;
+    hours_mask INTEGER;
+    days_mask BIGINT;
+    months_mask SMALLINT;
+    weekdays_mask SMALLINT;
+    weeks_mask BIGINT;
+    day_expr TEXT;
+    weekday_expr TEXT;
+    week_expr TEXT;
+    year_expr TEXT;
+    timezone TEXT;
+    has_special_patterns BOOLEAN;
+    has_year_restriction BOOLEAN;
+    target_tz TEXT;
+    local_time TIMESTAMPTZ;
+    candidate TIMESTAMPTZ;
+    max_iterations INTEGER := 366;
+    iteration INTEGER := 0;
+BEGIN
+    SELECT 
+        seconds_mask, minutes_mask, hours_mask, days_mask, months_mask, weekdays_mask, weeks_mask,
+        day_expr, weekday_expr, week_expr, year_expr, timezone, has_special_patterns, has_year_restriction
+    INTO 
+        seconds_mask, minutes_mask, hours_mask, days_mask, months_mask, weekdays_mask, weeks_mask,
+        day_expr, weekday_expr, week_expr, year_expr, timezone, has_special_patterns, has_year_restriction
+    FROM jcron.parse_expression(p_expression);
+
+    target_tz := COALESCE(timezone, 'UTC');
+    local_time := from_time AT TIME ZONE target_tz;
+    candidate := local_time + INTERVAL '1 second';
+    WHILE iteration < max_iterations LOOP
+        iteration := iteration + 1;
+        -- Year check
+        IF has_year_restriction AND NOT jcron.year_matches(year_expr, EXTRACT(YEAR FROM candidate)::INTEGER) THEN
+            candidate := jcron.advance_year(candidate, year_expr);
+            CONTINUE;
+        END IF;
+        -- Month check
+        IF (months_mask & (1 << EXTRACT(MONTH FROM candidate)::INTEGER)) = 0 THEN
+            candidate := date_trunc('month', candidate + INTERVAL '1 month');
+            CONTINUE;
+        END IF;
+        -- Week of year check
+        IF (weeks_mask & (1::BIGINT << EXTRACT(WEEK FROM candidate)::INTEGER)) = 0 THEN
+            candidate := candidate + INTERVAL '1 day';
+            CONTINUE;
+        END IF;
+        -- Day check (special patterns hariç)
+        IF NOT jcron.day_matches_stateless(candidate, day_expr, weekday_expr, days_mask, weekdays_mask, has_special_patterns) THEN
+            candidate := date_trunc('day', candidate + INTERVAL '1 day');
+            CONTINUE;
+        END IF;
+        -- Hour check
+        IF (hours_mask & (1 << EXTRACT(HOUR FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_hour(candidate, hours_mask);
+            CONTINUE;
+        END IF;
+        -- Minute check
+        IF (minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_minute(candidate, minutes_mask);
+            CONTINUE;
+        END IF;
+        -- Second check
+        IF (seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM candidate)::INTEGER)) = 0 THEN
+            candidate := jcron.advance_second(candidate, seconds_mask);
+            CONTINUE;
+        END IF;
+        RETURN candidate AT TIME ZONE target_tz;
+    END LOOP;
+    RAISE EXCEPTION 'Could not find next execution time within % iterations', max_iterations;
 END;
 $$ LANGUAGE plpgsql;

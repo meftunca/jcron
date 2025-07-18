@@ -1,6 +1,7 @@
 // src/schedule.ts
 import { ParseError } from "./errors";
 import { EndOfDuration, parseEoD } from "./eod";
+import { getPrev } from ".";
 
 // Interface for timezone validation
 interface TimezoneValidation {
@@ -222,7 +223,55 @@ export class Schedule {
       return null;
     }
     
-    return this.eod.calculateEndDate(fromDate);
+    // Get the start time (previous trigger time)
+    const startTime = this.startOf(fromDate);
+    if (!startTime) {
+      return null; // No start time found
+    }
+    
+    // Calculate end time from the start time
+    return this.eod.calculateEndDate(startTime);
+  }
+  // startof
+  /**
+   * Calculate the start date for this schedule based on its End-of-Duration (EOD) configuration
+   * If the schedule has an EOD, calculates when the schedule should start execution
+   * @param fromDate The starting date for the calculation (defaults to current time)
+   * @returns Date when the schedule should start, or null if no EOD is configured
+   */
+  startOf(fromDate: Date = new Date()): Date | null {
+    if (!this.eod) {
+      return null;
+    }
+    
+    // Get the previous trigger time (when the schedule would have been triggered)
+    const prev = getPrev(this, fromDate);
+    if (!prev) {
+      return null; // No previous trigger time found
+    }
+    
+    // The start time is the previous trigger time itself
+    return prev;
+  }
+
+  // isrange now
+  /**
+   * Check if the current time is within the execution window of this schedule
+   * For EOD schedules, checks if now is between startOf and endOf times
+   * @param now The time to check (defaults to current time)
+   * @returns true if now is within the execution window, false otherwise
+   */
+  isRangeNow(now: Date = new Date()): boolean {
+    if (!this.eod) {
+      return false;
+    }
+    
+    // Get the start and end times for the current execution window
+    const start = this.startOf(now);
+    const end = this.endOf(now);
+    
+    // Check if both start and end are valid and now is within the range
+    return start !== null && end !== null && now >= start && now <= end;
   }
 
   /**

@@ -2,12 +2,12 @@
 
 import Benchmark from 'benchmark';
 import { Engine } from '../dist/engine.js';
-import { fromCronSyntax, Schedule } from '../dist/schedule.js'; // Schedule'ı da import edelim
+import { fromCronSyntax, Schedule } from '../dist/schedule.js';
 
 console.log("JCRON Engine Benchmark Testi Başlatılıyor...");
 console.log("============================================");
 
-const suite = new Benchmark.Suite;
+const suite = new Benchmark.Suite();
 
 const engine = new Engine();
 const fromTime = new Date();

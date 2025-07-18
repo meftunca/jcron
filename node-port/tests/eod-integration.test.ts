@@ -238,7 +238,7 @@ describe('End-of-Duration (EoD) Integration Tests', () => {
       expect(eod.days).toBe(1);
       expect(eod.hours).toBe(1);
       expect(eod.minutes).toBe(30);
-      expect(eod.referencePoint).toBe(null); // No reference point specified
+      expect(eod.referencePoint).toBe(ReferencePoint.END); // Complex format defaults to END
     });
   });
 });

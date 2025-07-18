@@ -137,4 +137,8 @@ export const esLocale: LocaleStrings = {
   timezone: "zona horaria",
   utc: "UTC",
   local: "hora local",
+
+  // EOD
+  endOfDuration: "fin de la duración",
+  untilTheEndOf: "hasta el final de",
 };

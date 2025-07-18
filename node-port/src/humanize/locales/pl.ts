@@ -137,4 +137,8 @@ export const plLocale: LocaleStrings = {
   timezone: "strefa czasowa",
   utc: "UTC",
   local: "czas lokalny",
+
+  // EOD
+  endOfDuration: "koniec czasu trwania",
+  untilTheEndOf: "do końca",
 };

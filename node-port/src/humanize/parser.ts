@@ -13,6 +13,7 @@ export interface ParsedExpression {
   years: string[];
   weekOfYear: string[];
   timezone?: string;
+  eod?: string; // End-of-Duration support
   hasSpecialChars: boolean;
   hasRanges: boolean;
   hasSteps: boolean;
@@ -27,6 +28,7 @@ export interface ParsedExpression {
     daysOfWeek: string;
     years: string;
     weekOfYear: string;
+    eod?: string; // End-of-Duration raw field
   };
 }
 
@@ -189,6 +191,7 @@ export class ExpressionParser {
       years,
       weekOfYear,
       timezone: schedule.tz ?? schedule.timezone ?? undefined,
+      eod: getField(schedule.eod, ""), // Handle End-of-Duration field
       hasSpecialChars,
       hasRanges,
       hasSteps,
@@ -202,6 +205,7 @@ export class ExpressionParser {
         daysOfWeek: getField(schedule.dow ?? schedule.dayOfWeek, "*"),
         years: getField(schedule.Y ?? schedule.year, "*"),
         weekOfYear: getField(schedule.woy ?? schedule.weekOfYear, "*"),
+        eod: getField(schedule.eod, ""), // Handle End-of-Duration raw field
       },
     };
   }

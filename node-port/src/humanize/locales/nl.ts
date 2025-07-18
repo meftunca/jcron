@@ -138,4 +138,8 @@ export const nlLocale: LocaleStrings = {
   timezone: "tijdzone",
   utc: "UTC",
   local: "lokale tijd",
+
+  // EOD
+  endOfDuration: "einde van de duur",
+  untilTheEndOf: "tot het einde van",
 };

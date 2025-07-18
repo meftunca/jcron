@@ -1,0 +1,37 @@
+{
+  "timestamp": "2025-07-17T05:04:59.404Z",
+  "runtime": "Bun v1.2.18",
+  "platform": "darwin arm64",
+  "results": [
+    {
+      "category": "Humanization",
+      "test": "Complex EoD parsing",
+      "original": 589198,
+      "optimized": 701597,
+      "improvement": 19.076609221348342,
+      "speedup": 1.1907660922134835
+    },
+    {
+      "category": "Humanization",
+      "test": "Batch validation",
+      "original": 56,
+      "optimized": 9035214,
+      "improvement": 16134210.714285713,
+      "speedup": 161343.10714285713
+    },
+    {
+      "category": "Humanization",
+      "test": "Batch humanization",
+      "original": 102004,
+      "optimized": 2085933,
+      "improvement": 1944.952158738873,
+      "speedup": 20.44952158738873
+    }
+  ],
+  "summary": {
+    "totalTests": 3,
+    "improvedTests": 3,
+    "averageImprovement": 5378724.914351225,
+    "averageSpeedup": 53788.24914351224
+  }
+}

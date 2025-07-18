@@ -206,6 +206,55 @@ export class Formatters {
     return `${locale.weeks} ${this.formatList(weekOfYear, locale)}`;
   }
 
+  static formatEOD(
+    eod: string | any,
+    locale: LocaleStrings,
+    scheduleDescription?: string
+  ): string {
+    if (!eod) {
+      return scheduleDescription || "";
+    }
+
+    let eodString: string;
+    
+    // Handle EndOfDuration object
+    if (typeof eod === 'object' && eod.toString) {
+      eodString = eod.toString();
+    } else if (typeof eod === 'string') {
+      eodString = eod;
+    } else {
+      eodString = String(eod);
+    }
+
+    // Parse EoD format for better human-readable description
+    let eodDescription = `${locale.endOfDuration}: ${eodString}`;
+    
+    // Try to provide more meaningful description for common EoD patterns
+    if (eodString.match(/^E\d+[hm]$/i)) {
+      // Simple patterns like E2h, E30m
+      const match = eodString.match(/^E(\d+)([hm])$/i);
+      if (match) {
+        const [, amount, unit] = match;
+        const unitName = unit.toLowerCase() === 'h' ? locale.hours : locale.minutes;
+        eodDescription = `${locale.endOfDuration} ${amount} ${unitName}`;
+      }
+    } else if (eodString.match(/^E\d+D$/i)) {
+      // Day patterns like E5D
+      const match = eodString.match(/^E(\d+)D$/i);
+      if (match) {
+        const [, amount] = match;
+        const unitName = amount === '1' ? locale.day : locale.days;
+        eodDescription = `${locale.endOfDuration} ${amount} ${unitName}`;
+      }
+    }
+
+    if (scheduleDescription) {
+      return `${scheduleDescription}, ${eodDescription}`;
+    }
+
+    return eodDescription;
+  }
+
   // Helper methods
   static getDayNames(
     format: "long" | "short" | "narrow",

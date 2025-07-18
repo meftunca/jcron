@@ -137,4 +137,8 @@ export const czLocale: LocaleStrings = {
   timezone: "časové pásmo",
   utc: "UTC",
   local: "místní čas",
+
+  // EOD
+  endOfDuration: "konec doby trvání",
+  untilTheEndOf: "do konce",
 };
