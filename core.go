@@ -1117,20 +1117,58 @@ func (s *Schedule) EndOf(fromDate time.Time) time.Time {
 	if s.EOD == nil {
 		return time.Time{} // Zero time indicates no end date
 	}
-	
+
 	// Create an engine to calculate the next execution time
 	engine := New()
 	nextTime, err := engine.Next(*s, fromDate)
 	if err != nil {
 		return time.Time{} // Zero time indicates calculation failed
 	}
-	
+
 	return s.EOD.CalculateEndDate(nextTime)
 }
 
 // EndOfFromNow calculates when the schedule should end from current time
 func (s *Schedule) EndOfFromNow() time.Time {
 	return s.EndOf(time.Now())
+}
+
+// StartOf calculates when the schedule should start based on EOD configuration
+// Returns the start date calculated from the previous execution time or zero time if no EOD is configured
+func (s *Schedule) StartOf(fromDate time.Time) time.Time {
+	if s.EOD == nil {
+		return time.Time{} // Zero time indicates no start date
+	}
+
+	// Create an engine to calculate the previous execution time
+	engine := New()
+	prevTime, err := engine.Prev(*s, fromDate)
+	if err != nil {
+		return time.Time{} // Zero time indicates calculation failed
+	}
+
+	return prevTime
+}
+
+// IsRangeNow checks if the current time is within the execution window of this schedule
+// For EOD schedules, checks if now is between the previous trigger and its end time
+func (s *Schedule) IsRangeNow(now time.Time) bool {
+	if s.EOD == nil {
+		return false
+	}
+
+	// Get the previous trigger time (start of current window)
+	start := s.StartOf(now)
+	if start.IsZero() {
+		return false
+	}
+
+	// Get the end time for current execution window
+	// Calculate end from the previous trigger
+	end := s.EOD.CalculateEndDate(start)
+
+	// Check if now is within the range
+	return now.After(start) && now.Before(end)
 }
 
 // HasEOD returns true if the schedule has an End of Duration configuration

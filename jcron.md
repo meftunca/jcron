@@ -1,32 +1,61 @@
-# JCRON - A High-Performance Go Job Scheduler
+# JCRON - Advanced High-Performance Job Scheduler
 
-JCRON is a modern, high-performance job scheduling library for Go. It is designed to be a flexible and efficient alternative to standard cron libraries, incorporating advanced scheduling features inspired by the Quartz Scheduler while maintaining a simple and developer-friendly API.
+JCRON is a cutting-edge, high-performance job scheduling library available for both **Go** and **TypeScript/Node.js**. It's designed to be a flexible and efficient alternative to standard cron libraries, incorporating advanced scheduling features inspired by the Quartz Scheduler while maintaining a simple and developer-friendly API.
 
-Its core philosophy is built on **performance**, **readability**, and **robustness**.
+Its core philosophy is built on **performance**, **readability**, **robustness**, and **cross-platform compatibility**.
 
-## Features
+## 🚀 Key Features
 
-- **Standard & Advanced Cron Syntax:** Fully compatible with the 5-field (`* * * * *`) and 6-field (`* * * * * *`) Vixie-cron formats.
+### **Core Scheduling**
+- **Standard & Advanced Cron Syntax:** Fully compatible with 5-field (`* * * * *`) and 6-field (`* * * * * *`) Vixie-cron formats
+- **Second-level Precision:** Support for sub-minute scheduling with second field
 - **Enhanced Scheduling Rules:** Supports advanced, Quartz-like specifiers for complex schedules:
-    - `L`: For the "last" day of the month or week (e.g., `L` for the last day of the month, `5L` for the last Friday).
-    - `#`: For the "Nth" day of the week in a month (e.g., `1#3` for the third Monday).
-- **High-Performance "Next Jump" Algorithm:** Instead of tick-by-tick time checking, JCRON mathematically calculates the next valid run time, providing significant performance gains for long-interval jobs.
-- **Aggressive Caching:** Cron expressions are parsed only once and their expanded integer-based representations are cached, making subsequent schedule calculations extremely fast.
-- **Built-in Error Handling & Retries:** Jobs can return errors, and you can configure automatic retry policies with delays for each job.
-- **Panic Recovery:** A job that panics will not crash the runner. The panic is recovered, logged, and the runner continues to operate smoothly.
-- **Structured Logging:** Uses the standard `log/slog` library. Inject your own configured logger to integrate JCRON's logs seamlessly into your application's logging infrastructure.
-- **Thread-Safe:** Designed from the ground up to be safe for concurrent use. You can add, remove, and manage jobs from multiple goroutines without data races.
+    - `L`: For the "last" day of the month or week (e.g., `L` for the last day of the month, `5L` for the last Friday)
+    - `#`: For the "Nth" day of the week in a month (e.g., `1#3` for the third Monday)
+    - `W`: Nearest weekday to a given date
 
-## Installation
+### **Advanced Time Management**
+- **EOD (End of Duration) System:** Revolutionary time-range scheduling with expressions like:
+  - `E1W` - End of current week
+  - `E2D` - End of next day  
+  - `E1M` - End of current month
+  - Complex durations: `E1DT12H30M` - End of day plus 12 hours 30 minutes
+- **Timezone Support:** Full timezone handling with `TZ:America/New_York` syntax
+- **Year Specification:** Schedule jobs for specific years or year ranges
+- **Week of Year (WOY):** Advanced week-based scheduling
 
+### **Performance & Reliability**
+- **High-Performance "Next Jump" Algorithm:** Mathematically calculates next valid run time instead of tick-by-tick checking
+- **Aggressive Caching:** Cron expressions parsed once, cached as optimized integer representations
+- **Thread-Safe:** Designed for concurrent use across multiple goroutines/threads
+- **Built-in Error Handling & Retries:** Configurable retry policies with exponential backoff
+- **Panic Recovery:** Jobs that panic don't crash the scheduler
+- **Structured Logging:** Uses `log/slog` (Go) and configurable loggers (TypeScript)
+
+### **Cross-Platform Support**
+- **Go Implementation:** Native Go library with full feature set
+- **TypeScript/Node.js Port:** Complete feature parity with Go version
+- **Consistent API:** Same syntax and behavior across both platforms
+
+## 📦 Installation
+
+### Go
 ```bash
 go get github.com/meftunca/jcron
 ```
 
+### TypeScript/Node.js
+```bash
+npm install jcron
+# or
+yarn add jcron
+# or
+bun add jcron
+```
 
-## Quick Start
+## 🚀 Quick Start
 
-Here is a simple example to get you up and running in minutes.
+### Go Example
 
 ```go
 package main
@@ -58,27 +87,132 @@ func main() {
 		return
 	}
 
-	// This job runs once at the 30th second of every minute.
-	_, err = runner.AddFuncCron("30 * * * * *", func() error {
-		fmt.Printf("--> It's the 30th second of the minute. Time is %s\n", 
-			time.Now().Format("15:04:05"))
+	// 4. Add a job with EOD (End of Duration) - runs Mon-Fri at 9 AM until end of week
+	_, err = runner.AddFuncCron("0 0 9 * * 1-5 EOD:E1W", func() error {
+		fmt.Println("-> Weekday job running until end of week!")
 		return nil
 	})
 	if err != nil {
-		logger.Error("Failed to add job", "error", err)
+		logger.Error("Failed to add EOD job", "error", err)
 		return
 	}
 
-	// 4. Start the runner (non-blocking)
+	// 5. Start the runner
 	runner.Start()
-	logger.Info("JCRON runner has been started. Press CTRL+C to exit.")
+	defer runner.Stop()
 
-	// 5. Wait for the application to be terminated
-	// In a real application, this would be your main application loop.
-	time.Sleep(1 * time.Minute)
+	// Keep the program running
+	time.Sleep(30 * time.Second)
+}
+```
 
-	// 6. Stop the runner gracefully
-	runner.Stop()
+### TypeScript/Node.js Example
+
+```typescript
+import { Schedule, getNext } from 'jcron';
+
+// Create a schedule with EOD support
+const schedule = new Schedule("0 0 9 * * 1-5", "E1W"); // Mon-Fri 9 AM until end of week
+
+// Get next execution time
+const nextRun = getNext(schedule, new Date());
+console.log('Next run:', nextRun);
+
+// Get end time for the schedule
+const endTime = schedule.endOf(new Date());
+console.log('End time:', endTime);
+
+// Check if we're in the active range
+const isActive = schedule.isRangeNow(new Date());
+console.log('Currently active:', isActive);
+```
+
+## 🕒 EOD (End of Duration) System
+
+One of JCRON's most powerful features is the **EOD (End of Duration)** system, which allows you to create time-bounded schedules that automatically stop at calculated end points.
+
+### EOD Syntax
+```
+EOD:[S|E][number][UNIT][T[time_component]]
+```
+
+- **S**: Start reference (from start of period)
+- **E**: End reference (to end of period) 
+- **Units**: `D` (day), `W` (week), `M` (month), `Q` (quarter), `Y` (year)
+- **Time components**: `H` (hours), `M` (minutes), `S` (seconds)
+
+### EOD Examples
+
+| Expression | Meaning |
+|------------|---------|
+| `E1W` | Until end of current week |
+| `E2W` | Until end of next week |
+| `E1D` | Until end of current day |
+| `E1M` | Until end of current month |
+| `S30M` | For 30 minutes from start |
+| `E1DT12H` | Until end of day + 12 hours |
+| `E1WT8H30M` | Until end of week + 8h 30m |
+
+### Real-World EOD Use Cases
+
+```go
+// 1. Weekday backup job - runs Mon-Fri 9 AM until end of week
+runner.AddFuncCron("0 0 9 * * 1-5 EOD:E1W", backupJob)
+
+// 2. Month-end reporting - runs daily at 6 PM until end of month
+runner.AddFuncCron("0 0 18 * * * EOD:E1M", monthEndReport)
+
+// 3. Flash sale monitoring - runs every 10 minutes for 2 hours
+runner.AddFuncCron("0 */10 * * * * EOD:S2H", flashSaleMonitor)
+
+// 4. Daily maintenance window - runs hourly until end of day + 6 hours
+runner.AddFuncCron("0 0 * * * * EOD:E1DT6H", maintenanceCheck)
+```
+
+### EOD Schedule Methods
+
+```go
+// Check if schedule has EOD
+if schedule.HasEOD() {
+    // Get the end time for current execution
+    endTime := schedule.EndOf(time.Now())
+    
+    // Check if we're currently in the active time range
+    isActive := schedule.IsRangeNow(time.Now())
+    
+    // Get start time of the range
+    startTime := schedule.StartOf(time.Now())
+}
+```
+
+## 🌐 Advanced Features
+
+### Timezone Support
+```go
+// Run daily at 2 PM New York time
+"0 0 14 * * * TZ:America/New_York"
+
+// Run weekly on Monday 9 AM London time  
+"0 0 9 * * 1 TZ:Europe/London"
+```
+
+### Week of Year (WOY)
+```go
+// Run only in specific weeks of the year
+"0 0 12 * * * WOY:1,26,52"  // Week 1, 26, and 52
+
+// Run in quarter weeks
+"0 0 9 * * 1 WOY:*/13"      // Every 13th week (quarterly)
+```
+
+### Complex Combinations
+```go
+// Complex schedule: Mon-Fri 9 AM EST, weeks 10-40, until end of each week
+"0 0 9 * * 1-5 WOY:10-40 TZ:America/New_York EOD:E1W"
+
+// Year-specific holiday schedule
+"0 0 12 25 12 * 2024-2026"  // Christmas noon, 2024-2026 only
+```
 }
 ```
 

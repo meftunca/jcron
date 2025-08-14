@@ -213,7 +213,14 @@ export function parseEoD(eodStr: string): EndOfDuration {
       // E patterns use specific reference points based on unit
       switch (unit.toUpperCase()) {
         case 'Y': referencePoint = ReferencePoint.YEAR; break;
-        case 'M': referencePoint = ReferencePoint.MONTH; break;
+        case 'M': 
+          // Need to check case: M = months, m = minutes
+          if (unit === 'M') {
+            referencePoint = ReferencePoint.MONTH; 
+          } else {
+            referencePoint = ReferencePoint.END; // lowercase m = minutes
+          }
+          break;
         case 'W': referencePoint = ReferencePoint.WEEK; break;
         case 'D': referencePoint = ReferencePoint.DAY; break;
         default: referencePoint = ReferencePoint.END; break; // For H, m, S

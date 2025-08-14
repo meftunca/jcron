@@ -15,10 +15,17 @@ class HumanizeCache {
   }
   
   static setTemplate(key: string, value: string, locale: string = 'en'): void {
-    if (this.templates.size < this.maxCacheSize) {
-      const cacheKey = `${locale}:${key}`;
-      this.templates.set(cacheKey, value);
+    const cacheKey = `${locale}:${key}`;
+    
+    if (this.templates.size >= this.maxCacheSize) {
+      // Use LRU eviction - remove oldest entries
+      const firstKey = this.templates.keys().next().value;
+      if (firstKey) {
+        this.templates.delete(firstKey);
+      }
     }
+    
+    this.templates.set(cacheKey, value);
   }
   
   static getLocaleCache(locale: string): Map<string, string> | undefined {
@@ -26,9 +33,14 @@ class HumanizeCache {
   }
   
   static setLocaleCache(locale: string, cache: Map<string, string>): void {
-    if (this.localeCache.size < 20) { // Max 20 locales
-      this.localeCache.set(locale, cache);
+    if (this.localeCache.size >= 20) { // Max 20 locales
+      // Remove oldest locale cache
+      const firstKey = this.localeCache.keys().next().value;
+      if (firstKey) {
+        this.localeCache.delete(firstKey);
+      }
     }
+    this.localeCache.set(locale, cache);
   }
   
   static clear(): void {

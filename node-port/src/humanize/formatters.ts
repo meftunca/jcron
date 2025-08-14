@@ -42,7 +42,7 @@ export class Formatters {
         }
         return timeStr;
       } else {
-        // Special cases for midnight and noon only when it's a single time
+        // Special cases for midnight and noon (single time only)
         if (hour === 0 && minute === 0 && second === 0) return locale.midnight;
         if (hour === 12 && minute === 0 && second === 0) return locale.noon;
 
@@ -82,17 +82,23 @@ export class Formatters {
             }
             times.push(timeStr);
           } else {
-            // Don't use special names for multiple times
-            const ampm = h >= 12 ? "PM" : "AM";
-            const hour12 = h % 12 === 0 ? 12 : h % 12;
-            let timeStr = `${hour12}:${m.toString().padStart(2, "0")} ${ampm}`;
+            // Use special names for multiple times when appropriate
+            let timeStr: string;
+            if (h === 0 && m === 0 && s === 0) {
+              timeStr = locale.midnight;
+            } else if (h === 12 && m === 0 && s === 0) {
+              timeStr = locale.noon;
+            } else {
+              const ampm = h >= 12 ? "PM" : "AM";
+              const hour12 = h % 12 === 0 ? 12 : h % 12;
+              timeStr = `${hour12}:${m.toString().padStart(2, "0")} ${ampm}`;
 
-            if (options.includeSeconds && s > 0) {
-              timeStr = `${hour12}:${m.toString().padStart(2, "0")}:${s
-                .toString()
-                .padStart(2, "0")} ${ampm}`;
+              if (options.includeSeconds && s > 0) {
+                timeStr = `${hour12}:${m.toString().padStart(2, "0")}:${s
+                  .toString()
+                  .padStart(2, "0")} ${ampm}`;
+              }
             }
-
             times.push(timeStr);
           }
         }
@@ -226,26 +232,56 @@ export class Formatters {
       eodString = String(eod);
     }
 
-    // Parse EoD format for better human-readable description
-    let eodDescription = `${locale.endOfDuration}: ${eodString}`;
+    // Parse EOD format: E1W, E2D, S30M, E1DT12H30M, etc.
+    const eodPattern = /^([SE])(\d+)([DWMQY])(?:T(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/;
+    const match = eodString.match(eodPattern);
     
-    // Try to provide more meaningful description for common EoD patterns
-    if (eodString.match(/^E\d+[hm]$/i)) {
-      // Simple patterns like E2h, E30m
-      const match = eodString.match(/^E(\d+)([hm])$/i);
-      if (match) {
-        const [, amount, unit] = match;
-        const unitName = unit.toLowerCase() === 'h' ? locale.hours : locale.minutes;
-        eodDescription = `${locale.endOfDuration} ${amount} ${unitName}`;
+    let eodDescription: string;
+    
+    if (match) {
+      const [, refPoint, num, unit, hours, minutes, seconds] = match;
+      const number = parseInt(num, 10);
+      
+      // Build duration description
+      const parts: string[] = [];
+      
+      // Reference point description
+      const isEndRef = refPoint === 'E';
+      
+      // Main unit
+      let unitDesc = '';
+      switch (unit) {
+        case 'D': unitDesc = number === 1 ? locale.day : locale.days; break;
+        case 'W': unitDesc = number === 1 ? 'week' : 'weeks'; break;
+        case 'M': unitDesc = number === 1 ? locale.month : locale.months; break;
+        case 'Q': unitDesc = number === 1 ? 'quarter' : 'quarters'; break;
+        case 'Y': unitDesc = number === 1 ? locale.year : locale.years; break;
       }
-    } else if (eodString.match(/^E\d+D$/i)) {
-      // Day patterns like E5D
-      const match = eodString.match(/^E(\d+)D$/i);
-      if (match) {
-        const [, amount] = match;
-        const unitName = amount === '1' ? locale.day : locale.days;
-        eodDescription = `${locale.endOfDuration} ${amount} ${unitName}`;
+      
+      if (isEndRef) {
+        if (number === 1) {
+          parts.push(`end of current ${unitDesc}`);
+        } else {
+          parts.push(`end of ${number} ${unitDesc}`);
+        }
+      } else {
+        parts.push(`${number} ${unitDesc} from start`);
       }
+      
+      // Add time components if present
+      const timeComponents: string[] = [];
+      if (hours) timeComponents.push(`${parseInt(hours, 10)} ${locale.hours}`);
+      if (minutes) timeComponents.push(`${parseInt(minutes, 10)} ${locale.minutes}`);
+      if (seconds) timeComponents.push(`${parseInt(seconds, 10)} seconds`);
+      
+      if (timeComponents.length > 0) {
+        parts.push(`+ ${timeComponents.join(' ')}`);
+      }
+      
+      eodDescription = `${locale.endOfDuration} ${parts.join(' ')}`;
+    } else {
+      // Fallback for complex or unparseable EOD
+      eodDescription = `${locale.endOfDuration}: ${eodString}`;
     }
 
     if (scheduleDescription) {
@@ -287,9 +323,16 @@ export class Formatters {
   }
 
   static getOrdinal(num: number, locale: LocaleStrings): string {
+    // Validate inputs
+    if (!locale || !locale.ordinals || !Array.isArray(locale.ordinals)) {
+      return num.toString();
+    }
+    
     if (num >= 1 && num <= locale.ordinals.length) {
       return locale.ordinals[num - 1];
     }
+    
+    // Fallback for numbers beyond ordinals array
     return num.toString();
   }
 

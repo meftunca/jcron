@@ -199,17 +199,48 @@ class HumanizerClass {
       if (schedule instanceof Schedule) {
         normalizedSchedule = schedule;
       } else {
-        // Try to create a proper Schedule from the object
+        // Validate fields before creating Schedule
+        const validateField = (value: any, min: number, max: number, fieldName: string): string | null => {
+          if (value == null || value === "*") return null;
+          const strValue = String(value);
+          
+          // Skip validation for complex patterns
+          if (strValue.includes("/") || strValue.includes("-") || strValue.includes(",") || 
+              strValue.includes("L") || strValue.includes("#") || strValue.includes("W")) {
+            return strValue;
+          }
+          
+          const numValue = parseInt(strValue, 10);
+          if (isNaN(numValue) || numValue < min || numValue > max) {
+            throw new Error(`Invalid ${fieldName}: ${value} (must be ${min}-${max})`);
+          }
+          return strValue;
+        };
+        
+        // Validate all fields
+        const validatedFields = {
+          seconds: validateField(schedule.s ?? schedule.seconds, 0, 59, "seconds"),
+          minutes: validateField(schedule.m ?? schedule.minutes, 0, 59, "minutes"),
+          hours: validateField(schedule.h ?? schedule.hours, 0, 23, "hours"),
+          dayOfMonth: validateField(schedule.D ?? schedule.dayOfMonth, 1, 31, "day of month"),
+          month: validateField(schedule.M ?? schedule.month, 1, 12, "month"),
+          dayOfWeek: validateField(schedule.dow ?? schedule.dayOfWeek, 0, 7, "day of week"),
+          year: validateField(schedule.Y ?? schedule.year, 1970, 3000, "year"),
+          weekOfYear: validateField(schedule.woy ?? schedule.weekOfYear, 1, 53, "week of year"),
+          timezone: schedule.tz ?? schedule.timezone ?? null
+        };
+        
+        // Try to create a proper Schedule from the validated object
         normalizedSchedule = new Schedule(
-          schedule.s ?? schedule.seconds ?? null,
-          schedule.m ?? schedule.minutes ?? null,
-          schedule.h ?? schedule.hours ?? null,
-          schedule.D ?? schedule.dayOfMonth ?? null,
-          schedule.M ?? schedule.month ?? null,
-          schedule.dow ?? schedule.dayOfWeek ?? null,
-          schedule.Y ?? schedule.year ?? null,
-          schedule.woy ?? schedule.weekOfYear ?? null,
-          schedule.tz ?? schedule.timezone ?? null
+          validatedFields.seconds,
+          validatedFields.minutes,
+          validatedFields.hours,
+          validatedFields.dayOfMonth,
+          validatedFields.month,
+          validatedFields.dayOfWeek,
+          validatedFields.year,
+          validatedFields.weekOfYear,
+          validatedFields.timezone
         );
       }
     } catch (error) {
@@ -304,6 +335,61 @@ class HumanizerClass {
 
     // Normal cron format
     return this.buildStandardDescription(parsed, options, locale);
+  }
+
+  private static hasStepPattern(parsed: ParsedExpression): boolean {
+    return parsed.hasSteps || 
+           parsed.rawFields.minutes.includes("/") ||
+           parsed.rawFields.hours.includes("/") ||
+           parsed.rawFields.daysOfMonth.includes("/") ||
+           parsed.rawFields.months.includes("/") ||
+           parsed.rawFields.daysOfWeek.includes("/");
+  }
+
+  private static buildStepDescription(
+    parsed: ParsedExpression,
+    options: Required<HumanizeOptions>,
+    locale: LocaleStrings
+  ): string {
+    const parts: string[] = [];
+
+    // Handle step patterns in different fields
+    if (parsed.rawFields.minutes.includes("/")) {
+      const stepMatch = parsed.rawFields.minutes.match(/^\*\/(\d+)$/);
+      if (stepMatch) {
+        const step = parseInt(stepMatch[1], 10);
+        if (step === 1) {
+          parts.push("every minute");
+        } else {
+          parts.push(`every ${step} minutes`);
+        }
+      }
+    } else if (parsed.rawFields.hours.includes("/")) {
+      const stepMatch = parsed.rawFields.hours.match(/^\*\/(\d+)$/);
+      if (stepMatch) {
+        const step = parseInt(stepMatch[1], 10);
+        parts.push(`every ${step} hours`);
+      }
+    } else {
+      // Complex step patterns - fallback to standard description
+      return this.buildStandardDescription(parsed, options, locale);
+    }
+
+    // Add time components if specific
+    if (parsed.hours[0] !== "*" && parsed.minutes[0] !== "*") {
+      const timeStr = Formatters.formatTime(
+        parsed.hours,
+        parsed.minutes,
+        parsed.seconds,
+        options,
+        locale
+      );
+      if (timeStr) {
+        parts.unshift(`${locale.at} ${timeStr}`);
+      }
+    }
+
+    return parts.join(", ");
   }
 
   private static detectPattern(
@@ -457,63 +543,6 @@ class HumanizerClass {
       default:
         return description;
     }
-  }
-
-  private static hasStepPattern(parsed: ParsedExpression): boolean {
-    return (
-      parsed.rawFields.minutes.includes("/") ||
-      parsed.rawFields.hours.includes("/") ||
-      parsed.rawFields.daysOfWeek.includes("/") ||
-      parsed.rawFields.daysOfMonth.includes("/") ||
-      parsed.rawFields.months.includes("/")
-    );
-  }
-
-  private static buildStepDescription(
-    parsed: ParsedExpression,
-    options: Required<HumanizeOptions>,
-    locale: LocaleStrings
-  ): string {
-    // Handle minute steps (*/15)
-    if (parsed.rawFields.minutes.includes("/")) {
-      const stepPattern = parsed.rawFields.minutes;
-      if (stepPattern.startsWith("*")) {
-        const [, step] = stepPattern.split("/");
-        const stepNum = parseInt(step, 10);
-        if (stepNum === 1) return "every minute";
-        return `every ${step} minutes`;
-      }
-    }
-
-    // Handle hour steps
-    if (parsed.rawFields.hours.includes("/")) {
-      const stepPattern = parsed.rawFields.hours;
-      if (stepPattern.startsWith("*")) {
-        const [, step] = stepPattern.split("/");
-        return `every ${step} hours`;
-      } else if (stepPattern.includes("-")) {
-        // Handle range-based steps like 9-17/2
-        const [range, step] = stepPattern.split("/");
-        const [start, end] = range.split("-");
-        const timeStrs = [];
-        for (let h = parseInt(start); h <= parseInt(end); h += parseInt(step)) {
-          const timeStr = Formatters.formatTime(
-            [h.toString()],
-            ["0"],
-            ["0"],
-            options,
-            locale
-          );
-          timeStrs.push(timeStr);
-        }
-        return `${locale.at} ${Formatters.formatList(
-          timeStrs,
-          locale
-        )}, every day`;
-      }
-    }
-
-    return "every day"; // fallback
   }
 
   private static isJcronSpecialFormat(parsed: ParsedExpression): boolean {

@@ -48,8 +48,14 @@ export class ExpressionParser {
         const stepNum = parseInt(step, 10);
 
         // Validate step
-        if (isNaN(stepNum) || stepNum <= 0) {
-          throw new Error(`Division by zero in step pattern`);
+        if (isNaN(stepNum)) {
+          throw new Error(`Invalid step value: ${step}`);
+        }
+        if (stepNum === 0) {
+          throw new Error(`Division by zero in step pattern: ${part}`);
+        }
+        if (stepNum < 0) {
+          throw new Error(`Negative step value not allowed: ${step}`);
         }
 
         if (range === "*") {

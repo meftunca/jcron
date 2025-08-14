@@ -384,3 +384,95 @@ func TestEndOfDurationCalculation(t *testing.T) {
 func stringPtr(s string) *string {
 	return &s
 }
+
+func TestEODFixCorrectBehavior(t *testing.T) {
+	t.Log("=== GO EOD IMPLEMENTATION FIX TEST ===")
+
+	// Test case: E1W should give end of current week, not previous week
+	testDate := time.Date(2025, 8, 14, 9, 0, 0, 0, time.UTC) // Thursday
+	t.Logf("Test date (Thursday): %s", testDate.String())
+
+	// Test E1W parsing and calculation
+	eod, err := ParseEoD("E1W")
+	if err != nil {
+		t.Fatalf("Failed to parse E1W: %v", err)
+	}
+
+	endDate := eod.CalculateEndDate(testDate)
+	t.Logf("E1W End date: %s", endDate.String())
+
+	// Should be August 17, 2025 (end of same week - Sunday)
+	expectedDate := time.Date(2025, 8, 17, 23, 59, 59, 999999999, time.UTC)
+	if endDate.Year() != expectedDate.Year() || endDate.Month() != expectedDate.Month() || endDate.Day() != expectedDate.Day() {
+		t.Errorf("❌ ERROR: Expected %s, got %s", expectedDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+		t.Fatalf("Expected %s, got %s", expectedDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	}
+
+	t.Log("✅ E1W correctly calculates end of current week")
+
+	// Test E2W (end of next week)
+	eod2, err := ParseEoD("E2W")
+	if err != nil {
+		t.Fatalf("Failed to parse E2W: %v", err)
+	}
+
+	endDate2 := eod2.CalculateEndDate(testDate)
+	t.Logf("E2W End date: %s", endDate2.String())
+
+	// Should be Sunday of next week (August 24, 2025)
+	expectedDate2 := time.Date(2025, 8, 24, 23, 59, 59, 999999999, time.UTC)
+	if endDate2.Year() != expectedDate2.Year() || endDate2.Month() != expectedDate2.Month() || endDate2.Day() != expectedDate2.Day() {
+		t.Errorf("❌ ERROR: Expected %s, got %s", expectedDate2.Format("2006-01-02"), endDate2.Format("2006-01-02"))
+		t.Fatalf("Expected %s, got %s", expectedDate2.Format("2006-01-02"), endDate2.Format("2006-01-02"))
+	}
+
+	t.Log("✅ E2W correctly calculates end of next week")
+
+	// Test Schedule with EOD - the original problem case
+	second := "0"
+	minute := "0"
+	hour := "9"
+	dayOfMonth := "*"
+	month := "*"
+	dayOfWeek := "1-5"
+
+	schedule := Schedule{
+		Second:     &second,
+		Minute:     &minute,
+		Hour:       &hour,
+		DayOfMonth: &dayOfMonth,
+		Month:      &month,
+		DayOfWeek:  &dayOfWeek, // Monday-Friday
+		EOD:        eod,        // E1W
+	}
+
+	// Get next execution time (should be Friday Aug 15, 2025 at 9:00 AM)
+	// Create engine for getting next execution time
+	engine := New()
+
+	nextRun, err := engine.Next(schedule, testDate)
+	if err != nil {
+		t.Fatalf("Failed to get next run: %v", err)
+	}
+	t.Logf("Next run: %s", nextRun.String())
+
+	// Now get the end time using EndOf (should be Sunday Aug 17, 2025)
+	endTime := schedule.EndOf(testDate)
+	t.Logf("End time: %s", endTime.String())
+
+	// Check that endTime is AFTER nextRun (positive time difference)
+	timeDiff := endTime.Sub(nextRun)
+	t.Logf("Time difference (endTime - nextRun): %s", timeDiff.String())
+
+	if timeDiff <= 0 {
+		t.Errorf("❌ FAILED: End time (%s) should be AFTER next run (%s), but difference is %s",
+			endTime.String(), nextRun.String(), timeDiff.String())
+		t.Fatalf("EOD calculation is wrong - end time is before next run")
+	}
+
+	t.Log("✅ EOD calculation fixed: End time is correctly after next run time")
+	t.Logf("✅ Success: nextRun=%s, endTime=%s, difference=%s",
+		nextRun.Format("Mon Jan 02 2006 15:04:05"),
+		endTime.Format("Mon Jan 02 2006 15:04:05"),
+		timeDiff.String())
+}

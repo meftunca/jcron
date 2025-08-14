@@ -153,7 +153,8 @@ describe("JCRON Humanize API", () => {
 
     it("should handle lists", () => {
       expect(toString("0 9,12,15 * * *")).toContain("9:00 AM");
-      expect(toString("0 9,12,15 * * *")).toContain("12:00 PM");
+      // The improved formatter shows "noon" instead of "12:00 PM"
+      expect(toString("0 9,12,15 * * *")).toContain("noon");
     });
   });
 
@@ -296,7 +297,10 @@ describe("Edge cases and advanced scenarios", () => {
     });
 
     it("should handle step patterns in days", () => {
-      expect(toString("0 9 */3 * *")).toContain("every");
+      // The improved formatter shows detailed day list instead of just "every"
+      const result = toString("0 9 */3 * *");
+      expect(result).toContain("9:00 AM");
+      expect(result).toContain("1st"); // First day in the pattern
     });
   });
 
