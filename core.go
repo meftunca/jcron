@@ -1112,12 +1112,20 @@ func (e *Engine) matchSpecialPatternDirect(pattern string, t time.Time, currentW
 }
 
 // EndOf calculates when the schedule should end based on EOD configuration
-// Returns the termination date or zero time if no EOD is configured
+// Returns the termination date calculated from the next execution time or zero time if no EOD is configured
 func (s *Schedule) EndOf(fromDate time.Time) time.Time {
 	if s.EOD == nil {
 		return time.Time{} // Zero time indicates no end date
 	}
-	return s.EOD.CalculateEndDate(fromDate)
+	
+	// Create an engine to calculate the next execution time
+	engine := New()
+	nextTime, err := engine.Next(*s, fromDate)
+	if err != nil {
+		return time.Time{} // Zero time indicates calculation failed
+	}
+	
+	return s.EOD.CalculateEndDate(nextTime)
 }
 
 // EndOfFromNow calculates when the schedule should end from current time

@@ -171,6 +171,8 @@ func (eod *EndOfDuration) String() string {
 }
 
 // CalculateEndDate calculates the end date based on the EOD configuration
+// EOD format: En[Unit] means "end of nth [Unit]" where n starts from 1
+// E1W = end of current week, E2W = end of next week, etc.
 func (eod *EndOfDuration) CalculateEndDate(fromDate time.Time) time.Time {
 	if eod == nil {
 		return fromDate
@@ -178,53 +180,77 @@ func (eod *EndOfDuration) CalculateEndDate(fromDate time.Time) time.Time {
 
 	result := fromDate
 
-	// Add duration components
-	if eod.Years > 0 {
-		result = result.AddDate(eod.Years, 0, 0)
-	}
-	if eod.Months > 0 {
-		result = result.AddDate(0, eod.Months, 0)
-	}
-	if eod.Weeks > 0 {
-		result = result.AddDate(0, 0, eod.Weeks*7)
-	}
-	if eod.Days > 0 {
-		result = result.AddDate(0, 0, eod.Days)
+	// Handle simple duration additions for START/END reference points
+	if eod.ReferencePoint == ReferenceStart || eod.ReferencePoint == ReferenceEnd {
+		// Traditional duration addition
+		if eod.Years > 0 {
+			result = result.AddDate(eod.Years, 0, 0)
+		}
+		if eod.Months > 0 {
+			result = result.AddDate(0, eod.Months, 0)
+		}
+		if eod.Weeks > 0 {
+			result = result.AddDate(0, 0, eod.Weeks*7)
+		}
+		if eod.Days > 0 {
+			result = result.AddDate(0, 0, eod.Days)
+		}
+
+		// Add time components
+		duration := time.Duration(eod.Hours)*time.Hour +
+			time.Duration(eod.Minutes)*time.Minute +
+			time.Duration(eod.Seconds)*time.Second
+
+		result = result.Add(duration)
+		return result
 	}
 
-	// Add time components
-	duration := time.Duration(eod.Hours)*time.Hour +
-		time.Duration(eod.Minutes)*time.Minute +
-		time.Duration(eod.Seconds)*time.Second
-
-	result = result.Add(duration)
-
-	// Apply reference point adjustments
+	// Handle special reference points (DAY, WEEK, MONTH, etc.)
+	// EOD format: En[Unit] where n=1 means current period, n=2 means next period, etc.
 	switch eod.ReferencePoint {
 	case ReferenceDay:
-		// End of day
+		// E1D = end of current day, E2D = end of next day, etc.
+		if eod.Days > 1 {
+			result = result.AddDate(0, 0, eod.Days-1)
+		}
 		result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 	case ReferenceWeek:
-		// End of week (Sunday)
+		// E1W = end of current week, E2W = end of next week, etc.
+		if eod.Weeks > 1 {
+			result = result.AddDate(0, 0, (eod.Weeks-1)*7)
+		}
+		// Set to end of the week (Sunday 23:59:59)
 		daysUntilSunday := (7 - int(result.Weekday())) % 7
-		if daysUntilSunday == 0 {
-			daysUntilSunday = 7
+		if result.Weekday() == time.Sunday {
+			daysUntilSunday = 0 // Already Sunday
 		}
 		result = result.AddDate(0, 0, daysUntilSunday)
 		result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 	case ReferenceMonth:
-		// End of month
+		// E1M = end of current month, E2M = end of next month, etc.
+		if eod.Months > 1 {
+			result = result.AddDate(0, eod.Months-1, 0)
+		}
+		// Set to end of the month (last day 23:59:59)
 		nextMonth := result.AddDate(0, 1, 0)
 		firstOfNextMonth := time.Date(nextMonth.Year(), nextMonth.Month(), 1, 0, 0, 0, 0, result.Location())
 		result = firstOfNextMonth.Add(-time.Nanosecond)
 	case ReferenceQuarter:
-		// End of quarter
-		currentQuarter := ((int(result.Month()) - 1) / 3) + 1
-		quarterEndMonth := currentQuarter * 3
+		// E1Q = end of current quarter, E2Q = end of next quarter, etc.
+		currentQuarter := ((int(result.Month()) - 1) / 3)
+		targetQuarter := currentQuarter
+		if eod.Months > 0 {
+			targetQuarter += eod.Months - 1
+		}
+		quarterEndMonth := (targetQuarter + 1) * 3
 		result = time.Date(result.Year(), time.Month(quarterEndMonth), 1, 0, 0, 0, 0, result.Location())
 		result = result.AddDate(0, 1, 0).Add(-time.Nanosecond)
 	case ReferenceYear:
-		// End of year
+		// E1Y = end of current year, E2Y = end of next year, etc.
+		if eod.Years > 1 {
+			result = result.AddDate(eod.Years-1, 0, 0)
+		}
+		// Set to end of the year (Dec 31 23:59:59)
 		result = time.Date(result.Year(), 12, 31, 23, 59, 59, 999999999, result.Location())
 	}
 
@@ -247,17 +273,29 @@ func ParseEoD(eodStr string) (*EndOfDuration, error) {
 	if matches := simplePattern.FindStringSubmatch(originalStr); matches != nil {
 		eod := &EndOfDuration{}
 
-		// Parse reference point (S or E)
-		if matches[1] == "S" {
-			eod.ReferencePoint = ReferenceStart
-		} else {
-			eod.ReferencePoint = ReferenceEnd
-		}
-
 		// Parse value
 		value, err := strconv.Atoi(matches[2])
 		if err != nil {
 			return nil, fmt.Errorf("invalid duration value: %s", matches[2])
+		}
+
+		// For E patterns, determine the appropriate reference point based on unit
+		if matches[1] == "S" {
+			eod.ReferencePoint = ReferenceStart
+		} else {
+			// E patterns use specific reference points based on unit
+			switch matches[3] {
+			case "Y":
+				eod.ReferencePoint = ReferenceYear
+			case "M":
+				eod.ReferencePoint = ReferenceMonth
+			case "W":
+				eod.ReferencePoint = ReferenceWeek
+			case "D":
+				eod.ReferencePoint = ReferenceDay
+			default:
+				eod.ReferencePoint = ReferenceEnd // For H, S
+			}
 		}
 
 		// Parse unit
@@ -265,7 +303,11 @@ func ParseEoD(eodStr string) (*EndOfDuration, error) {
 		case "Y":
 			eod.Years = value
 		case "M":
-			eod.Minutes = value // M after time component is minutes
+			if eod.ReferencePoint == ReferenceMonth {
+				eod.Months = value
+			} else {
+				eod.Minutes = value // M after time component is minutes
+			}
 		case "W":
 			eod.Weeks = value
 		case "D":

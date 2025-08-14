@@ -93,51 +93,75 @@ export class EndOfDuration {
 
   /**
    * Calculate the end date based on a starting date
+   * EOD format: En[Unit] means "end of nth [Unit]" where n starts from 1
+   * E1W = end of current week, E2W = end of next week, etc.
    */
   calculateEndDate(fromDate: Date): Date {
     const result = new Date(fromDate);
     
-    // First, add the duration
-    if (this.years > 0) result.setFullYear(result.getFullYear() + this.years);
-    if (this.months > 0) result.setMonth(result.getMonth() + this.months);
-    if (this.weeks > 0) result.setDate(result.getDate() + (this.weeks * 7));
-    if (this.days > 0) result.setDate(result.getDate() + this.days);
-    if (this.hours > 0) result.setHours(result.getHours() + this.hours);
-    if (this.minutes > 0) result.setMinutes(result.getMinutes() + this.minutes);
-    if (this.seconds > 0) result.setSeconds(result.getSeconds() + this.seconds);
+    // Handle simple duration additions for START/END reference points
+    if (this.referencePoint === ReferencePoint.START || this.referencePoint === ReferencePoint.END || !this.referencePoint) {
+      // Traditional duration addition
+      if (this.years > 0) result.setFullYear(result.getFullYear() + this.years);
+      if (this.months > 0) result.setMonth(result.getMonth() + this.months);
+      if (this.weeks > 0) result.setDate(result.getDate() + (this.weeks * 7));
+      if (this.days > 0) result.setDate(result.getDate() + this.days);
+      if (this.hours > 0) result.setHours(result.getHours() + this.hours);
+      if (this.minutes > 0) result.setMinutes(result.getMinutes() + this.minutes);
+      if (this.seconds > 0) result.setSeconds(result.getSeconds() + this.seconds);
+      return result;
+    }
     
-    // Then, apply reference point if specified
-    if (this.referencePoint) {
-      switch (this.referencePoint) {
-        case ReferencePoint.DAY:
-          // Set to end of the day (23:59:59)
-          result.setHours(23, 59, 59, 999);
-          break;
-        case ReferencePoint.WEEK:
-          // Set to end of the week (Sunday 23:59:59)
-          const daysUntilSunday = result.getDay() === 0 ? 0 : (7 - result.getDay());
-          result.setDate(result.getDate() + daysUntilSunday);
-          result.setHours(23, 59, 59, 999);
-          break;
-        case ReferencePoint.MONTH:
-          // Set to end of the month (last day 23:59:59)
-          result.setMonth(result.getMonth() + 1, 0);
-          result.setHours(23, 59, 59, 999);
-          break;
-        case ReferencePoint.QUARTER:
-          // Set to end of the quarter
-          const currentQuarter = Math.floor(result.getMonth() / 3);
-          const quarterEndMonth = (currentQuarter + 1) * 3 - 1;
-          result.setMonth(quarterEndMonth + 1, 0);
-          result.setHours(23, 59, 59, 999);
-          break;
-        case ReferencePoint.YEAR:
-          // Set to end of the year (Dec 31 23:59:59)
-          result.setMonth(11, 31);
-          result.setHours(23, 59, 59, 999);
-          break;
-        // For START and END, no additional processing needed
-      }
+    // Handle special reference points (DAY, WEEK, MONTH, etc.)
+    // EOD format: En[Unit] where n=1 means current period, n=2 means next period, etc.
+    switch (this.referencePoint) {
+      case ReferencePoint.DAY:
+        // E1D = end of current day, E2D = end of next day, etc.
+        if (this.days > 1) {
+          result.setDate(result.getDate() + (this.days - 1));
+        }
+        result.setHours(23, 59, 59, 999);
+        break;
+        
+      case ReferencePoint.WEEK:
+        // E1W = end of current week, E2W = end of next week, etc.
+        if (this.weeks > 1) {
+          result.setDate(result.getDate() + ((this.weeks - 1) * 7));
+        }
+        // Set to end of the week (Sunday 23:59:59)
+        const daysUntilSunday = result.getDay() === 0 ? 0 : (7 - result.getDay());
+        result.setDate(result.getDate() + daysUntilSunday);
+        result.setHours(23, 59, 59, 999);
+        break;
+        
+      case ReferencePoint.MONTH:
+        // E1M = end of current month, E2M = end of next month, etc.
+        if (this.months > 1) {
+          result.setMonth(result.getMonth() + (this.months - 1));
+        }
+        // Set to end of the month (last day 23:59:59)
+        result.setMonth(result.getMonth() + 1, 0);
+        result.setHours(23, 59, 59, 999);
+        break;
+        
+      case ReferencePoint.QUARTER:
+        // E1Q = end of current quarter, E2Q = end of next quarter, etc.
+        const currentQuarter = Math.floor(result.getMonth() / 3);
+        const targetQuarter = currentQuarter + (this.months > 0 ? this.months - 1 : 0);
+        const quarterEndMonth = (targetQuarter + 1) * 3 - 1;
+        result.setMonth(quarterEndMonth + 1, 0);
+        result.setHours(23, 59, 59, 999);
+        break;
+        
+      case ReferencePoint.YEAR:
+        // E1Y = end of current year, E2Y = end of next year, etc.
+        if (this.years > 1) {
+          result.setFullYear(result.getFullYear() + (this.years - 1));
+        }
+        // Set to end of the year (Dec 31 23:59:59)
+        result.setMonth(11, 31);
+        result.setHours(23, 59, 59, 999);
+        break;
     }
     
     return result;
@@ -180,7 +204,21 @@ export function parseEoD(eodStr: string): EndOfDuration {
   if (simpleMatch) {
     const [, startEnd, amount, unit] = simpleMatch;
     const value = parseInt(amount, 10);
-    const referencePoint = startEnd.toUpperCase() === 'S' ? ReferencePoint.START : ReferencePoint.END;
+    
+    // For E patterns, determine the appropriate reference point based on unit
+    let referencePoint: ReferencePoint;
+    if (startEnd.toUpperCase() === 'S') {
+      referencePoint = ReferencePoint.START;
+    } else {
+      // E patterns use specific reference points based on unit
+      switch (unit.toUpperCase()) {
+        case 'Y': referencePoint = ReferencePoint.YEAR; break;
+        case 'M': referencePoint = ReferencePoint.MONTH; break;
+        case 'W': referencePoint = ReferencePoint.WEEK; break;
+        case 'D': referencePoint = ReferencePoint.DAY; break;
+        default: referencePoint = ReferencePoint.END; break; // For H, m, S
+      }
+    }
     
     switch (unit) {
       case 'Y': case 'y': return new EndOfDuration(value, 0, 0, 0, 0, 0, 0, referencePoint);

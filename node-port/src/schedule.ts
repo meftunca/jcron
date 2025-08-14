@@ -1,7 +1,7 @@
 // src/schedule.ts
 import { ParseError } from "./errors";
 import { EndOfDuration, parseEoD } from "./eod";
-import { getPrev } from ".";
+import { getPrev, getNext } from ".";
 
 // Interface for timezone validation
 interface TimezoneValidation {
@@ -223,14 +223,14 @@ export class Schedule {
       return null;
     }
     
-    // Get the start time (previous trigger time)
-    const startTime = this.startOf(fromDate);
-    if (!startTime) {
-      return null; // No start time found
+    // Get the next trigger time (when the schedule will be triggered)
+    const nextTime = getNext(this, fromDate);
+    if (!nextTime) {
+      return null; // No next trigger time found
     }
     
-    // Calculate end time from the start time
-    return this.eod.calculateEndDate(startTime);
+    // Calculate end time from the next trigger time
+    return this.eod.calculateEndDate(nextTime);
   }
   // startof
   /**
@@ -257,7 +257,7 @@ export class Schedule {
   // isrange now
   /**
    * Check if the current time is within the execution window of this schedule
-   * For EOD schedules, checks if now is between startOf and endOf times
+   * For EOD schedules, checks if now is between the previous trigger and next endOf
    * @param now The time to check (defaults to current time)
    * @returns true if now is within the execution window, false otherwise
    */
@@ -266,9 +266,14 @@ export class Schedule {
       return false;
     }
     
-    // Get the start and end times for the current execution window
+    // Get the previous trigger time (start of current window)
     const start = this.startOf(now);
-    const end = this.endOf(now);
+    // Get the end time for current execution window
+    // Since endOf now uses next trigger, we need to calculate end from previous trigger
+    let end: Date | null = null;
+    if (start) {
+      end = this.eod.calculateEndDate(start);
+    }
     
     // Check if both start and end are valid and now is within the range
     return start !== null && end !== null && now >= start && now <= end;
