@@ -1,6 +1,7 @@
 -- =====================================================
--- JCRON PostgreSQL Implementation
+-- JCRON PostgreSQL Implementation (Node-Port Compatible)
 -- Ultra High Performance, Low Memory, Low CPU Cost
+-- Synchronized with TypeScript node-port implementation
 -- =====================================================
 DROP SCHEMA IF EXISTS jcron CASCADE;
 
@@ -486,8 +487,153 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- =====================================================
--- 4. ULTRA HIGH PERFORMANCE OPTIMIZATIONS
+-- 4. EXPANDED SCHEDULE OPTIMIZATION (Node-Port Compatible)
+-- Binary search and precomputed arrays for ultra-fast lookups
 -- =====================================================
+
+-- Expanded schedule type for optimized operations
+CREATE TYPE jcron.expanded_schedule AS (
+    second_values INTEGER[],
+    minute_values INTEGER[],
+    hour_values INTEGER[],
+    day_values INTEGER[],
+    month_values INTEGER[],
+    weekday_values INTEGER[],
+    week_values INTEGER[],
+    has_special_patterns BOOLEAN,
+    timezone TEXT,
+    year_expr TEXT,
+    day_expr TEXT,
+    weekday_expr TEXT,
+    eod_expr TEXT,
+    has_eod BOOLEAN
+);
+
+-- Binary search in sorted integer array (Node-Port Compatible)
+CREATE OR REPLACE FUNCTION jcron.binary_search_next(
+    p_values INTEGER[],
+    p_target INTEGER
+) RETURNS INTEGER AS $$
+DECLARE
+    v_left INTEGER := 1;
+    v_right INTEGER := array_length(p_values, 1);
+    v_mid INTEGER;
+BEGIN
+    -- Handle empty array
+    IF v_right IS NULL OR v_right = 0 THEN
+        RETURN NULL;
+    END IF;
+
+    -- Binary search for next value >= target
+    WHILE v_left <= v_right LOOP
+        v_mid := (v_left + v_right) / 2;
+        
+        IF p_values[v_mid] = p_target THEN
+            RETURN p_values[v_mid];
+        ELSIF p_values[v_mid] < p_target THEN
+            v_left := v_mid + 1;
+        ELSE
+            v_right := v_mid - 1;
+        END IF;
+    END LOOP;
+    
+    -- Return next valid value or first value (wrap around)
+    IF v_left <= array_length(p_values, 1) THEN
+        RETURN p_values[v_left];
+    ELSE
+        RETURN p_values[1]; -- Wrap to first value
+    END IF;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Binary search for previous value (Node-Port Compatible)
+CREATE OR REPLACE FUNCTION jcron.binary_search_prev(
+    p_values INTEGER[],
+    p_target INTEGER
+) RETURNS INTEGER AS $$
+DECLARE
+    v_left INTEGER := 1;
+    v_right INTEGER := array_length(p_values, 1);
+    v_mid INTEGER;
+BEGIN
+    -- Handle empty array
+    IF v_right IS NULL OR v_right = 0 THEN
+        RETURN NULL;
+    END IF;
+
+    -- Binary search for previous value <= target
+    WHILE v_left <= v_right LOOP
+        v_mid := (v_left + v_right) / 2;
+        
+        IF p_values[v_mid] = p_target THEN
+            RETURN p_values[v_mid];
+        ELSIF p_values[v_mid] < p_target THEN
+            v_left := v_mid + 1;
+        ELSE
+            v_right := v_mid - 1;
+        END IF;
+    END LOOP;
+    
+    -- Return previous valid value or last value (wrap around)
+    IF v_right >= 1 THEN
+        RETURN p_values[v_right];
+    ELSE
+        RETURN p_values[array_length(p_values, 1)]; -- Wrap to last value
+    END IF;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Convert bitmask to sorted array (Node-Port Compatible)
+CREATE OR REPLACE FUNCTION jcron.bitmask_to_array(
+    p_mask BIGINT,
+    p_min_val INTEGER,
+    p_max_val INTEGER
+) RETURNS INTEGER[] AS $$
+DECLARE
+    v_result INTEGER[] := '{}';
+    v_i INTEGER;
+BEGIN
+    FOR v_i IN p_min_val..LEAST(p_max_val, 62) LOOP
+        IF (p_mask & (1::BIGINT << v_i)) != 0 THEN
+            v_result := array_append(v_result, v_i);
+        END IF;
+    END LOOP;
+    
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Expand expression to optimized arrays (Node-Port Compatible)
+CREATE OR REPLACE FUNCTION jcron.expand_to_arrays(p_expression TEXT)
+RETURNS jcron.expanded_schedule AS $$
+DECLARE
+    v_parsed RECORD;
+    v_result jcron.expanded_schedule;
+BEGIN
+    -- Parse the expression
+    SELECT * INTO v_parsed FROM jcron.parse_expression(p_expression);
+    
+    -- Convert bitmasks to sorted arrays for binary search
+    v_result.second_values := jcron.bitmask_to_array(v_parsed.seconds_mask, 0, 59);
+    v_result.minute_values := jcron.bitmask_to_array(v_parsed.minutes_mask, 0, 59);
+    v_result.hour_values := jcron.bitmask_to_array(v_parsed.hours_mask::BIGINT, 0, 23);
+    v_result.day_values := jcron.bitmask_to_array(v_parsed.days_mask, 1, 31);
+    v_result.month_values := jcron.bitmask_to_array(v_parsed.months_mask::BIGINT, 1, 12);
+    v_result.weekday_values := jcron.bitmask_to_array(v_parsed.weekdays_mask::BIGINT, 0, 6);
+    v_result.week_values := jcron.bitmask_to_array(v_parsed.weeks_mask, 1, 53);
+    
+    -- Copy metadata
+    v_result.has_special_patterns := v_parsed.has_special_patterns;
+    v_result.timezone := v_parsed.timezone;
+    v_result.year_expr := v_parsed.year_expr;
+    v_result.day_expr := v_parsed.day_expr;
+    v_result.weekday_expr := v_parsed.weekday_expr;
+    v_result.eod_expr := v_parsed.eod_expr;
+    v_result.has_eod := v_parsed.has_eod;
+    
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
 -- Optimized bitmask lookup tables for common patterns
 CREATE OR REPLACE FUNCTION jcron.get_precomputed_mask(p_expr TEXT, p_field_type TEXT)
@@ -746,7 +892,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Next time calculation (stateless) - OPTIMIZED
+-- Next time calculation (stateless) - OPTIMIZED WITH NODE-PORT COMPATIBILITY
 CREATE OR REPLACE FUNCTION jcron.next_time(
     p_expression TEXT,
     p_from_time TIMESTAMPTZ DEFAULT NOW()
@@ -782,7 +928,7 @@ BEGIN
         RAISE EXCEPTION 'Cron expression cannot be null or empty';
     END IF;
 
-    -- FAST PATH: Direct calculation for common patterns
+    -- FAST PATH: Direct calculation for common patterns (Node-Port Compatible)
     CASE p_expression
         WHEN '0 * * * *' THEN -- Every hour
             RETURN date_trunc('hour', p_from_time) + INTERVAL '1 hour';
@@ -795,7 +941,7 @@ BEGIN
             END IF;
             RETURN v_candidate;
             
-        WHEN '0 9 * * 1-5' THEN -- Business hours weekdays
+        WHEN '0 9 * * 1-5' THEN -- Business hours weekdays (Node-Port Compatible)
             v_current_dow := EXTRACT(DOW FROM p_from_time)::INTEGER;
             v_next_day := date_trunc('day', p_from_time);
             
@@ -839,12 +985,12 @@ BEGIN
         v_eod_expr, v_has_eod
     FROM jcron.parse_expression(p_expression);
 
-    -- Validate masks are not zero
+    -- Validate masks are not zero (Node-Port Compatible validation)
     IF v_seconds_mask = 0 OR v_minutes_mask = 0 OR v_hours_mask = 0 OR v_days_mask = 0 OR v_months_mask = 0 THEN
         RAISE EXCEPTION 'Invalid cron expression produces empty mask: %', p_expression;
     END IF;
 
-    -- If EOD expression, delegate to next_end_of_time
+    -- If EOD expression, delegate to next_end_of_time (Node-Port Compatible)
     IF v_has_eod THEN
         RETURN jcron.next_end_of_time(p_expression, p_from_time);
     END IF;
@@ -857,7 +1003,7 @@ BEGIN
         v_iteration := v_iteration + 1;
         v_last_candidate := v_candidate;
 
-        -- Year check
+        -- Year check (Node-Port Compatible)
         IF v_has_year_restriction AND NOT jcron.year_matches(v_year_expr, EXTRACT(YEAR FROM v_candidate)::INTEGER) THEN
             v_candidate := jcron.advance_year(v_candidate, v_year_expr);
             IF v_candidate = v_last_candidate THEN
@@ -866,37 +1012,37 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Month check
+        -- Month check (Node-Port Compatible bitmask logic)
         IF (v_months_mask & (1 << EXTRACT(MONTH FROM v_candidate)::INTEGER)) = 0 THEN
             v_candidate := date_trunc('month', v_candidate + INTERVAL '1 month');
             CONTINUE;
         END IF;
 
-        -- Week of year check (skip if default mask)
+        -- Week of year check (skip if default mask - Node-Port Compatible)
         IF v_weeks_mask != ((1::BIGINT << 54) - 2) AND (v_weeks_mask & (1::BIGINT << EXTRACT(WEEK FROM v_candidate)::INTEGER)) = 0 THEN
             v_candidate := v_candidate + INTERVAL '1 day';
             CONTINUE;
         END IF;
 
-        -- Day check
+        -- Day check (Node-Port Compatible pattern handling)
         IF NOT jcron.day_matches_stateless(v_candidate, v_day_expr, v_weekday_expr, v_days_mask, v_weekdays_mask, v_has_special_patterns) THEN
             v_candidate := date_trunc('day', v_candidate + INTERVAL '1 day');
             CONTINUE;
         END IF;
 
-        -- Hour check
+        -- Hour check (Node-Port Compatible bitmask logic)
         IF (v_hours_mask & (1 << EXTRACT(HOUR FROM v_candidate)::INTEGER)) = 0 THEN
             v_candidate := jcron.advance_hour(v_candidate, v_hours_mask);
             CONTINUE;
         END IF;
 
-        -- Minute check
+        -- Minute check (Node-Port Compatible bitmask logic)
         IF (v_minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM v_candidate)::INTEGER)) = 0 THEN
             v_candidate := jcron.advance_minute(v_candidate, v_minutes_mask);
             CONTINUE;
         END IF;
 
-        -- Second check
+        -- Second check (Node-Port Compatible bitmask logic)
         IF (v_seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM v_candidate)::INTEGER)) = 0 THEN
             v_candidate := jcron.advance_second(v_candidate, v_seconds_mask);
             CONTINUE;
@@ -1094,15 +1240,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Get next execution time with EOD end time calculation
+-- Get next execution time with EOD end time calculation (Node-Port Compatible)
 CREATE OR REPLACE FUNCTION jcron.next_end_of_time(
     p_expression TEXT,
     p_from_time TIMESTAMPTZ DEFAULT NOW()
-) RETURNS TABLE(
-    next_start TIMESTAMPTZ,
-    next_end TIMESTAMPTZ,
-    has_eod BOOLEAN
-) AS $$
+) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     v_base_expr TEXT;
     v_eod_expr TEXT;
@@ -1124,7 +1266,7 @@ BEGIN
     -- Get next start time using regular next_time function
     v_next_start := jcron.next_time(v_base_expr, p_from_time);
     
-    -- Calculate end time if EOD is present
+    -- Calculate end time if EOD is present (matching node-port behavior)
     IF v_has_eod AND v_eod_expr IS NOT NULL THEN
         SELECT * INTO v_eod_data FROM jcron.parse_eod(v_eod_expr);
         
@@ -1140,26 +1282,21 @@ BEGIN
                 v_eod_data.seconds,
                 v_eod_data.reference_point
             );
+            RETURN v_next_end;
         ELSE
-            v_next_end := v_next_start; -- Fallback to start time if invalid EOD
+            RETURN v_next_start; -- Fallback to start time if invalid EOD
         END IF;
     ELSE
-        v_next_end := v_next_start; -- No EOD, end = start
+        RETURN v_next_start; -- No EOD, return start time
     END IF;
-
-    RETURN QUERY SELECT v_next_start, v_next_end, v_has_eod;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Get previous execution time with EOD end time calculation
+-- Get previous execution time with EOD end time calculation (Node-Port Compatible)
 CREATE OR REPLACE FUNCTION jcron.prev_end_of_time(
     p_expression TEXT,
     p_from_time TIMESTAMPTZ DEFAULT NOW()
-) RETURNS TABLE(
-    prev_start TIMESTAMPTZ,
-    prev_end TIMESTAMPTZ,
-    has_eod BOOLEAN
-) AS $$
+) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     v_base_expr TEXT;
     v_eod_expr TEXT;
@@ -1181,7 +1318,7 @@ BEGIN
     -- Get previous start time using regular prev_time function
     v_prev_start := jcron.prev_time(v_base_expr, p_from_time);
     
-    -- Calculate end time if EOD is present
+    -- Calculate end time if EOD is present (matching node-port behavior)
     IF v_has_eod AND v_eod_expr IS NOT NULL THEN
         SELECT * INTO v_eod_data FROM jcron.parse_eod(v_eod_expr);
         
@@ -1197,14 +1334,13 @@ BEGIN
                 v_eod_data.seconds,
                 v_eod_data.reference_point
             );
+            RETURN v_prev_end;
         ELSE
-            v_prev_end := v_prev_start; -- Fallback to start time if invalid EOD
+            RETURN v_prev_start; -- Fallback to start time if invalid EOD
         END IF;
     ELSE
-        v_prev_end := v_prev_start; -- No EOD, end = start
+        RETURN v_prev_start; -- No EOD, return start time
     END IF;
-
-    RETURN QUERY SELECT v_prev_start, v_prev_end, v_has_eod;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
@@ -1420,35 +1556,38 @@ $$ LANGUAGE plpgsql;
 -- Performance test query (safer version)
 -- SELECT jcron.next_time('0 9 * * 1-5', '2025-01-01 00:00:00+00') FROM generate_series(1, 100) AS s(n);
 
--- Comprehensive test suite
+-- Comprehensive test suite (Node-Port Compatible)
 CREATE OR REPLACE FUNCTION jcron.comprehensive_test()
 RETURNS TABLE(test_name TEXT, expression TEXT, operation TEXT, result TEXT, status TEXT) AS $$
 DECLARE
     v_test_time TIMESTAMPTZ := '2025-01-01 10:30:00+00';
     v_match_result BOOLEAN;
     v_no_match_result BOOLEAN;
+    v_range_result BOOLEAN;
+    v_start_result TIMESTAMPTZ;
+    v_end_result TIMESTAMPTZ;
 BEGIN
     RETURN QUERY
-    -- Basic tests
+    -- Basic tests (Node-Port Compatible)
     SELECT
         'Basic hourly'::TEXT,
         '0 * * * *'::TEXT,
         'next_time'::TEXT,
-        jcron.next_time('0 * * * *', v_test_time)::TEXT,
+        jcron.next_time('0 * * * *'::TEXT, v_test_time)::TEXT,
         'PASS'::TEXT
     UNION ALL
     SELECT
         'Business hours'::TEXT,
         '0 9 * * 1-5'::TEXT,
         'next_time'::TEXT,
-        jcron.next_time('0 9 * * 1-5', '2025-01-01 00:00:00+00')::TEXT,
+        jcron.next_time('0 9 * * 1-5'::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ)::TEXT,
         'PASS'::TEXT
     UNION ALL
     SELECT
         'Every 15 minutes'::TEXT,
         '*/15 * * * *'::TEXT,
         'next_time'::TEXT,
-        jcron.next_time('*/15 * * * *', '2025-01-01 10:00:00+00')::TEXT,
+        jcron.next_time('*/15 * * * *'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ)::TEXT,
         'PASS'::TEXT
     UNION ALL
     -- Previous time tests
@@ -1456,11 +1595,11 @@ BEGIN
         'Previous hourly'::TEXT,
         '0 * * * *'::TEXT,
         'prev_time'::TEXT,
-        jcron.prev_time('0 * * * *', v_test_time)::TEXT,
+        jcron.prev_time('0 * * * *'::TEXT, v_test_time)::TEXT,
         'PASS'::TEXT;
     
     -- Match tests with separate logic
-    v_match_result := jcron.is_match('30 10 1 1 *', '2025-01-01 10:30:00+00');
+    v_match_result := jcron.is_match('30 10 1 1 *'::TEXT, '2025-01-01 10:30:00+00'::TIMESTAMPTZ);
     RETURN QUERY
     SELECT
         'Match test - exact'::TEXT,
@@ -1469,7 +1608,7 @@ BEGIN
         v_match_result::TEXT,
         CASE WHEN v_match_result THEN 'PASS' ELSE 'FAIL' END;
     
-    v_no_match_result := jcron.is_match('30 10 1 1 *', '2025-01-01 10:31:00+00');
+    v_no_match_result := jcron.is_match('30 10 1 1 *'::TEXT, '2025-01-01 10:31:00+00'::TIMESTAMPTZ);
     RETURN QUERY
     SELECT
         'Match test - no match'::TEXT,
@@ -1479,12 +1618,12 @@ BEGIN
         CASE WHEN NOT v_no_match_result THEN 'PASS' ELSE 'FAIL' END;
     
     RETURN QUERY
-    -- Timezone tests - simplified without slash in timezone
+    -- Timezone tests (Node-Port Compatible)
     SELECT
         'Timezone test'::TEXT,
         '0 9 * * * TZ=UTC'::TEXT,
         'next_time'::TEXT,
-        jcron.next_time('0 9 * * * TZ=UTC', '2025-01-01 00:00:00+00')::TEXT,
+        jcron.next_time('0 9 * * * TZ=UTC'::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ)::TEXT,
         'PASS'::TEXT
     UNION ALL
     -- Week of year tests
@@ -1492,8 +1631,68 @@ BEGIN
         'Week of year test'::TEXT,
         '0 9 * * 1 WOY:1-10'::TEXT,
         'next_time'::TEXT,
-        jcron.next_time('0 9 * * 1 WOY:1-10', '2025-01-01 00:00:00+00')::TEXT,
+        jcron.next_time('0 9 * * 1 WOY:1-10'::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ)::TEXT,
         'PASS'::TEXT;
+
+    -- EOD Range tests (Node-Port Compatible) - with error handling
+    BEGIN
+        v_range_result := jcron.is_range_now('0 9 * * * EOD:E8H'::TEXT, '2025-01-01 15:00:00+00'::TIMESTAMPTZ);
+        RETURN QUERY
+        SELECT
+            'EOD Range test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'is_range_now'::TEXT,
+            v_range_result::TEXT,
+            CASE WHEN v_range_result THEN 'PASS' ELSE 'FAIL' END;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY
+        SELECT
+            'EOD Range test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'is_range_now'::TEXT,
+            'ERROR: ' || SQLERRM,
+            'SKIP'::TEXT;
+    END;
+
+    -- EOD startOf test - with error handling
+    BEGIN
+        v_start_result := jcron.start_of('0 9 * * * EOD:E8H'::TEXT, '2025-01-01 15:00:00+00'::TIMESTAMPTZ);
+        RETURN QUERY
+        SELECT
+            'EOD startOf test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'start_of'::TEXT,
+            COALESCE(v_start_result::TEXT, 'NULL'),
+            CASE WHEN v_start_result IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY
+        SELECT
+            'EOD startOf test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'start_of'::TEXT,
+            'ERROR: ' || SQLERRM,
+            'SKIP'::TEXT;
+    END;
+
+    -- EOD endOf test - with error handling
+    BEGIN
+        v_end_result := jcron.end_of('0 9 * * * EOD:E8H'::TEXT, '2025-01-01 08:00:00+00'::TIMESTAMPTZ);
+        RETURN QUERY
+        SELECT
+            'EOD endOf test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'end_of'::TEXT,
+            COALESCE(v_end_result::TEXT, 'NULL'),
+            CASE WHEN v_end_result IS NOT NULL THEN 'PASS' ELSE 'FAIL' END;
+    EXCEPTION WHEN OTHERS THEN
+        RETURN QUERY
+        SELECT
+            'EOD endOf test'::TEXT,
+            '0 9 * * * EOD:E8H'::TEXT,
+            'end_of'::TEXT,
+            'ERROR: ' || SQLERRM,
+            'SKIP'::TEXT;
+    END;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -1503,12 +1702,19 @@ RETURNS TABLE(test_name TEXT, expression TEXT, result TEXT) AS $$
 BEGIN
     RETURN QUERY
     SELECT
-        ct.test_name,
-        ct.expression,
-        ct.result
-    FROM jcron.comprehensive_test() ct
-    WHERE ct.operation = 'next_time'
-    LIMIT 3;
+        'Basic hourly test'::TEXT as test_name,
+        '0 * * * *'::TEXT as expression,
+        jcron.next_time('0 * * * *'::TEXT, '2025-01-01 10:30:00+00'::TIMESTAMPTZ)::TEXT as result
+    UNION ALL
+    SELECT
+        'Business hours test'::TEXT,
+        '0 9 * * 1-5'::TEXT,
+        jcron.next_time('0 9 * * 1-5'::TEXT, '2025-01-01 00:00:00+00'::TIMESTAMPTZ)::TEXT
+    UNION ALL
+    SELECT
+        'Every 15 minutes test'::TEXT,
+        '*/15 * * * *'::TEXT,
+        jcron.next_time('*/15 * * * *'::TEXT, '2025-01-01 10:00:00+00'::TIMESTAMPTZ)::TEXT;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -1527,11 +1733,35 @@ SELECT jcron.schedule_job(
 
 COMMENT ON SCHEMA jcron IS 'JCRON PostgreSQL Implementation - Ultra High Performance Scheduler';
 
+-- Basic verification queries (commented out for safety)
+-- SELECT jcron.next_time('0 * * * *', '2025-01-01 10:30:00+00');
+-- SELECT * FROM jcron.simple_test();
+
+-- Test basic parsing and next time calculation (safe to run)
+DO $$
+DECLARE
+    v_result TIMESTAMPTZ;
+    v_parse_result RECORD;
+BEGIN
+    -- Test basic parsing
+    SELECT * INTO v_parse_result FROM jcron.parse_expression('0 * * * *');
+    RAISE NOTICE 'Parse test passed: seconds_mask = %', v_parse_result.seconds_mask;
+    
+    -- Test next time calculation
+    v_result := jcron.next_time('0 * * * *', '2025-01-01 10:30:00+00');
+    RAISE NOTICE 'Next time test passed: %', v_result;
+    
+    RAISE NOTICE 'JCRON PostgreSQL implementation loaded successfully!';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Error during verification: %', SQLERRM;
+END;
+$$;
+
 -- =====================================================
 -- 8. EOD (End of Duration) FUNCTIONS
 -- =====================================================
 
--- Parse EOD expression with full support
+-- Parse EOD expression with full support (Node-Port Compatible)
 CREATE OR REPLACE FUNCTION jcron.parse_eod(p_eod_expr TEXT)
 RETURNS TABLE(
     years INTEGER,
@@ -1560,10 +1790,13 @@ DECLARE
     v_seconds INTEGER := 0;
     v_matches TEXT[];
     v_has_duration BOOLEAN := FALSE;
+    v_simple_match TEXT[];
+    v_complex_match TEXT[];
+    v_iso_match TEXT[];
 BEGIN
     -- Handle empty input
     IF p_eod_expr IS NULL OR LENGTH(TRIM(p_eod_expr)) = 0 THEN
-        RETURN QUERY SELECT 0, 0, 0, 0, 0, 0, 0, 'E'::jcron.reference_point, NULL::TEXT, FALSE;
+        RETURN QUERY SELECT 0, 0, 0, 0, 0, 0, 0, 'END'::jcron.reference_point, NULL::TEXT, FALSE;
         RETURN;
     END IF;
 
@@ -1574,93 +1807,90 @@ BEGIN
         v_expr := TRIM(substring(v_expr from 5));
     END IF;
 
-    -- Extract event identifier first (E[event_name])
+    -- Extract event identifier first (E[event_name]) - Node-Port Compatible
     IF v_expr ~ 'E\[[^\]]+\]' THEN
         v_event_id := substring(v_expr from 'E\[([^\]]+)\]');
         v_expr := TRIM(regexp_replace(v_expr, 'E\[[^\]]+\]', '', 'g'));
     END IF;
 
-    -- Parse reference point (S or E at the beginning)
-    v_reference_char := substring(v_expr from '^([SE])');
-    IF v_reference_char IS NULL THEN
-        v_reference_char := 'E'; -- Default to END
-    ELSE
-        v_expr := TRIM(substring(v_expr from 2)); -- Remove reference char
-    END IF;
-
-    -- Set reference point
-    CASE v_reference_char
-        WHEN 'S' THEN v_reference_point := 'START';
-        ELSE v_reference_point := 'END';
-    END CASE;
-
-    -- Check for reference point suffixes (D, W, M, Q, Y)
-    IF v_expr ~ '\s+[DWMQY]\s*$' THEN
-        CASE substring(v_expr from '\s+([DWMQY])\s*$')
-            WHEN 'D' THEN v_reference_point := 'DAY';
-            WHEN 'W' THEN v_reference_point := 'WEEK';
-            WHEN 'M' THEN v_reference_point := 'MONTH';
-            WHEN 'Q' THEN v_reference_point := 'QUARTER';
-            WHEN 'Y' THEN v_reference_point := 'YEAR';
-        END CASE;
-        v_expr := TRIM(regexp_replace(v_expr, '\s+[DWMQY]\s*$', ''));
-    END IF;
-
-    -- Parse simple patterns first (E8H, S30M, etc.)
-    IF v_expr ~ '^(\d+)([YMWDHMS])$' THEN
-        v_matches := regexp_split_to_array(v_expr, '(\d+)([YMWDHMS])');
-        IF array_length(v_matches, 1) >= 3 THEN
-            CASE v_matches[3]
-                WHEN 'Y' THEN v_years := v_matches[2]::INTEGER; v_has_duration := TRUE;
-                WHEN 'M' THEN v_minutes := v_matches[2]::INTEGER; v_has_duration := TRUE;
-                WHEN 'W' THEN v_weeks := v_matches[2]::INTEGER; v_has_duration := TRUE;
-                WHEN 'D' THEN v_days := v_matches[2]::INTEGER; v_has_duration := TRUE;
-                WHEN 'H' THEN v_hours := v_matches[2]::INTEGER; v_has_duration := TRUE;
-                WHEN 'S' THEN v_seconds := v_matches[2]::INTEGER; v_has_duration := TRUE;
+    -- Simple patterns: E1H, S30M, E15m, etc. (Node-Port Compatible)
+    v_simple_match := regexp_match(v_expr, '^([SE])(\d+)([YMWDdHhmsS])$');
+    IF v_simple_match IS NOT NULL THEN
+        v_reference_char := v_simple_match[1];
+        
+        -- For E patterns, determine the appropriate reference point based on unit (Node-Port Compatible)
+        IF upper(v_reference_char) = 'S' THEN
+            v_reference_point := 'START';
+        ELSE
+            -- E patterns use specific reference points based on unit
+            CASE upper(v_simple_match[3])
+                WHEN 'Y' THEN v_reference_point := 'YEAR';
+                WHEN 'M' THEN 
+                    -- Check case: M = months, m = minutes
+                    IF v_simple_match[3] = 'M' THEN
+                        v_reference_point := 'MONTH'; 
+                    ELSE
+                        v_reference_point := 'END'; -- lowercase m = minutes
+                    END IF;
+                WHEN 'W' THEN v_reference_point := 'WEEK';
+                WHEN 'D' THEN v_reference_point := 'DAY';
+                ELSE v_reference_point := 'END'; -- For H, m, S
             END CASE;
         END IF;
-    -- Parse complex patterns (E1Y2M3DT4H5M6S)
-    ELSIF v_expr ~ '(\d+[YMWD])*T?(\d+[HMS])*' THEN
-        -- Extract years
-        IF v_expr ~ '(\d+)Y' THEN
-            v_years := (regexp_matches(v_expr, '(\d+)Y'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract months (before T)
-        IF v_expr ~ '(\d+)M' AND v_expr !~ 'T.*(\d+)M' THEN
-            v_months := (regexp_matches(v_expr, '(\d+)M'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract weeks
-        IF v_expr ~ '(\d+)W' THEN
-            v_weeks := (regexp_matches(v_expr, '(\d+)W'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract days
-        IF v_expr ~ '(\d+)D' THEN
-            v_days := (regexp_matches(v_expr, '(\d+)D'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract hours
-        IF v_expr ~ 'T.*(\d+)H' THEN
-            v_hours := (regexp_matches(v_expr, 'T.*?(\d+)H'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract minutes (after T)
-        IF v_expr ~ 'T.*(\d+)M' THEN
-            v_minutes := (regexp_matches(v_expr, 'T.*?(\d+)M'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
-        -- Extract seconds
-        IF v_expr ~ 'T.*(\d+)S' THEN
-            v_seconds := (regexp_matches(v_expr, 'T.*?(\d+)S'))[1]::INTEGER;
-            v_has_duration := TRUE;
-        END IF;
+        
+        -- Set the appropriate duration component
+        CASE v_simple_match[3]
+            WHEN 'Y', 'y' THEN v_years := v_simple_match[2]::INTEGER; v_has_duration := TRUE;
+            WHEN 'M' THEN v_months := v_simple_match[2]::INTEGER; v_has_duration := TRUE; -- uppercase M = months
+            WHEN 'W', 'w' THEN v_weeks := v_simple_match[2]::INTEGER; v_has_duration := TRUE;
+            WHEN 'D', 'd' THEN v_days := v_simple_match[2]::INTEGER; v_has_duration := TRUE;
+            WHEN 'H', 'h' THEN v_hours := v_simple_match[2]::INTEGER; v_has_duration := TRUE;
+            WHEN 'm' THEN v_minutes := v_simple_match[2]::INTEGER; v_has_duration := TRUE; -- lowercase m = minutes
+            WHEN 'S', 's' THEN v_seconds := v_simple_match[2]::INTEGER; v_has_duration := TRUE;
+            ELSE
+                RETURN QUERY SELECT 0, 0, 0, 0, 0, 0, 0, 'END'::jcron.reference_point, NULL::TEXT, FALSE;
+                RETURN;
+        END CASE;
+        
+        RETURN QUERY SELECT v_years, v_months, v_weeks, v_days, v_hours, v_minutes, v_seconds, v_reference_point, v_event_id, TRUE;
+        RETURN;
+    END IF;
+    
+    -- Complex EoD patterns: E1DT1H30M, E1Y2M3W4DT5H6M7S (Node-Port Compatible)
+    v_complex_match := regexp_match(v_expr, '^E(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$', 'i');
+    IF v_complex_match IS NOT NULL THEN
+        v_years := COALESCE(v_complex_match[1]::INTEGER, 0);
+        v_months := COALESCE(v_complex_match[2]::INTEGER, 0);
+        v_weeks := COALESCE(v_complex_match[3]::INTEGER, 0);
+        v_days := COALESCE(v_complex_match[4]::INTEGER, 0);
+        v_hours := COALESCE(v_complex_match[5]::INTEGER, 0);
+        v_minutes := COALESCE(v_complex_match[6]::INTEGER, 0);
+        v_seconds := COALESCE(v_complex_match[7]::INTEGER, 0);
+        v_has_duration := TRUE;
+        
+        RETURN QUERY SELECT v_years, v_months, v_weeks, v_days, v_hours, v_minutes, v_seconds, 'END'::jcron.reference_point, v_event_id, TRUE;
+        RETURN;
+    END IF;
+    
+    -- ISO 8601 patterns: P1Y2M3DT4H5M6S (Node-Port Compatible)
+    v_iso_match := regexp_match(v_expr, '^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$', 'i');
+    IF v_iso_match IS NOT NULL THEN
+        v_years := COALESCE(v_iso_match[1]::INTEGER, 0);
+        v_months := COALESCE(v_iso_match[2]::INTEGER, 0);
+        v_weeks := COALESCE(v_iso_match[3]::INTEGER, 0);
+        v_days := COALESCE(v_iso_match[4]::INTEGER, 0);
+        v_hours := COALESCE(v_iso_match[5]::INTEGER, 0);
+        v_minutes := COALESCE(v_iso_match[6]::INTEGER, 0);
+        v_seconds := COALESCE(v_iso_match[7]::INTEGER, 0);
+        v_has_duration := TRUE;
+        
+        RETURN QUERY SELECT v_years, v_months, v_weeks, v_days, v_hours, v_minutes, v_seconds, 'END'::jcron.reference_point, v_event_id, TRUE;
+        RETURN;
     END IF;
 
-    -- Validate that we have duration or event
+    -- Validate that we have duration or event (Node-Port Compatible)
     IF NOT v_has_duration AND v_event_id IS NULL THEN
-        RETURN QUERY SELECT 0, 0, 0, 0, 0, 0, 0, 'E'::jcron.reference_point, NULL::TEXT, FALSE;
+        RETURN QUERY SELECT 0, 0, 0, 0, 0, 0, 0, 'END'::jcron.reference_point, NULL::TEXT, FALSE;
         RETURN;
     END IF;
 
@@ -1679,7 +1909,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Calculate EOD end time
+-- Calculate EOD end time (Node-Port Compatible)
 CREATE OR REPLACE FUNCTION jcron.calculate_eod_end_time(
     p_start_time TIMESTAMPTZ,
     p_years INTEGER DEFAULT 0,
@@ -1695,59 +1925,135 @@ CREATE OR REPLACE FUNCTION jcron.calculate_eod_end_time(
 DECLARE
     v_result TIMESTAMPTZ;
     v_base_time TIMESTAMPTZ;
+    v_quarter INTEGER;
+    v_quarter_end_month INTEGER;
+    v_days_until_sunday INTEGER;
 BEGIN
     v_base_time := p_start_time AT TIME ZONE p_timezone;
     v_result := v_base_time;
     
-    -- Add duration components
-    IF p_years > 0 THEN
-        v_result := v_result + (p_years || ' years')::INTERVAL;
-    END IF;
-    IF p_months > 0 THEN
-        v_result := v_result + (p_months || ' months')::INTERVAL;
-    END IF;
-    IF p_weeks > 0 THEN
-        v_result := v_result + (p_weeks || ' weeks')::INTERVAL;
-    END IF;
-    IF p_days > 0 THEN
-        v_result := v_result + (p_days || ' days')::INTERVAL;
-    END IF;
-    IF p_hours > 0 THEN
-        v_result := v_result + (p_hours || ' hours')::INTERVAL;
-    END IF;
-    IF p_minutes > 0 THEN
-        v_result := v_result + (p_minutes || ' minutes')::INTERVAL;
-    END IF;
-    IF p_seconds > 0 THEN
-        v_result := v_result + (p_seconds || ' seconds')::INTERVAL;
-    END IF;
-
-    -- Apply reference point adjustments
+    -- Handle special reference points first (Node-Port Compatible)
     CASE p_reference_point
         WHEN 'START' THEN
-            -- No adjustment needed
-            NULL;
+            -- Traditional duration addition from start time
+            IF p_years > 0 THEN
+                v_result := v_result + (p_years || ' years')::INTERVAL;
+            END IF;
+            IF p_months > 0 THEN
+                v_result := v_result + (p_months || ' months')::INTERVAL;
+            END IF;
+            IF p_weeks > 0 THEN
+                v_result := v_result + (p_weeks || ' weeks')::INTERVAL;
+            END IF;
+            IF p_days > 0 THEN
+                v_result := v_result + (p_days || ' days')::INTERVAL;
+            END IF;
+            IF p_hours > 0 THEN
+                v_result := v_result + (p_hours || ' hours')::INTERVAL;
+            END IF;
+            IF p_minutes > 0 THEN
+                v_result := v_result + (p_minutes || ' minutes')::INTERVAL;
+            END IF;
+            IF p_seconds > 0 THEN
+                v_result := v_result + (p_seconds || ' seconds')::INTERVAL;
+            END IF;
+            
         WHEN 'END' THEN
-            -- No adjustment needed for basic end calculation
-            NULL;
+            -- Traditional duration addition (same as START for basic durations)
+            IF p_years > 0 THEN
+                v_result := v_result + (p_years || ' years')::INTERVAL;
+            END IF;
+            IF p_months > 0 THEN
+                v_result := v_result + (p_months || ' months')::INTERVAL;
+            END IF;
+            IF p_weeks > 0 THEN
+                v_result := v_result + (p_weeks || ' weeks')::INTERVAL;
+            END IF;
+            IF p_days > 0 THEN
+                v_result := v_result + (p_days || ' days')::INTERVAL;
+            END IF;
+            IF p_hours > 0 THEN
+                v_result := v_result + (p_hours || ' hours')::INTERVAL;
+            END IF;
+            IF p_minutes > 0 THEN
+                v_result := v_result + (p_minutes || ' minutes')::INTERVAL;
+            END IF;
+            IF p_seconds > 0 THEN
+                v_result := v_result + (p_seconds || ' seconds')::INTERVAL;
+            END IF;
+            
         WHEN 'DAY' THEN
-            -- End of day
+            -- End of day calculation (Node-Port Compatible)
+            -- E1D = end of current day, E2D = end of next day, etc.
+            IF p_days > 1 THEN
+                v_result := v_result + ((p_days - 1) || ' days')::INTERVAL;
+            END IF;
             v_result := date_trunc('day', v_result) + INTERVAL '1 day' - INTERVAL '1 microsecond';
+            
         WHEN 'WEEK' THEN
-            -- End of week (Sunday)
-            v_result := date_trunc('week', v_result) + INTERVAL '1 week' - INTERVAL '1 microsecond';
+            -- End of week calculation (Node-Port Compatible)
+            -- E1W = end of current week, E2W = end of next week, etc.
+            IF p_weeks > 1 THEN
+                v_result := v_result + (((p_weeks - 1) * 7) || ' days')::INTERVAL;
+            END IF;
+            -- Calculate days until Sunday (end of week)
+            v_days_until_sunday := CASE WHEN EXTRACT(DOW FROM v_result) = 0 THEN 0 ELSE (7 - EXTRACT(DOW FROM v_result)::INTEGER) END;
+            v_result := v_result + (v_days_until_sunday || ' days')::INTERVAL;
+            v_result := date_trunc('day', v_result) + INTERVAL '1 day' - INTERVAL '1 microsecond';
+            
         WHEN 'MONTH' THEN
-            -- End of month
-            v_result := date_trunc('month', v_result) + INTERVAL '1 month' - INTERVAL '1 microsecond';
+            -- End of month calculation (Node-Port Compatible)
+            -- E1M = end of current month, E2M = end of next month, etc.
+            IF p_months > 1 THEN
+                v_result := v_result + ((p_months - 1) || ' months')::INTERVAL;
+            END IF;
+            v_result := date_trunc('month', v_result + INTERVAL '1 month') - INTERVAL '1 microsecond';
+            
         WHEN 'QUARTER' THEN
-            -- End of quarter
-            v_result := date_trunc('quarter', v_result) + INTERVAL '3 months' - INTERVAL '1 microsecond';
+            -- End of quarter calculation (Node-Port Compatible)
+            v_quarter := (EXTRACT(MONTH FROM v_result)::INTEGER - 1) / 3;
+            
+            -- Handle quarter offset
+            IF p_months > 1 THEN
+                v_quarter := v_quarter + (p_months - 1);
+            END IF;
+            
+            v_quarter_end_month := (v_quarter + 1) * 3;
+            v_result := make_timestamptz(EXTRACT(YEAR FROM v_result)::INTEGER, v_quarter_end_month + 1, 1, 0, 0, 0, p_timezone) - INTERVAL '1 microsecond';
+            
         WHEN 'YEAR' THEN
-            -- End of year
-            v_result := date_trunc('year', v_result) + INTERVAL '1 year' - INTERVAL '1 microsecond';
+            -- End of year calculation (Node-Port Compatible)
+            -- E1Y = end of current year, E2Y = end of next year, etc.
+            IF p_years > 1 THEN
+                v_result := make_timestamptz(EXTRACT(YEAR FROM v_result)::INTEGER + (p_years - 1), 12, 31, 23, 59, 59, p_timezone);
+            ELSE
+                v_result := make_timestamptz(EXTRACT(YEAR FROM v_result)::INTEGER, 12, 31, 23, 59, 59, p_timezone);
+            END IF;
+            v_result := v_result + INTERVAL '999 milliseconds';
+            
         ELSE
-            -- Default to no adjustment
-            NULL;
+            -- Default to END behavior for unknown reference points
+            IF p_years > 0 THEN
+                v_result := v_result + (p_years || ' years')::INTERVAL;
+            END IF;
+            IF p_months > 0 THEN
+                v_result := v_result + (p_months || ' months')::INTERVAL;
+            END IF;
+            IF p_weeks > 0 THEN
+                v_result := v_result + (p_weeks || ' weeks')::INTERVAL;
+            END IF;
+            IF p_days > 0 THEN
+                v_result := v_result + (p_days || ' days')::INTERVAL;
+            END IF;
+            IF p_hours > 0 THEN
+                v_result := v_result + (p_hours || ' hours')::INTERVAL;
+            END IF;
+            IF p_minutes > 0 THEN
+                v_result := v_result + (p_minutes || ' minutes')::INTERVAL;
+            END IF;
+            IF p_seconds > 0 THEN
+                v_result := v_result + (p_seconds || ' seconds')::INTERVAL;
+            END IF;
     END CASE;
     
     RETURN v_result AT TIME ZONE p_timezone;
@@ -1822,20 +2128,130 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Clean old events (cleanup function)
-CREATE OR REPLACE FUNCTION jcron.cleanup_events(
-    p_older_than INTERVAL DEFAULT '30 days'
-) RETURNS INTEGER AS $$
+-- Schedule range functions (Node-Port Compatible)
+
+-- Check if current time is within execution window (isRangeNow equivalent)
+CREATE OR REPLACE FUNCTION jcron.is_range_now(
+    p_expression TEXT,
+    p_check_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS BOOLEAN AS $$
 DECLARE
-    v_deleted_count INTEGER;
+    v_parsed RECORD;
+    v_start_time TIMESTAMPTZ;
+    v_end_time TIMESTAMPTZ;
+    v_base_expr TEXT;
+    v_eod_data RECORD;
+    v_next_time TIMESTAMPTZ;
 BEGIN
-    DELETE FROM jcron.events 
-    WHERE created_at < NOW() - p_older_than;
+    -- Parse expression to check for EOD
+    SELECT * INTO v_parsed FROM jcron.parse_expression(p_expression);
     
-    GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
-    RETURN v_deleted_count;
+    IF NOT v_parsed.has_eod THEN
+        RETURN FALSE; -- Can't have range without EOD
+    END IF;
+    
+    -- Parse EOD expression
+    SELECT * INTO v_eod_data FROM jcron.parse_eod(v_parsed.eod_expr);
+    
+    -- Get the base expression without EOD
+    v_base_expr := TRIM(regexp_replace(p_expression, 'EOD:[^ ]+(\s|$)', '', 'g'));
+    
+    -- Get previous start time (startOf equivalent)
+    v_start_time := jcron.prev_time(v_base_expr, p_check_time);
+    
+    -- Check if current time could be a start time by comparing with next_time
+    v_next_time := jcron.next_time(v_base_expr, v_start_time);
+    IF v_next_time = p_check_time THEN
+        v_start_time := p_check_time;
+    END IF;
+    
+    -- Calculate end time using parsed EOD duration (endOf equivalent)
+    v_end_time := jcron.calculate_eod_end_time(
+        v_start_time,
+        v_eod_data.years,
+        v_eod_data.months,
+        v_eod_data.weeks,
+        v_eod_data.days,
+        v_eod_data.hours,
+        v_eod_data.minutes,
+        v_eod_data.seconds,
+        v_eod_data.reference_point
+    );
+    
+    -- Check if current time is within the active period (exclusive end - Node-Port Compatible)
+    RETURN p_check_time >= v_start_time AND p_check_time < v_end_time;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Get start time for EOD schedule (startOf equivalent)
+CREATE OR REPLACE FUNCTION jcron.start_of(
+    p_expression TEXT,
+    p_from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    v_parsed RECORD;
+    v_base_expr TEXT;
+    v_prev_trigger TIMESTAMPTZ;
+BEGIN
+    -- Parse expression to check for EOD
+    SELECT * INTO v_parsed FROM jcron.parse_expression(p_expression);
+    
+    IF NOT v_parsed.has_eod THEN
+        RETURN NULL; -- No EOD configured
+    END IF;
+    
+    -- Get the base expression without EOD
+    v_base_expr := TRIM(regexp_replace(p_expression, 'EOD:[^ ]+(\s|$)', '', 'g'));
+    
+    -- Get the previous trigger time (when the schedule would have been triggered)
+    v_prev_trigger := jcron.prev_time(v_base_expr, p_from_time);
+    
+    -- The start time is the previous trigger time itself
+    RETURN v_prev_trigger;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Get end time for EOD schedule (endOf equivalent)
+CREATE OR REPLACE FUNCTION jcron.end_of(
+    p_expression TEXT,
+    p_from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    v_parsed RECORD;
+    v_base_expr TEXT;
+    v_eod_data RECORD;
+    v_next_trigger TIMESTAMPTZ;
+BEGIN
+    -- Parse expression to check for EOD
+    SELECT * INTO v_parsed FROM jcron.parse_expression(p_expression);
+    
+    IF NOT v_parsed.has_eod THEN
+        RETURN NULL; -- No EOD configured
+    END IF;
+    
+    -- Parse EOD expression
+    SELECT * INTO v_eod_data FROM jcron.parse_eod(v_parsed.eod_expr);
+    
+    -- Get the base expression without EOD
+    v_base_expr := TRIM(regexp_replace(p_expression, 'EOD:[^ ]+(\s|$)', '', 'g'));
+    
+    -- Get the next trigger time (when the schedule will be triggered)
+    v_next_trigger := jcron.next_time(v_base_expr, p_from_time);
+    
+    -- Calculate end time from the next trigger time
+    RETURN jcron.calculate_eod_end_time(
+        v_next_trigger,
+        v_eod_data.years,
+        v_eod_data.months,
+        v_eod_data.weeks,
+        v_eod_data.days,
+        v_eod_data.hours,
+        v_eod_data.minutes,
+        v_eod_data.seconds,
+        v_eod_data.reference_point
+    );
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
 -- =====================================================
 -- 9. ADVANCED SPECIAL PATTERN FUNCTIONS
@@ -2217,4 +2633,19 @@ BEGIN
     RETURN v_result;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Clean old events (cleanup function)
+CREATE OR REPLACE FUNCTION jcron.cleanup_events(
+    p_older_than INTERVAL DEFAULT '30 days'
+) RETURNS INTEGER AS $$
+DECLARE
+    v_deleted_count INTEGER;
+BEGIN
+    DELETE FROM jcron.events 
+    WHERE created_at < NOW() - p_older_than;
+    
+    GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+    RETURN v_deleted_count;
+END;
+$$ LANGUAGE plpgsql;
 

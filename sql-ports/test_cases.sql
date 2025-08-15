@@ -47,19 +47,19 @@ INSERT INTO jcron_test.test_cases
 (category, test_name, description, second, minute, hour, day_of_month, month, day_of_week, year, timezone, from_time, expected_next_time, test_type)
 VALUES 
 -- Basic next time tests
-('core', 'basit_sonraki_dakika', 'Basit Sonraki Dakika', '0', '*', '*', '*', '*', '*', '*', 'UTC', 
+('core', 'basit_sonraki_dakika_next', 'Basit Sonraki Dakika', '0', '*', '*', '*', '*', '*', '*', 'UTC', 
  '2025-10-26T10:00:30Z', '2025-10-26T10:01:00Z', 'next'),
 
-('core', 'sonraki_saat_basi', 'Sonraki Saatin Başı', '0', '0', '*', '*', '*', '*', '*', 'UTC', 
+('core', 'sonraki_saat_basi_next', 'Sonraki Saatin Başı', '0', '0', '*', '*', '*', '*', '*', 'UTC', 
  '2025-10-26T10:59:00Z', '2025-10-26T11:00:00Z', 'next'),
 
-('core', 'sonraki_gun_basi', 'Sonraki Günün Başı', '0', '0', '0', '*', '*', '*', '*', 'UTC', 
+('core', 'sonraki_gun_basi_next', 'Sonraki Günün Başı', '0', '0', '0', '*', '*', '*', '*', 'UTC', 
  '2025-10-26T23:59:00Z', '2025-10-27T00:00:00Z', 'next'),
 
-('core', 'sonraki_ay_basi', 'Sonraki Ayın Başı', '0', '0', '0', '1', '*', '*', '*', 'UTC', 
+('core', 'sonraki_ay_basi_next', 'Sonraki Ayın Başı', '0', '0', '0', '1', '*', '*', '*', 'UTC', 
  '2025-02-15T12:00:00Z', '2025-03-01T00:00:00Z', 'next'),
 
-('core', 'sonraki_yil_basi', 'Sonraki Yılın Başı', '0', '0', '0', '1', '1', '*', '*', 'UTC', 
+('core', 'sonraki_yil_basi_next', 'Sonraki Yılın Başı', '0', '0', '0', '1', '1', '*', '*', 'UTC', 
  '2025-06-15T12:00:00Z', '2026-01-01T00:00:00Z', 'next'),
 
 -- Range, step and list tests
@@ -147,19 +147,19 @@ INSERT INTO jcron_test.test_cases
 (category, test_name, description, second, minute, hour, day_of_month, month, day_of_week, year, timezone, from_time, expected_prev_time, test_type)
 VALUES 
 -- Basic prev time tests
-('core', 'basit_onceki_dakika', 'Basit Önceki Dakika', '0', '*', '*', '*', '*', '*', '*', 'UTC', 
+('core', 'basit_onceki_dakika_prev', 'Basit Önceki Dakika', '0', '*', '*', '*', '*', '*', '*', 'UTC', 
  '2025-10-26T10:00:30Z', '2025-10-26T10:00:00Z', 'prev'),
 
-('core', 'onceki_saat_basi', 'Önceki Saatin Başı', '0', '0', '*', '*', '*', '*', '*', 'UTC', 
+('core', 'onceki_saat_basi_prev', 'Önceki Saatin Başı', '0', '0', '*', '*', '*', '*', '*', 'UTC', 
  '2025-10-26T11:00:00Z', '2025-10-26T10:00:00Z', 'prev'),
 
-('core', 'onceki_gun_basi', 'Önceki Günün Başı', '0', '0', '0', '*', '*', '*', '*', 'UTC', 
+('core', 'onceki_gun_basi_prev', 'Önceki Günün Başı', '0', '0', '0', '*', '*', '*', '*', 'UTC', 
  '2025-10-27T00:00:00Z', '2025-10-26T00:00:00Z', 'prev'),
 
-('core', 'onceki_ay_basi', 'Önceki Ayın Başı', '0', '0', '0', '1', '*', '*', '*', 'UTC', 
+('core', 'onceki_ay_basi_prev', 'Önceki Ayın Başı', '0', '0', '0', '1', '*', '*', '*', 'UTC', 
  '2025-03-15T12:00:00Z', '2025-03-01T00:00:00Z', 'prev'),
 
-('core', 'onceki_yil_basi', 'Önceki Yılın Başı', '0', '0', '0', '1', '1', '*', '*', 'UTC', 
+('core', 'onceki_yil_basi_prev', 'Önceki Yılın Başı', '0', '0', '0', '1', '1', '*', '*', 'UTC', 
  '2026-06-15T12:00:00Z', '2026-01-01T00:00:00Z', 'prev'),
 
 -- Range and list tests for prev
