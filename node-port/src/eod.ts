@@ -128,7 +128,10 @@ export class EndOfDuration {
         if (this.weeks > 1) {
           result.setDate(result.getDate() + ((this.weeks - 1) * 7));
         }
-        // Set to end of the week (Sunday 23:59:59)
+        // Set to end of the week (Sunday 23:59:59) - ISO 8601 standard
+        // Monday = 1, Sunday = 0, so we need (6 - getDay()) to reach Sunday
+        // For Monday (1): 6 - 1 = 5 days until Sunday
+        // For Sunday (0): 6 - 0 = 6 days until next Sunday (but we want 0)
         const daysUntilSunday = result.getDay() === 0 ? 0 : (7 - result.getDay());
         result.setDate(result.getDate() + daysUntilSunday);
         result.setHours(23, 59, 59, 999);
@@ -210,21 +213,9 @@ export function parseEoD(eodStr: string): EndOfDuration {
     if (startEnd.toUpperCase() === 'S') {
       referencePoint = ReferencePoint.START;
     } else {
-      // E patterns use specific reference points based on unit
-      switch (unit.toUpperCase()) {
-        case 'Y': referencePoint = ReferencePoint.YEAR; break;
-        case 'M': 
-          // Need to check case: M = months, m = minutes
-          if (unit === 'M') {
-            referencePoint = ReferencePoint.MONTH; 
-          } else {
-            referencePoint = ReferencePoint.END; // lowercase m = minutes
-          }
-          break;
-        case 'W': referencePoint = ReferencePoint.WEEK; break;
-        case 'D': referencePoint = ReferencePoint.DAY; break;
-        default: referencePoint = ReferencePoint.END; break; // For H, m, S
-      }
+      // E patterns use END reference point for simple duration additions
+      // This ensures E1W adds 1 week duration instead of calculating week endpoint
+      referencePoint = ReferencePoint.END;
     }
     
     switch (unit) {
