@@ -249,6 +249,41 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
+-- Timezone-aware advance hour function
+CREATE OR REPLACE FUNCTION jcron.advance_hour_tz(p_base_time TIMESTAMPTZ, p_hour_mask INTEGER, p_timezone TEXT)
+RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    v_local_time TIMESTAMP;
+    v_current_hour INTEGER;
+    v_i INTEGER;
+    v_result TIMESTAMPTZ;
+BEGIN
+    v_local_time := p_base_time AT TIME ZONE p_timezone;
+    v_current_hour := EXTRACT(HOUR FROM v_local_time)::INTEGER;
+
+    -- Find next valid hour in current day (local time)
+    FOR v_i IN (v_current_hour + 1)..23 LOOP
+        IF (p_hour_mask & (1 << v_i)) != 0 THEN
+            -- Build result in local timezone then convert back to UTC
+            v_result := (date_trunc('hour', v_local_time) + (v_i - v_current_hour) * INTERVAL '1 hour') AT TIME ZONE p_timezone;
+            RETURN v_result;
+        END IF;
+    END LOOP;
+
+    -- No valid hour found in current day, move to next day and find first valid hour
+    FOR v_i IN 0..23 LOOP
+        IF (p_hour_mask & (1 << v_i)) != 0 THEN
+            -- Build result in local timezone then convert back to UTC
+            v_result := (date_trunc('day', v_local_time + INTERVAL '1 day') + v_i * INTERVAL '1 hour') AT TIME ZONE p_timezone;
+            RETURN v_result;
+        END IF;
+    END LOOP;
+
+    -- This should never happen if mask is valid (at least one bit set)
+    RAISE EXCEPTION 'Invalid hour mask (no valid hours): %', p_hour_mask;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 CREATE OR REPLACE FUNCTION jcron.advance_minute(p_base_time TIMESTAMPTZ, p_minute_mask BIGINT)
 RETURNS TIMESTAMPTZ AS $$
 DECLARE
@@ -868,6 +903,11 @@ BEGIN
             RAISE EXCEPTION 'Invalid cron expression format: %', v_working_expr;
     END CASE;
 
+    -- WOY default weekday fix: If WOY is specified but weekday is *, default to Monday (1)
+    IF v_woy_part != '' AND v_weekday_expr = '*' THEN
+        v_weekday_expr := '1';  -- Monday as default for week-of-year schedules
+    END IF;
+
     -- Bitmask expansion
     v_sec_mask := jcron.expand_part(v_sec_expr, 0, 59);
     v_min_mask := jcron.expand_part(v_min_expr, 0, 59);
@@ -996,8 +1036,8 @@ BEGIN
     END IF;
 
     v_target_tz := COALESCE(v_timezone, 'UTC');
-    v_local_time := p_from_time AT TIME ZONE v_target_tz;
-    v_candidate := date_trunc('second', v_local_time) + INTERVAL '1 second';
+    -- FIXED: Keep candidate in UTC for consistent week calculation, convert only final result
+    v_candidate := date_trunc('second', p_from_time) + INTERVAL '1 second';
 
     WHILE v_iteration < v_max_iterations LOOP
         v_iteration := v_iteration + 1;
@@ -1018,9 +1058,42 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Week of year check (skip if default mask - Node-Port Compatible)
+        -- Week of year check (skip if default mask - Node-Port Compatible) 
+        -- FIXED: Support backward week search for start-of-week scenarios
         IF v_weeks_mask != ((1::BIGINT << 54) - 2) AND (v_weeks_mask & (1::BIGINT << EXTRACT(WEEK FROM v_candidate)::INTEGER)) = 0 THEN
-            v_candidate := v_candidate + INTERVAL '1 day';
+            DECLARE
+                v_current_week INTEGER := EXTRACT(WEEK FROM v_candidate)::INTEGER;
+                v_target_week_found INTEGER := NULL;
+                v_i INTEGER;
+            BEGIN
+                -- First, check if we need to go back to a previous week
+                FOR v_i IN 1..53 LOOP
+                    IF (v_weeks_mask & (1::BIGINT << v_i)) != 0 THEN
+                        IF v_i < v_current_week AND v_target_week_found IS NULL THEN
+                            -- Found an earlier week - check if we're close to start of current week
+                            IF EXTRACT(DOW FROM v_candidate) <= 1 THEN -- Sunday or Monday
+                                v_target_week_found := v_i;
+                                EXIT;
+                            END IF;
+                        ELSIF v_i >= v_current_week THEN
+                            v_target_week_found := v_i;
+                            EXIT;
+                        END IF;
+                    END IF;
+                END LOOP;
+                
+                IF v_target_week_found IS NOT NULL THEN
+                    IF v_target_week_found < v_current_week THEN
+                        -- Go back to target week (subtract days to reach target week)
+                        v_candidate := v_candidate - (v_current_week - v_target_week_found) * INTERVAL '7 days';
+                    ELSE
+                        -- Go forward (original logic)
+                        v_candidate := v_candidate + INTERVAL '1 day';
+                    END IF;
+                ELSE
+                    RAISE EXCEPTION 'Invalid week mask: %', v_weeks_mask;
+                END IF;
+            END;
             CONTINUE;
         END IF;
 
@@ -1030,25 +1103,25 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Hour check (Node-Port Compatible bitmask logic)
-        IF (v_hours_mask & (1 << EXTRACT(HOUR FROM v_candidate)::INTEGER)) = 0 THEN
-            v_candidate := jcron.advance_hour(v_candidate, v_hours_mask);
+        -- Hour check (Node-Port Compatible bitmask logic) - FIXED: Use timezone for time components
+        IF (v_hours_mask & (1 << EXTRACT(HOUR FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
+            v_candidate := jcron.advance_hour_tz(v_candidate, v_hours_mask, v_target_tz);
             CONTINUE;
         END IF;
 
-        -- Minute check (Node-Port Compatible bitmask logic)
-        IF (v_minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM v_candidate)::INTEGER)) = 0 THEN
-            v_candidate := jcron.advance_minute(v_candidate, v_minutes_mask);
+        -- Minute check (Node-Port Compatible bitmask logic) - FIXED: Use timezone-aware advance  
+        IF (v_minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
+            v_candidate := jcron.advance_minute_tz(v_candidate, v_minutes_mask, v_target_tz);
             CONTINUE;
         END IF;
 
-        -- Second check (Node-Port Compatible bitmask logic)
-        IF (v_seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM v_candidate)::INTEGER)) = 0 THEN
-            v_candidate := jcron.advance_second(v_candidate, v_seconds_mask);
+        -- Second check (Node-Port Compatible bitmask logic) - FIXED: Use timezone-aware advance
+        IF (v_seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
+            v_candidate := jcron.advance_second_tz(v_candidate, v_seconds_mask, v_target_tz);
             CONTINUE;
         END IF;
 
-        RETURN v_candidate AT TIME ZONE v_target_tz;
+        RETURN v_candidate;
     END LOOP;
 
     RAISE EXCEPTION 'Could not find next execution time within % iterations for expression: %', v_max_iterations, p_expression;
@@ -1184,8 +1257,8 @@ BEGIN
     END IF;
 
     v_target_tz := COALESCE(v_timezone, 'UTC');
-    v_local_time := p_from_time AT TIME ZONE v_target_tz;
-    v_candidate := date_trunc('second', v_local_time) - INTERVAL '1 second';
+    -- FIXED: Keep candidate in UTC for consistent week calculation, convert only final result
+    v_candidate := date_trunc('second', p_from_time) - INTERVAL '1 second';
 
     WHILE v_iteration < v_max_iterations LOOP
         v_iteration := v_iteration + 1;
@@ -1215,20 +1288,20 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Hour check
-        IF (v_hours_mask & (1 << EXTRACT(HOUR FROM v_candidate)::INTEGER)) = 0 THEN
+        -- Hour check - FIXED: Use timezone for time components
+        IF (v_hours_mask & (1 << EXTRACT(HOUR FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
             v_candidate := date_trunc('hour', v_candidate) - INTERVAL '1 second';
             CONTINUE;
         END IF;
 
-        -- Minute check
-        IF (v_minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM v_candidate)::INTEGER)) = 0 THEN
+        -- Minute check - FIXED: Use timezone for time components
+        IF (v_minutes_mask & (1::BIGINT << EXTRACT(MINUTE FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
             v_candidate := date_trunc('minute', v_candidate) - INTERVAL '1 second';
             CONTINUE;
         END IF;
 
-        -- Second check
-        IF (v_seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM v_candidate)::INTEGER)) = 0 THEN
+        -- Second check - FIXED: Use timezone for time components
+        IF (v_seconds_mask & (1::BIGINT << EXTRACT(SECOND FROM (v_candidate AT TIME ZONE v_target_tz))::INTEGER)) = 0 THEN
             v_candidate := v_candidate - INTERVAL '1 second';
             CONTINUE;
         END IF;
@@ -1252,6 +1325,7 @@ DECLARE
     v_next_end TIMESTAMPTZ;
     v_eod_data RECORD;
     v_has_eod BOOLEAN := FALSE;
+    v_reference_time TIMESTAMPTZ;
 BEGIN
     -- Extract EOD part if present
     IF p_expression ~ 'EOD:' THEN
@@ -1263,14 +1337,19 @@ BEGIN
         v_eod_expr := NULL;
     END IF;
 
-    -- Get next start time using regular next_time function
-    v_next_start := jcron.next_time(v_base_expr, p_from_time);
-    
-    -- Calculate end time if EOD is present (matching node-port behavior)
+    -- If we have EOD, we need to calculate reference time correctly 
     IF v_has_eod AND v_eod_expr IS NOT NULL THEN
         SELECT * INTO v_eod_data FROM jcron.parse_eod(v_eod_expr);
         
         IF v_eod_data.is_valid THEN
+            -- FIXED: Calculate reference time from EOD spec first (use timezone as well)
+            v_reference_time := jcron.calculate_eod_reference(v_eod_data.reference_point, p_from_time, 
+                COALESCE((SELECT timezone FROM jcron.parse_expression(v_base_expr)), 'UTC'));
+            
+            -- Use reference time for calculating when the schedule should trigger
+            v_next_start := jcron.next_time(v_base_expr, v_reference_time);
+            
+            -- Calculate end time from the trigger time
             v_next_end := jcron.calculate_eod_end_time(
                 v_next_start,
                 v_eod_data.years,
@@ -1284,10 +1363,11 @@ BEGIN
             );
             RETURN v_next_end;
         ELSE
-            RETURN v_next_start; -- Fallback to start time if invalid EOD
+            RETURN jcron.next_time(v_base_expr, p_from_time); -- Fallback to start time if invalid EOD
         END IF;
     ELSE
-        RETURN v_next_start; -- No EOD, return start time
+        -- No EOD, return normal next time
+        RETURN jcron.next_time(v_base_expr, p_from_time);
     END IF;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
