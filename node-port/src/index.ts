@@ -161,24 +161,33 @@ function normalizeToSchedule(input: string | Schedule): Schedule {
       }
     }
     
-    // 2. Check for hybrid expressions (cron + EOD/SOD patterns)
+    // 2. Check for pure WOY expressions (^WOY:)
+    if (/^WOY:\d+/.test(expression)) {
+      // Pure WOY expression - convert to cron with WOY
+      const woyMatch = expression.match(/^WOY:(\d+(?:,\d+)*)/);
+      if (woyMatch) {
+        return fromJCronString(`0 0 0 * * * ${expression}`);
+      }
+    }
+    
+    // 3. Check for hybrid expressions (cron + EOD/SOD patterns)
     const hasEOD = expression.includes('EOD:') || /\s+[ES][0-9]/.test(expression);
     
-    // 3. Check for JCRON extensions (WOY:, TZ:, or EOD:)
+    // 4. Check for JCRON extensions (WOY:, TZ:, or EOD:)
     const hasJCronExtensions = expression.includes('WOY:') || expression.includes('TZ:') || hasEOD;
     
     if (hasJCronExtensions) {
       return fromJCronString(expression);
     }
     
-    // 4. Check for L/# syntax in cron fields
+    // 5. Check for L/# syntax in cron fields
     const hasSpecialSyntax = expression.includes('L') || expression.includes('#');
     
     if (hasSpecialSyntax) {
       return fromJCronString(expression);
     }
     
-    // 5. Default to traditional cron parsing
+    // 6. Default to traditional cron parsing
     return fromCronSyntax(expression);
   }
   return validateSchedule(input);
@@ -427,5 +436,201 @@ export { Optimized };
 
 // Error types
 export { ParseError, RuntimeError } from "./errors";
+
+// ==============================================================================
+// 🚀 JCRON V2 CLEAN ARCHITECTURE API - PostgreSQL Uyumlu
+// ==============================================================================
+
+/**
+ * V2 Clean Architecture: 4-parameter design with enhanced WOY logic
+ * 
+ * Bu API PostgreSQL JCRON V2 implementasyonuyla tam uyumlu çalışır.
+ * Ana özellikler:
+ * - Clean pattern separation (pattern, modifier, base_time, target_tz)
+ * - Enhanced WOY multi-year logic
+ * - Conflict-free function names
+ * - Ultra-high performance
+ */
+
+/**
+ * V2 next_time - Core function with 4-parameter design
+ * @param pattern Cron pattern or JCRON expression
+ * @param base_time Base time for calculation (optional)
+ * @param end_of Calculate end of period (optional, default: false)
+ * @param start_of Calculate start of period (optional, default: false)
+ * @returns Next occurrence timestamp
+ */
+export function next_time_v2(
+  pattern: string, 
+  base_time?: Date, 
+  end_of: boolean = false, 
+  start_of: boolean = false
+): Date {
+  const fromTime = base_time || new Date();
+  
+  try {
+    // V2 enhanced pattern processing
+    const schedule = normalizeToSchedule(pattern);
+    
+    // Enhanced WOY + E1W logic for problematic patterns
+    if (pattern.includes('WOY:') && pattern.includes('E1W')) {
+      return calculateWoyWithE1W(pattern, fromTime);
+    }
+    
+    // Standard V2 processing
+    let result = defaultEngine.next(schedule, fromTime);
+    
+    // Apply end_of modifier
+    if (end_of && schedule.eod) {
+      const endTime = schedule.endOf(result);
+      if (endTime) result = endTime;
+    }
+    
+    // Apply start_of modifier  
+    if (start_of && schedule.eod) {
+      const startTime = schedule.startOf(result);
+      if (startTime) result = startTime;
+    }
+    
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ParseError(`V2 next_time error: ${message}`);
+  }
+}
+
+/**
+ * V2 next - Simple next occurrence (conflict-free name)
+ * @param pattern JCRON pattern
+ * @param modifier Optional modifier (E1W, S1M, etc.)
+ * @param base_time Base time (optional)
+ * @returns Next occurrence
+ */
+export function next(pattern: string, modifier?: string, base_time?: Date): Date {
+  const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
+  return next_time_v2(fullPattern, base_time);
+}
+
+/**
+ * V2 next_from - Next occurrence from specific time (conflict-free name)
+ * @param pattern JCRON pattern
+ * @param from_time Specific time to calculate from
+ * @returns Next occurrence
+ */
+export function next_from(pattern: string, from_time: Date): Date {
+  return next_time_v2(pattern, from_time);
+}
+
+/**
+ * V2 next_end - Next occurrence with end modifier (conflict-free name)
+ * @param pattern JCRON pattern
+ * @param modifier Optional modifier
+ * @param base_time Base time (optional)
+ * @returns Next occurrence with end calculation
+ */
+export function next_end(pattern: string, modifier?: string, base_time?: Date): Date {
+  const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
+  return next_time_v2(fullPattern, base_time, true, false);
+}
+
+/**
+ * V2 next_start - Next occurrence with start modifier (conflict-free name)
+ * @param pattern JCRON pattern
+ * @param modifier Optional modifier
+ * @param base_time Base time (optional)
+ * @returns Next occurrence with start calculation
+ */
+export function next_start(pattern: string, modifier?: string, base_time?: Date): Date {
+  const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
+  return next_time_v2(fullPattern, base_time, false, true);
+}
+
+/**
+ * Enhanced WOY + E1W calculation for problematic patterns
+ * Solves the original "WOY:4,15 E1W" issue with multi-year support
+ */
+function calculateWoyWithE1W(pattern: string, fromTime: Date): Date {
+  // Parse WOY and other components
+  const woyMatch = pattern.match(/WOY:(\d+(?:,\d+)*)/);
+  if (!woyMatch) throw new ParseError('Invalid WOY pattern');
+  
+  const weeks = woyMatch[1].split(',').map(w => parseInt(w));
+  const hasE1W = pattern.includes('E1W');
+  
+  // Multi-year WOY search (like PostgreSQL V2)
+  for (let yearOffset = 0; yearOffset < 2; yearOffset++) {
+    const targetYear = fromTime.getFullYear() + yearOffset;
+    
+    for (const week of weeks) {
+      const weekStart = getWeekStartDate(targetYear, week);
+      
+      if (weekStart > fromTime) {
+        if (hasE1W) {
+          // End of next week after the WOY week
+          const nextWeekEnd = new Date(weekStart);
+          nextWeekEnd.setDate(nextWeekEnd.getDate() + 13); // 7 days + 6 days = end of next week
+          nextWeekEnd.setHours(23, 59, 59, 999);
+          return nextWeekEnd;
+        } else {
+          return weekStart;
+        }
+      }
+    }
+  }
+  
+  throw new ParseError(`Could not find WOY match for pattern: ${pattern} within 2 years`);
+}
+
+/**
+ * Get week start date for ISO 8601 week numbering
+ * Compatible with PostgreSQL V2 implementation
+ */
+function getWeekStartDate(year: number, week: number): Date {
+  // ISO 8601 week calculation
+  const jan4 = new Date(year, 0, 4);
+  const jan4DayOfWeek = jan4.getDay() || 7; // Convert Sunday=0 to Sunday=7
+  
+  // Find Monday of week 1
+  const firstMonday = new Date(jan4);
+  firstMonday.setDate(jan4.getDate() - jan4DayOfWeek + 1);
+  
+  // Calculate target week
+  const targetWeek = new Date(firstMonday);
+  targetWeek.setDate(firstMonday.getDate() + (week - 1) * 7);
+  
+  return targetWeek;
+}
+
+/**
+ * V2 parse - Enhanced pattern parsing (conflict-free name)
+ * @param pattern JCRON pattern to parse
+ * @returns Schedule object with V2 enhancements
+ */
+export function parse(pattern: string): Schedule {
+  return normalizeToSchedule(pattern);
+}
+
+/**
+ * V2 is_match - Check if time matches pattern (conflict-free name)
+ * @param pattern JCRON pattern
+ * @param time Time to check
+ * @returns True if time matches pattern
+ */
+export function is_match(pattern: string, time: Date): boolean {
+  try {
+    const schedule = normalizeToSchedule(pattern);
+    const next = defaultEngine.next(schedule, new Date(time.getTime() - 1000));
+    return Math.abs(next.getTime() - time.getTime()) < 1000; // Within 1 second
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * V2 version info
+ */
+export function version_v2(): string {
+  return 'JCRON V2.0 - Clean Architecture + Enhanced WOY Logic + Node.js Port';
+}
 
 // ==============================================================================
