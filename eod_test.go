@@ -151,7 +151,7 @@ func TestParseEoD(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := ParseEoD(tt.input)
+			result, err := ParseEOD(tt.input)
 
 			if tt.wantErr {
 				if err == nil {
@@ -188,7 +188,8 @@ func TestIsValidEoD(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := IsValidEoD(tt.input)
+			_, err := ParseEOD(tt.input)
+			result := err == nil
 			if result != tt.expected {
 				t.Errorf("IsValidEoD(%s) = %v, want %v", tt.input, result, tt.expected)
 			}
@@ -393,7 +394,7 @@ func TestEODFixCorrectBehavior(t *testing.T) {
 	t.Logf("Test date (Thursday): %s", testDate.String())
 
 	// Test E1W parsing and calculation
-	eod, err := ParseEoD("E1W")
+	eod, err := ParseEOD("E1W")
 	if err != nil {
 		t.Fatalf("Failed to parse E1W: %v", err)
 	}
@@ -411,7 +412,7 @@ func TestEODFixCorrectBehavior(t *testing.T) {
 	t.Log("✅ E1W correctly calculates end of current week")
 
 	// Test E2W (end of next week)
-	eod2, err := ParseEoD("E2W")
+	eod2, err := ParseEOD("E2W")
 	if err != nil {
 		t.Fatalf("Failed to parse E2W: %v", err)
 	}

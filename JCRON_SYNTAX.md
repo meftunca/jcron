@@ -1,793 +1,831 @@
-# JCRON Syntax Specification
+# JCRON Syntax & Logic Documentation
 
 ## Table of Contents
-- [Overview](#overview)
-- [Basic Syntax](#basic-syntax)
-- [Field Definitions](#field-definitions)
-- [Special Characters](#special-characters)
-- [EOD (End of Duration) Syntax](#eod-end-of-duration-syntax)
-- [Advanced Features](#advanced-features)
-- [Timezone Support](#timezone-support)
-- [Examples](#examples)
-- [Cross-Platform Compatibility](#cross-platform-compatibility)
-- [Implementation Notes](#implementation-notes)
+1. [Overview](#overview)
+2. [Core Philosophy](#core-philosophy)
+3. [Expression Types](#expression-types)
+4. [Mathematical Foundation](#mathematical-foundation)
+5. [Unified API Design](#unified-api-design)
+6. [Advanced Features](#advanced-features)
+7. [Real-World Applications](#real-world-applications)
+8. [Performance & Optimization](#performance--optimization)
+
+---
 
 ## Overview
 
-JCRON is an advanced cron expression format that extends traditional cron syntax with powerful time management features. Available for both **Go** and **TypeScript/Node.js**, JCRON provides:
+JCRON is a revolutionary scheduling system that unifies multiple time expression syntaxes under a single, intelligent API. It combines the familiarity of traditional cron with the power of mathematical time calculations and modern scheduling needs.
 
-- **Second-level precision** (6 or 7 fields)
-- **End of Duration (EOD)** calculations for time-bounded schedules
-- **Enhanced special characters** (L, #, W) for complex date patterns
-- **Timezone support** for global applications
-- **Year specification** for long-term scheduling
-- **Week of Year (WOY)** patterns for quarterly/annual cycles
-- **Vixie-cron OR logic** compatibility
+### Key Innovation
+**Single Function, Multiple Syntaxes**: All expression types work through the same `jcron.next_time()` function with automatic syntax detection.
 
-## Basic Syntax
+### Supported Expression Types
+- **Traditional Cron**: Industry-standard cron expressions
+- **WOY (Week of Year)**: Week-based yearly scheduling patterns
+- **TZ (Timezone)**: Explicit timezone specification for any expression
+- **EOD (End of Duration)**: Mathematical end-of-period calculations
+- **SOD (Start of Duration)**: Mathematical start-of-period calculations
+- **L (Last) Syntax**: Last day/weekday patterns
+- **# (Nth Occurrence)**: Nth weekday occurrence patterns
+- **Hybrid Expressions**: Combinations of cron + EOD/SOD
 
-### Standard Format
+---
+
+## Core Philosophy
+
+### 1. Mathematical Consistency
+JCRON uses **0-based indexing** for intuitive mathematical operations:
+- `0` = Current period (this week, this month, this day)
+- `1` = Next period (next week, next month, next day)
+- `N` = N periods forward
+
+This eliminates confusion and provides predictable behavior.
+
+### 2. Sequential Processing
+Complex expressions are processed sequentially, left-to-right:
 ```
-[second] [minute] [hour] [day] [month] [weekday] [year] [WOY:weekofyear] [TZ:timezone] [EOD:duration]
-```
-
-### Field Count Variations
-- **5 fields**: `minute hour day month weekday` (traditional cron)
-- **6 fields**: `second minute hour day month weekday` (with seconds)
-- **7 fields**: `second minute hour day month weekday year` (with year)
-
-### Extended Format (Full JCRON)
-```
-second minute hour day month weekday [year] [WOY:week_pattern] [TZ:timezone] [EOD:duration]
-```
-
-### Field Ranges
-| Field | Range | Special Values |
-|-------|-------|----------------|
-| Second | 0-59 | `*`, `/`, `,`, `-` |
-| Minute | 0-59 | `*`, `/`, `,`, `-` |
-| Hour | 0-23 | `*`, `/`, `,`, `-` |
-| Day | 1-31 | `*`, `/`, `,`, `-`, `L`, `W` |
-| Month | 1-12 | `*`, `/`, `,`, `-`, `JAN-DEC` |
-| Weekday | 0-7 | `*`, `/`, `,`, `-`, `SUN-SAT`, `#`, `L` |
-| Year | 1970-3000 | `*`, `/`, `,`, `-` |
-| WeekOfYear | 1-53 | `*`, `/`, `,`, `-` |
-
-**Note**: Both 0 and 7 represent Sunday in weekday field.
-
-## Field Definitions
-
-### Second Field (Optional)
-```
-0-59        # Specific second
-*           # Every second
-*/5         # Every 5 seconds
-15,30,45    # At 15, 30, and 45 seconds
-10-20       # From 10 to 20 seconds
+E1M2W3D = Base → +1 Month End → +2 Week End → +3 Day End
 ```
 
-### Minute Field
-```
-0-59        # Specific minute
-*           # Every minute
-*/15        # Every 15 minutes
-0,30        # At 0 and 30 minutes
+Each operation builds upon the previous result, creating powerful time calculations.
+
+### 3. Unified API
+All syntax types share the same function interface:
+```sql
+SELECT jcron.next_time(expression);  -- Works for ALL syntax types
 ```
 
-### Hour Field
+No need to remember different functions for different expression types.
+
+### 4. NULL Convention
+- `NULL` values in expressions mean "ignore this unit"
+- Explicit `0` means "current period"
+- This provides precise control over time calculations
+
+---
+
+## Expression Types
+
+### 1. Traditional Cron Expressions
+
+#### Format
 ```
-0-23        # Specific hour (24-hour format)
-*           # Every hour
-*/2         # Every 2 hours
-9-17        # From 9 AM to 5 PM
+[SECOND] [MINUTE] [HOUR] [DAY] [MONTH] [WEEKDAY]
 ```
 
-### Day Field
-```
-1-31        # Specific day of month
-*           # Every day
-*/5         # Every 5 days
-1,15        # 1st and 15th of month
-L           # Last day of month
-15W         # Nearest weekday to 15th
-LW          # Last weekday of month
+#### Examples
+```sql
+'0 30 14 * * *'        -- Daily at 14:30:00
+'*/15 * * * * *'       -- Every 15 seconds
+'0 0 9 1 * *'          -- 1st of every month at 09:00
+'0 0 9 * * MON'        -- Every Monday at 09:00
+'0 */10 9-17 * * 1-5'  -- Every 10 minutes, 9-17h, weekdays
 ```
 
-### Month Field
+#### Special Characters
+- `*` : Any value
+- `,` : List separator (e.g., `1,15` = 1st and 15th)
+- `-` : Range (e.g., `9-17` = 9 through 17)
+- `/` : Step values (e.g., `*/5` = every 5 units)
+- `?` : No specific value (day/weekday only)
+
+#### Week of Year (WOY) Syntax
+WOY syntax allows scheduling based on specific weeks of the year (1-53 according to ISO 8601).
+
+##### Format
 ```
-1-12        # Numeric month
-JAN-DEC     # Month names (3-letter)
-*           # Every month
-*/3         # Every 3 months (quarterly)
-1,4,7,10    # Quarterly months
+WOY:[WEEK_NUMBERS]
 ```
 
-### Weekday Field
-```
-0-7         # 0 and 7 = Sunday, 1 = Monday, etc.
-SUN-SAT     # Day names (3-letter)
-*           # Every weekday
-1-5         # Monday to Friday
-MON,WED,FRI # Specific weekdays
-1#2         # Second Monday of month
-5L          # Last Friday of month
+##### Supported Patterns
+- `WOY:*` : Every week of the year
+- `WOY:1` : Only week 1 (first week of year)
+- `WOY:1,15,30` : Weeks 1, 15, and 30
+- `WOY:1-4` : Weeks 1 through 4 (first month)
+- `WOY:*/2` : Every 2nd week (bi-weekly)
+- `WOY:10-20` : Weeks 10 through 20 (Q2 period)
+
+##### Examples
+```sql
+'0 0 9 * * MON WOY:1'        -- Monday 09:00 on first week of year
+'0 30 14 * * * WOY:1,26,52'  -- Daily 14:30 on weeks 1, 26, and 52
+'0 0 12 * * FRI WOY:*/4'     -- Friday noon every 4th week
+'0 0 8 * * * WOY:10-15'      -- Daily 08:00 during weeks 10-15
+'0 15 16 * * * WOY:1-13'     -- Daily 16:15 during Q1 (weeks 1-13)
 ```
 
-### Year Field (Optional)
+##### Business Use Cases
+- **Quarterly Planning**: `WOY:1-13,14-26,27-39,40-53` for quarters
+- **Bi-weekly Sprints**: `WOY:*/2` for agile development cycles
+- **Seasonal Operations**: `WOY:22-35` for summer season (weeks 22-35)
+- **Year-end Processing**: `WOY:52,53` for year-end operations
+- **Monthly Cycles**: `WOY:1,5,9,13,17,21,25,29,33,37,41,45,49` for monthly
+
+##### ISO 8601 Week Numbering
+- Week 1: Contains the first Thursday of the year
+- Weeks run Monday through Sunday
+- Year can have 52 or 53 weeks
+- Week numbers: 1-53
+
+#### Timezone (TZ) Syntax
+TZ syntax allows explicit timezone specification for any expression type.
+
+##### Format
 ```
-2025        # Specific year
-*           # Every year
-2025-2030   # Year range
-*/2         # Every 2 years
+[EXPRESSION] TZ:[TIMEZONE]
 ```
 
-### Week of Year Field (Optional)
-```
-1-53        # Specific week number
-*           # Every week
-1-26        # First half of year
-27-53       # Second half of year
-*/2         # Every other week
-1,13,26,39  # Quarterly weeks
+##### Supported Timezone Formats
+- `TZ:UTC` : Coordinated Universal Time
+- `TZ:America/New_York` : IANA timezone database format
+- `TZ:Europe/London` : European timezone
+- `TZ:Asia/Tokyo` : Asian timezone
+- `TZ:+03:00` : UTC offset format
+- `TZ:-05:00` : Negative UTC offset
+
+##### Examples
+```sql
+'0 0 9 * * * TZ:UTC'                    -- Daily 09:00 UTC
+'0 30 14 * * MON TZ:America/New_York'   -- Monday 14:30 Eastern Time
+'E0W TZ:Europe/London'                  -- Week end in London timezone
+'0 0 12 * * FRI WOY:*/2 TZ:Asia/Tokyo'  -- Bi-weekly Friday noon in Tokyo
+'0 0 17 L * * TZ:+03:00'                -- Last day 17:00 UTC+3
 ```
 
-## Special Characters
+##### Business Use Cases
+- **Global Teams**: `TZ:America/New_York` for US operations
+- **Multi-region Scheduling**: Different timezones for different services
+- **Financial Markets**: `TZ:America/New_York` for NYSE, `TZ:Europe/London` for LSE
+- **Server Maintenance**: `TZ:UTC` for consistent global scheduling
+- **Local Business Hours**: `TZ:Asia/Tokyo` for Japan operations
 
-### Asterisk (*)
-Matches all values in the field.
-```
-* * * * * *     # Every second
-0 * * * * *     # Every minute at 0 seconds
-0 0 * * * *     # Every hour
-```
+##### Timezone Handling Rules
+- Default timezone is system timezone if not specified
+- All calculations performed in specified timezone
+- Daylight saving transitions handled automatically
+- Invalid timezones fallback to UTC with warning
 
-### Comma (,)
-Separates multiple values.
-```
-0 0,15,30,45 * * * *    # Every quarter hour
-0 0 9,12,15 * * 1-5     # 9 AM, noon, 3 PM on weekdays
-```
+### 2. EOD (End of Duration) Expressions
 
-### Hyphen (-)
-Defines ranges.
-```
-0 0 9-17 * * 1-5        # 9 AM to 5 PM, Monday to Friday
-0 */10 8-18 * * *       # Every 10 minutes, 8 AM to 6 PM
-```
+#### Philosophy
+EOD expressions calculate the **end time** of time periods using mathematical progression.
 
-### Slash (/)
-Defines step values.
+#### Format
 ```
-*/5 * * * * *           # Every 5 seconds
-0 */15 * * * *          # Every 15 minutes
-0 0 */2 * * *           # Every 2 hours
-0 0 0 */5 * *           # Every 5 days
+E[YEARS]Y[MONTHS]M[WEEKS]W[DAYS]D[HOURS]H[MINUTES]M[SECONDS]S
 ```
 
-### L (Last)
-Used in day and weekday fields.
-
-#### Day Field
-```
-0 0 12 L * *            # Noon on last day of month
-0 0 0 L * *             # Midnight on last day of month
-```
-
-#### Weekday Field
-```
-0 0 22 * * 5L           # 10 PM on last Friday of month
-0 0 9 * * 1L            # 9 AM on last Monday of month
+#### 0-Based Logic Examples
+```sql
+'E0W'      -- This week end (current week's Sunday 23:59:59)
+'E1W'      -- Next week end (next week's Sunday 23:59:59)  
+'E2W'      -- 2nd week end (two weeks from now, Sunday 23:59:59)
+'E0M'      -- This month end (current month's last day 23:59:59)
+'E1M'      -- Next month end (next month's last day 23:59:59)
+'E0D'      -- Today end (today 23:59:59)
+'E1D'      -- Tomorrow end (tomorrow 23:59:59)
 ```
 
-### W (Weekday)
-Finds nearest weekday to specified date.
-```
-0 0 9 15W * *           # 9 AM on weekday nearest to 15th
-0 0 12 LW * *           # Noon on last weekday of month
+#### Sequential Processing Examples
+```sql
+'E1M2W'    -- Base → +1 Month End → +2 Week End
+'E0W3D'    -- Base → This Week End → +3 Day End
+'E2Y1M1W'  -- Base → +2 Year End → +1 Month End → +1 Week End
 ```
 
-### # (Nth Occurrence)
-Used in weekday field for nth occurrence.
+#### Step-by-Step Calculation
+For `E1M2W3D` from `2024-01-15 10:00:00`:
+1. **Base**: `2024-01-15 10:00:00`
+2. **+1 Month End**: `2024-02-29 23:59:59` (February end)
+3. **+2 Week End**: `2024-03-17 23:59:59` (2 weeks later, Sunday end)
+4. **+3 Day End**: `2024-03-20 23:59:59` (3 days later, day end)
+
+### 3. SOD (Start of Duration) Expressions
+
+#### Philosophy
+SOD expressions calculate the **start time** of time periods, complementing EOD functionality.
+
+#### Format
 ```
-0 0 8 * * 1#2           # 8 AM on 2nd Monday of month
-0 0 14 * * 5#4          # 2 PM on 4th Friday of month
-0 0 9 * * 1#1,1#3       # 9 AM on 1st and 3rd Monday
+S[YEARS]Y[MONTHS]M[WEEKS]W[DAYS]D[HOURS]H[MINUTES]M[SECONDS]S
 ```
+
+#### 0-Based Logic Examples
+```sql
+'S0W'      -- This week start (current week's Monday 00:00:00)
+'S1W'      -- Next week start (next week's Monday 00:00:00)
+'S0M'      -- This month start (current month's 1st day 00:00:00)
+'S1M'      -- Next month start (next month's 1st day 00:00:00)
+'S0D'      -- Today start (today 00:00:00)
+'S1D'      -- Tomorrow start (tomorrow 00:00:00)
+```
+
+#### Sequential Processing Examples
+```sql
+'S1M1W'    -- Base → +1 Month Start → +1 Week Start
+'S0W2D'    -- Base → This Week Start → +2 Day Start
+'S0M1W3D'  -- Base → This Month Start → +1 Week Start → +3 Day Start
+```
+
+#### EOD vs SOD Comparison
+```sql
+-- For reference time: 2024-01-15 10:00:00 (Monday)
+
+'E0W'  →  2024-01-21 23:59:59  -- This week END (Sunday)
+'S0W'  →  2024-01-15 00:00:00  -- This week START (Monday)
+
+'E0M'  →  2024-01-31 23:59:59  -- This month END (31st)
+'S0M'  →  2024-01-01 00:00:00  -- This month START (1st)
+
+'E0D'  →  2024-01-15 23:59:59  -- Today END
+'S0D'  →  2024-01-15 00:00:00  -- Today START
+```
+
+### 4. L (Last) Syntax
+
+#### Philosophy
+L syntax provides business-friendly "last occurrence" patterns commonly needed in scheduling.
+
+#### Patterns
+```sql
+'L'        -- Last day of month
+'NL'       -- Last occurrence of weekday N (0=Sun, 1=Mon, ..., 6=Sat)
+'L-N'      -- N days before last day of month
+```
+
+#### Examples
+```sql
+'0 0 17 L * *'       -- Last day of month at 17:00
+'0 0 9 * * 5L'       -- Last Friday of month at 09:00
+'0 0 12 L-5 * *'     -- 5 days before month end at 12:00
+'0 30 14 * * 1L'     -- Last Monday of month at 14:30
+```
+
+#### Business Use Cases
+- **Payroll**: Last Friday processing
+- **Reports**: Month-end reports on last day
+- **Deadlines**: Reminders before month end
+
+### 5. # (Nth Occurrence) Syntax
+
+#### Philosophy
+# syntax enables precise "Nth occurrence" scheduling for regular business patterns.
+
+#### Patterns
+```sql
+'N#M'      -- Mth occurrence of weekday N in month
+```
+
+#### Examples
+```sql
+'0 0 9 * * 2#1'      -- 1st Tuesday of month at 09:00
+'0 30 14 * * 5#3'    -- 3rd Friday of month at 14:30
+'0 0 10 * * 1#2'     -- 2nd Monday of month at 10:00
+'0 0 15 * * 4#4'     -- 4th Thursday of month at 15:00
+```
+
+#### Business Use Cases
+- **Meetings**: Monthly team meetings on 1st Monday
+- **Reviews**: Quarterly reviews on 3rd Thursday
+- **Planning**: Sprint planning on 2nd Friday
+
+### 6. Hybrid Expressions
+
+#### Philosophy
+Hybrid expressions combine cron scheduling with EOD/SOD calculations, enabling **temporal reference point** logic.
+
+#### Concept: Temporal Reference Points
+A hybrid expression has two parts:
+1. **Cron Reference**: Defines when to establish a time reference
+2. **EOD/SOD Calculation**: Calculates from that reference point
+
+#### Format
+```
+[CRON_EXPRESSION] [EOD/SOD_EXPRESSION]
+```
+
+#### Examples
+```sql
+'* * 3 * * * E1W'           -- Hour 3 reference → 1 week end
+'0 0 9 * * MON E0M'         -- Monday 09:00 reference → this month end
+'0 30 14 * * 5L E1W'        -- Last Friday 14:30 → next week end
+'0 0 12 15 * * E0Q'         -- 15th day noon → this quarter end
+'0 0 0 1 * * S1M'           -- 1st day midnight → next month start
+```
+
+#### Processing Logic
+For `'0 0 9 * * MON E0M'`:
+1. Find next Monday at 09:00 (cron reference)
+2. From that Monday, calculate this month end (EOD calculation)
+3. Return the calculated end time
+
+#### Advanced Hybrid Examples
+```sql
+-- Complex business scenarios
+'0 0 9 * * 1#1 E0Q'         -- 1st Monday 09:00 → quarter end
+'0 30 17 * * 5L S1W'        -- Last Friday 17:30 → next week start
+'0 0 12 L-3 * * E0M'        -- 3 days before month end noon → month end
+```
+
+---
+
+## Mathematical Foundation
+
+### 1. 0-Based Indexing System
+
+#### Principle
+JCRON uses 0-based indexing for all time calculations, following mathematical conventions:
+
+```
+0 = Current period
+1 = Next period  
+2 = Second next period
+...
+N = Nth next period
+```
+
+#### Examples Across Time Units
+```sql
+-- Days
+E0D = Today end
+E1D = Tomorrow end
+E7D = 7 days from now end
+
+-- Weeks  
+E0W = This week end (current Sunday)
+E1W = Next week end (next Sunday)
+E4W = 4 weeks from now end
+
+-- Months
+E0M = This month end (current month last day)
+E1M = Next month end (next month last day)
+E12M = 12 months from now end (1 year later)
+```
+
+### 2. Sequential Processing Algorithm
+
+#### Process Flow
+1. **Initialize**: Start with base timestamp
+2. **Process Years**: If present, add years and find year end
+3. **Process Months**: From current result, add months and find month end  
+4. **Process Weeks**: From current result, add weeks and find week end
+5. **Process Days**: From current result, add days and find day end
+6. **Process Hours**: From current result, add hours and find hour end
+7. **Process Minutes**: From current result, add minutes and find minute end
+8. **Process Seconds**: From current result, add seconds and find second end
+
+#### Mathematical Formula
+```
+Result = ((((((Base +Y)end +M)end +W)end +D)end +H)end +Min)end +S)end
+```
+
+Where `+X` means "add X units" and `end` means "find end of that period".
+
+### 3. NULL Convention Logic
+
+#### Rules
+- `NULL` units are completely ignored in calculations
+- `0` units mean "current period of that type"
+- Positive units mean "N periods forward"
+
+#### Examples
+```sql
+E0W2D     -- NULL NULL 0 2 = Week + Day calculation only
+E1M0W     -- NULL 1 0 NULL = Month calculation, then current week
+E2D       -- NULL NULL NULL 2 = Day calculation only
+```
+
+### 4. Time Period Definitions
+
+#### Week Definition
+- **Start**: Monday 00:00:00
+- **End**: Sunday 23:59:59
+- **ISO 8601 compliant**
+
+#### Month Definition  
+- **Start**: 1st day 00:00:00
+- **End**: Last day 23:59:59 (handles leap years automatically)
+
+#### Quarter Definition
+- **Q1**: Jan-Mar (ends March 31st)
+- **Q2**: Apr-Jun (ends June 30th)
+- **Q3**: Jul-Sep (ends September 30th)
+- **Q4**: Oct-Dec (ends December 31st)
+
+#### Year Definition
+- **Start**: January 1st 00:00:00
+- **End**: December 31st 23:59:59
+
+---
+
+## Unified API Design
+
+### 1. Auto-Detection Logic
+
+#### Detection Order
+1. **Hybrid Check**: Look for both cron and EOD/SOD patterns
+2. **EOD/SOD Check**: Look for `^[ES][0-9]` pattern
+3. **Timezone Check**: Look for `TZ:` pattern in expression
+4. **WOY Check**: Look for `WOY:` pattern in expression
+5. **L/# Check**: Look for `[L#]` characters in cron fields
+6. **Traditional Cron**: Default fallback
+
+#### Implementation Flow
+```sql
+FUNCTION next_time(expression):
+    parsed = parse_hybrid(expression)
+    IF parsed.is_hybrid THEN
+        RETURN next_time_hybrid(expression)
+    END IF
+    
+    IF expression MATCHES '^[ES][0-9]' THEN
+        RETURN next_end_of_time(expression)
+    END IF
+    
+    -- Traditional cron processing
+    RETURN traditional_cron_next_time(expression)
+END
+```
+
+### 2. Function Consistency
+
+#### Universal Functions
+All expression types work through these functions:
+- `jcron.next_time(expression)`: Find next occurrence
+- `jcron.prev_time(expression)`: Find previous occurrence  
+- `jcron.is_time_match(expression, time)`: Check if time matches
+- `jcron.parse_expression(expression)`: Parse any expression type
+
+#### Error Handling
+- Consistent error messages across all syntax types
+- Graceful handling of invalid expressions
+- Clear error descriptions for debugging
+
+### 3. Performance Optimization
+
+#### Smart Routing
+Each syntax type uses optimized processing:
+- **Traditional Cron**: Bitmask operations
+- **WOY Syntax**: Week number indexing and ISO 8601 calculations
+- **Timezone Syntax**: IANA timezone database lookups and offset calculations
+- **EOD/SOD**: Direct mathematical calculations
+- **L/# Syntax**: Special calendar functions
+- **Hybrid**: Combined processing with caching
+
+#### Caching Strategy
+- Parse results can be cached for frequently used expressions
+- Mathematical calculations use efficient algorithms
+- Database queries optimized for each syntax type
+
+---
 
 ## Advanced Features
 
-### Week of Year (WOY) Support
-Constrains execution to specific weeks of the year (ISO 8601 week numbering).
-```
-0 0 9 * * 1-5 WOY:1-26          # Weekdays, first half of year
-0 0 12 * * * WOY:1,13,26,39,52  # Quarterly meetings
-0 30 14 * * 5 WOY:*/2           # Every other Friday
-```
+### 1. Timezone Support
 
-### Predefined Week Patterns
-```
-WOY:1-13    # First quarter (weeks 1-13)
-WOY:14-26   # Second quarter (weeks 14-26)  
-WOY:27-39   # Third quarter (weeks 27-39)
-WOY:40-53   # Fourth quarter (weeks 40-53)
-WOY:*/2     # Every other week
+#### Implementation
+All expressions respect timezone settings:
+```sql
+SELECT jcron.next_time('0 0 9 * * *', NOW(), 'America/New_York');
+SELECT jcron.next_time('E0W', NOW(), 'Europe/London');
 ```
 
-### Vixie-Cron OR Logic
-When both day and weekday are specified (neither is `*`), they use OR logic.
-```
-0 0 0 15 * MON          # Midnight on 15th OR on Mondays
-0 0 12 1,15 * 1-5       # Noon on 1st/15th OR weekdays
-```
+#### Timezone Handling
+- **EOD/SOD**: End/start times calculated in specified timezone
+- **Cron**: Time matching done in specified timezone
+- **Hybrid**: Both components respect timezone setting
 
-### Step Values with Ranges
-```
-0 0 8-18/2 * * *        # Every 2 hours from 8 AM to 6 PM
-0 10-50/10 * * * *      # Every 10 minutes from :10 to :50
-```
+### 2. Complex Sequential Calculations
 
-### Complex Combinations
-```
-0 0,30 8-12,14-18 1,15 1,6,12 1-5   # Complex business schedule
-*/10 */5 9-17 * * 1-5               # Every 10 seconds, every 5 minutes, business hours
+#### Multi-Unit EOD
+```sql
+'E2Y1M3W2D1H30M15S'  -- 2 years + 1 month + 3 weeks + 2 days + 1 hour + 30 minutes + 15 seconds
 ```
 
-## EOD (End of Duration) Syntax
+#### Processing Steps
+1. Base time + 2 years → find year end
+2. Year end + 1 month → find month end
+3. Month end + 3 weeks → find week end
+4. Week end + 2 days → find day end
+5. Day end + 1 hour → find hour end
+6. Hour end + 30 minutes → find minute end
+7. Minute end + 15 seconds → find second end
 
-The **EOD (End of Duration)** system is JCRON's most innovative feature, allowing you to create time-bounded schedules that automatically calculate end points based on periods and durations.
+### 3. Edge Case Handling
 
-### Basic Format
-```
-cron_expression EOD:duration_specification
-```
-
-### Duration Specification Format
-```
-[S|E][number][UNIT][T[time_component]]
-```
-
-**Components:**
-- **Reference Point**:
-  - `S` = Start reference (from beginning of period)
-  - `E` = End reference (to end of period) - **DEFAULT**
-- **Number**: Integer multiplier (1, 2, 3, etc.)
-- **Unit**: Time period unit
-  - `D` = Day
-  - `W` = Week  
-  - `M` = Month
-  - `Q` = Quarter
-  - `Y` = Year
-- **Time Component** (optional): Additional precise time using `T` separator
-  - `H` = Hours
-  - `M` = Minutes  
-  - `S` = Seconds
-
-### EOD Examples
-
-| Expression | Meaning | Calculation |
-|------------|---------|-------------|
-| `E1W` | End of current week | Until Sunday 23:59:59 |
-| `E2W` | End of next week | Until next Sunday 23:59:59 |
-| `E1D` | End of current day | Until today 23:59:59 |
-| `E1M` | End of current month | Until last day of month 23:59:59 |
-| `S30M` | 30 minutes from start | 30 minutes after first execution |
-| `E1DT12H` | End of day + 12 hours | Until tomorrow 11:59:59 |
-| `E1WT8H30M` | End of week + 8h 30m | Until Monday 08:29:59 |
-| `S2H30M` | 2.5 hours from start | 2 hours 30 minutes duration |
-
-### Period End Calculations
-
-#### Week Boundaries (E1W, E2W, etc.)
-- **Week Start**: Monday 00:00:00  
-- **Week End**: Sunday 23:59:59
-- `E1W` from Thursday = Until coming Sunday
-- `E2W` from Thursday = Until next Sunday (week after)
-
-#### Day Boundaries (E1D, E2D, etc.)
-- **Day Start**: 00:00:00
-- **Day End**: 23:59:59  
-- `E1D` = Until end of current day
-- `E2D` = Until end of next day
-
-#### Month Boundaries (E1M, E2M, etc.)
-- **Month Start**: 1st day 00:00:00
-- **Month End**: Last day 23:59:59
-- Handles varying month lengths automatically
-- Leap year aware for February
-
-### Real-World EOD Use Cases
-
-```bash
-# 1. Weekday backup job - runs Mon-Fri 9 AM until end of week
-0 0 9 * * 1-5 EOD:E1W
-
-# 2. Month-end reporting - runs daily at 6 PM until end of month  
-0 0 18 * * * EOD:E1M
-
-# 3. Flash sale monitoring - runs every 10 minutes for 2 hours
-0 */10 * * * * EOD:S2H
-
-# 4. Daily maintenance window - runs hourly until end of day + 6 hours
-0 0 * * * * EOD:E1DT6H
-
-# 5. Quarterly review reminders - runs weekly until end of quarter
-0 0 9 * * 1 WOY:1-13 EOD:E1Q
-
-# 6. Year-end processing - runs daily in December until end of year
-0 0 2 * 12 * EOD:E1Y
-
-# 7. Short-term campaign - runs every 5 minutes for 45 minutes
-0 */5 * * * * EOD:S45M
+#### Month Overflow
+```sql
+'E0M31D'  -- Month end + 31 days (handles different month lengths)
 ```
 
-### Advanced EOD Patterns
-
-```bash
-# Complex duration with multiple components
-0 0 12 * * * EOD:E1WT12H30M15S    # End of week + 12h 30m 15s
-
-# Start reference with precise timing
-0 0 9 * * 1 EOD:S1DT8H            # Run for 1 day + 8 hours from start
-
-# Multiple period calculations
-0 0 0 1 * * EOD:E2M               # From 1st of month until end of next month
+#### Leap Year Support
+```sql
+'E0Y'     -- Year end (handles leap years correctly)
 ```
 
-### EOD Schedule Methods (API)
-
-#### Go Implementation
-```go
-schedule := &Schedule{
-    Minute: stringPtr("0"),
-    Hour: stringPtr("9"), 
-    DayOfWeek: stringPtr("1-5"),
-    EOD: eodExpression,
-}
-
-// Check if schedule has EOD
-if schedule.HasEOD() {
-    // Get the calculated end time
-    endTime := schedule.EndOf(time.Now())
-    
-    // Check if currently in active range
-    isActive := schedule.IsRangeNow(time.Now())
-    
-    // Get start time of the range
-    startTime := schedule.StartOf(time.Now())
-}
+#### Weekend Handling
+```sql
+'E0W'     -- Always finds Sunday end, regardless of start day
 ```
 
-#### TypeScript Implementation  
-```typescript
-const schedule = new Schedule("0 0 9 * * 1-5", "E1W");
+### 4. Validation and Constraints
 
-// Get next execution time
-const nextRun = getNext(schedule, new Date());
+#### Expression Validation
+- Syntax validation before processing
+- Range validation for all time components
+- Logical validation (e.g., no negative values)
 
-// Get calculated end time
-const endTime = schedule.endOf(new Date());
+#### Constraint Examples
+```sql
+-- Valid
+'E0W', 'E1M2D', '0 30 14 * * *'
 
-// Check if in active time range
-const isActive = schedule.isRangeNow(new Date());
-
-// Calculate time remaining
-const timeRemaining = endTime.getTime() - Date.now();
-```
-- D: Days
-- H: Hours
-- M: Minutes (when standalone or after T)
-- S: Seconds
-
-Format: [E|S][nY][nM][nW][nD]T[nH][nM][nS]
+-- Invalid  
+'E-1W'      -- Negative values not allowed
+'E1X'       -- Invalid unit 'X'
+'60 * * * * *' -- Invalid minute (>59)
 ```
 
-### Duration Examples
-```
-E8H             # End + 8 hours
-S30M            # Start + 30 minutes
-E1DT12H         # End + 1 day 12 hours
-E2W3DT6H30M     # End + 2 weeks 3 days 6 hours 30 minutes
-E1Y6M2DT4H      # End + 1 year 6 months 2 days 4 hours
-```
+---
 
-### Reference Points
-```
-E, END          # End of current execution (default)
-S, START        # Start of current execution
-D, DAY          # End of current day (23:59:59)
-W, WEEK         # End of current week (Sunday 23:59:59)
-M, MONTH        # End of current month
-Q, QUARTER      # End of current quarter
-Y, YEAR         # End of current year
+## Real-World Applications
+
+### 1. Business Scheduling Scenarios
+
+#### Financial Operations
+```sql
+-- Month-end closing
+'0 0 23 L * *'           -- Last day of month at 23:00
+
+-- Quarterly reports  
+'0 0 9 L * * E0Q'        -- Last day → quarter end calculation
+
+-- Payroll processing
+'0 0 6 * * 5L'           -- Last Friday at 06:00
 ```
 
-## Cross-Platform Compatibility
+#### IT Operations
+```sql
+-- Weekly backups
+'0 0 2 * * SUN E1W'      -- Sunday 02:00 → next week end window
 
-JCRON provides identical functionality across **Go** and **TypeScript/Node.js** platforms with consistent APIs and behavior.
+-- Monthly maintenance
+'0 0 3 1 * *'            -- 1st of month at 03:00
 
-### Platform Feature Matrix
-
-| Feature | Go | TypeScript | Notes |
-|---------|----|-----------:|-------|
-| Basic Cron Syntax | ✅ | ✅ | Full compatibility |
-| Second-level Precision | ✅ | ✅ | 6-field support |
-| EOD (End of Duration) | ✅ | ✅ | Complete implementation |
-| Timezone Support | ✅ | ✅ | Same timezone libraries |
-| Week of Year (WOY) | ✅ | ✅ | ISO 8601 compliant |
-| Special Characters (L, #, W) | ✅ | ✅ | Identical behavior |
-| Year Specification | ✅ | ✅ | Same range (1970-3000) |
-| Caching System | ✅ | ✅ | Optimized for each platform |
-| Error Handling | ✅ | ✅ | Consistent error types |
-
-### Syntax Compatibility
-
-**Go Example:**
-```go
-// Create schedule with EOD
-schedule := &Schedule{
-    Minute: stringPtr("0"),
-    Hour: stringPtr("9"),
-    DayOfWeek: stringPtr("1-5"),
-    EOD: parseEOD("E1W"),
-}
-
-// Get next execution
-engine := New()
-nextTime, _ := engine.Next(*schedule, time.Now())
-
-// Get end time
-endTime := schedule.EndOf(time.Now())
+-- Quarterly patching
+'0 0 4 * */3 SAT#1'      -- 1st Saturday of quarter at 04:00
 ```
 
-**TypeScript Example:**
-```typescript
-// Create schedule with EOD  
-const schedule = new Schedule("0 0 9 * * 1-5", "E1W");
+#### Human Resources
+```sql
+-- Monthly all-hands
+'0 30 10 * * 1#1'        -- 1st Monday at 10:30
 
-// Get next execution
-const nextTime = getNext(schedule, new Date());
+-- Performance reviews
+'0 0 14 * */6 3#3'       -- 3rd Wednesday, every 6 months at 14:00
 
-// Get end time
-const endTime = schedule.endOf(new Date());
+-- Training sessions
+'0 0 9 * * 5#2'          -- 2nd Friday at 09:00
 ```
 
-### API Method Mapping
+### 2. Complex Business Rules
 
-| Operation | Go | TypeScript |
-|-----------|----|-----------:|
-| Next execution | `engine.Next(schedule, time)` | `getNext(schedule, date)` |
-| Previous execution | `engine.Prev(schedule, time)` | `getPrev(schedule, date)` |
-| End time | `schedule.EndOf(time)` | `schedule.endOf(date)` |
-| Start time | `schedule.StartOf(time)` | `schedule.startOf(date)` |
-| Range check | `schedule.IsRangeNow(time)` | `schedule.isRangeNow(date)` |
-| Has EOD | `schedule.HasEOD()` | `schedule.hasEOD()` |
+#### Multi-Stage Processing
+```sql
+-- Project deadline: 2nd Friday + 2 weeks for review
+'0 0 17 * * 5#2 E2W'
 
-### Data Type Consistency
+-- Budget planning: Last day of quarter - 1 week (conceptual)
+'0 0 9 L * * E0Q S-1W'
 
-**Time Handling:**
-- Go: `time.Time` with nanosecond precision
-- TypeScript: `Date` with millisecond precision  
-- Both handle timezone conversions identically
-
-**Error Types:**
-- Go: Custom error types with detailed messages
-- TypeScript: Error objects with same message formats
-
-**Expression Parsing:**
-- Identical validation rules
-- Same error messages for invalid expressions
-- Consistent field range checking
-
-### Testing Compatibility
-
-Both implementations share the same test cases to ensure identical behavior:
-
-```bash
-# Go tests
-go test -v ./...
-
-# TypeScript tests  
-npm test
-# or
-bun test
+-- Contract renewal: 1st Monday + month end - 5 days (conceptual)
+'0 0 10 * * 1#1 E0M-5D'
 ```
 
-**Shared Test Scenarios:**
-- EOD calculations across timezone boundaries
-- Complex cron expressions with all features
-- Edge cases (leap years, month boundaries, DST transitions)
-- Performance benchmarks for large-scale usage
-
-## Timezone Support
-
-### Format
-```
-cron_expression TZ:timezone_name
+#### Conditional Logic (Future Enhancement)
+```sql
+-- IF last Friday THEN week end ELSE month end
+'IF(5L) E1W ELSE E0M'    -- Conceptual future syntax
 ```
 
-### Timezone Examples
-```
-0 0 9 * * * TZ:UTC                      # 9 AM UTC
-0 0 12 * * 1-5 TZ:America/New_York      # Noon ET, weekdays
-0 30 8 * * * TZ:Europe/Istanbul         # 8:30 AM Turkey time
-0 0 15 * * 5 TZ:Asia/Tokyo              # 3 PM JST, Fridays
-```
+### 3. Integration Patterns
 
-### Combined with Week of Year
-```
-0 0 9 * * 1-5 WOY:1-26 TZ:Europe/London # Business hours, first half year, London time
-```
+#### Database Integration
+```sql
+-- Job scheduling table
+CREATE TABLE scheduled_jobs (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    expression TEXT NOT NULL,  -- Any JCRON expression type
+    next_run TIMESTAMPTZ,
+    enabled BOOLEAN DEFAULT true
+);
 
-### Combined with EOD
-```
-0 0 9 * * 1-5 TZ:Europe/London EOD:E8H  # London work day + 8 hours
-0 30 14 * * * WOY:1-26 TZ:UTC EOD:E45M  # First half year, UTC, 45 minutes duration
-```
-
-## Predefined Shortcuts
-
-### Standard Shortcuts
-```
-@yearly, @annually   # 0 0 0 1 1 *     (January 1st)
-@monthly            # 0 0 0 1 * *     (1st of month)
-@weekly             # 0 0 0 * * 0     (Sunday)
-@daily, @midnight   # 0 0 0 * * *     (Midnight)
-@hourly             # 0 0 * * * *     (Top of hour)
+-- Update next run times
+UPDATE scheduled_jobs 
+SET next_run = jcron.next_time(expression, NOW())
+WHERE enabled = true;
 ```
 
-## Examples
+#### Application Integration
+```python
+# Python example
+import psycopg2
 
-### Basic Scheduling
-```
-# Every minute
-* * * * * *
-
-# Every hour at minute 0
-0 * * * * *
-
-# Every day at midnight
-0 0 0 * * *
-
-# Every Monday at 9 AM
-0 0 9 * * 1
-
-# Every weekday at 9 AM
-0 0 9 * * 1-5
-
-# Every 15 minutes during business hours
-0 */15 9-17 * * 1-5
+def schedule_job(expression, job_name):
+    """Schedule a job using any JCRON expression type"""
+    sql = """
+        INSERT INTO scheduled_jobs (name, expression, next_run)
+        VALUES (%s, %s, jcron.next_time(%s))
+    """
+    cursor.execute(sql, (job_name, expression, expression))
 ```
 
-### Advanced Scheduling
-```
-# Last Friday of every month at 5 PM
-0 0 17 * * 5L
-
-# Second Tuesday of every month at 2 PM
-0 0 14 * * 2#2
-
-# Every 5 minutes on weekdays, but only on 1st and 15th
-0 */5 * 1,15 * 1-5
-
-# Quarterly reporting (1st day of quarter at 8 AM)
-0 0 8 1 1,4,7,10 *
-
-# End of business day on last workday of month
-0 0 17 LW * *
-
-# First half of year, Mondays at 9 AM
-0 0 9 * * 1 WOY:1-26
-
-# Every other week, Friday afternoons
-0 0 15 * * 5 WOY:*/2
-```
-
-### EOD Scheduling
-```
-# Daily standup meeting (9 AM) with 30-minute duration
-0 0 9 * * 1-5 EOD:E30M
-
-# Sprint planning (Monday 9 AM) for 2-week sprint
-0 0 9 * * 1 EOD:E2W E[sprint_planning]
-
-# Monthly report due at end of month
-0 0 0 1 * * EOD:E1M M
-
-# Quarterly review with flexible end time
-0 0 9 1 1,4,7,10 * EOD:E2H Q
-```
+---
 
 ## Performance & Optimization
 
-### Calculation Efficiency
+### 1. Computational Complexity
 
-**Mathematical "Next Jump" Algorithm:**
-- JCRON uses mathematical calculations instead of iterative time checking
-- Directly computes the next valid execution time
-- Significant performance gains for long-interval schedules
+#### Expression Types by Performance
+1. **Traditional Cron**: O(1) bitmask operations (fastest)
+2. **WOY Syntax**: O(1) week number calculations (very fast)
+3. **Timezone Syntax**: O(1) timezone conversion (very fast)
+4. **Simple EOD**: O(1) mathematical calculations (very fast)  
+5. **Sequential EOD**: O(n) where n = number of units (fast)
+6. **L/# Syntax**: O(d) where d = days in month (moderate)
+7. **Hybrid**: O(cron + eod) combined complexity (moderate)
 
-**Caching Strategy:**
-- Cron expressions parsed once, cached as optimized representations
-- Integer-based bit masks for fast field matching
-- Cache keys include all components (cron + timezone + EOD)
+#### Optimization Strategies
+- **Caching**: Parse results for frequently used expressions
+- **Indexing**: Database indexes on next_run columns
+- **Batch Processing**: Update multiple jobs in single transaction
 
-**Memory Usage:**
-- Lightweight Schedule structs/objects
-- Minimal memory overhead per job
-- Efficient string interning for field values
+### 2. Memory Usage
 
-### Benchmarks
+#### Expression Storage
+- Parsed expressions can be cached in memory
+- JSON representation for complex expressions
+- Minimal memory footprint for simple expressions
 
-**Go Performance:**
-```
-BenchmarkNext-8         1000000    1200 ns/op    32 B/op    1 allocs/op
-BenchmarkEODCalc-8       500000    2500 ns/op    64 B/op    2 allocs/op
-BenchmarkComplexCron-8   200000    5000 ns/op   128 B/op    3 allocs/op
-```
+#### Processing Memory
+- Stateless functions require minimal working memory
+- No large data structures needed
+- Efficient timestamp calculations
 
-**TypeScript Performance:**
-```
-Simple cron expressions:     ~0.1ms per calculation
-Complex EOD calculations:    ~0.5ms per calculation  
-Timezone conversions:        ~0.2ms per calculation
-```
+### 3. Scalability Considerations
 
-### Scalability Notes
+#### Database Scaling
+```sql
+-- Partitioning by next_run date
+CREATE TABLE scheduled_jobs_2024_01 PARTITION OF scheduled_jobs
+FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
 
-- **Concurrent Safety**: Both implementations are thread-safe
-- **Large Scale**: Tested with 10,000+ simultaneous schedules
-- **Memory Efficiency**: O(1) memory per schedule after parsing
-- **CPU Usage**: Minimal CPU overhead during execution
-
-## Implementation Notes
-
-### Field Parsing Order
-1. **Preprocessing**: Trim whitespace, normalize separators
-2. **Extension Extraction**: Extract WOY:, TZ:, EOD: modifiers
-3. **Field Count Detection**: Determine 5, 6, or 7 field format
-4. **Main Field Parsing**: Parse core cron fields with validation
-5. **Special Character Processing**: Handle L, #, W characters
-6. **Range & List Processing**: Expand ranges and comma-separated values
-7. **Validation**: Ensure field values within valid ranges
-8. **Optimization**: Convert to internal representation for fast lookup
-
-### Special Character Precedence
-1. **L and W in day field**: Last day of month, nearest weekday
-2. **# and L in weekday field**: Nth weekday, last weekday of month
-3. **List values (,)**: Multiple specific values
-4. **Ranges (-)**: Continuous value ranges
-5. **Step values (/)**: Regular intervals within ranges
-
-### Error Handling
-
-**Common Validation Errors:**
-```
-Invalid field count (must be 5, 6, or 7)
-Field value out of range (e.g., hour > 23)
-Invalid special character usage (e.g., L in minute field)
-Malformed EOD expression
-Unknown timezone identifier
-Conflicting Nth weekday (e.g., 6#5 - no 5th Saturday in some months)
+-- Indexes for performance  
+CREATE INDEX idx_jobs_next_run ON scheduled_jobs (next_run) 
+WHERE enabled = true;
 ```
 
-**Error Recovery:**
-- Graceful degradation for minor syntax issues
-- Detailed error messages with field positions
-- Suggestion system for common mistakes
+#### Application Scaling
+- Stateless design enables horizontal scaling
+- No shared state between function calls
+- Thread-safe operations
 
-### Edge Case Handling
+### 4. Monitoring & Debugging
 
-**Calendar Edge Cases:**
-- **Leap Years**: February 29th handling in EOD calculations
-- **Month Boundaries**: 31st day in 30-day months
-- **Daylight Saving Time**: Automatic timezone transition handling
-- **Year Transitions**: December 31st to January 1st boundary
-
-**EOD Edge Cases:**
-- **Week Boundaries**: Handling when current day is Sunday
-- **Month End Calculations**: Variable month lengths
-- **Timezone Transitions**: EOD calculations across DST changes
-- **Time Reference Points**: Start vs. end reference disambiguation
-
-### Compatibility Notes
-
-**Vixie-Cron Compatibility:**
-- Full backward compatibility with standard cron syntax
-- OR logic for day/weekday field combinations
-- Standard field ranges and special characters
-
-**ISO Standards Compliance:**
-- ISO 8601 week numbering for WOY calculations
-- ISO timezone identifier support
-- ISO duration format inspiration for EOD syntax
-
-**Cross-Platform Consistency:**
-- Identical calculation results between Go and TypeScript
-- Same timezone handling using standard libraries
-- Synchronized test suites ensuring compatibility
-
-### Extension Guidelines
-
-**Adding New Features:**
-1. Maintain backward compatibility
-2. Follow existing syntax patterns
-3. Add comprehensive test coverage
-4. Update both Go and TypeScript implementations
-5. Document with clear examples
-
-**Custom Extensions:**
-- Use `X:` prefix for experimental features
-- Implement validation for new syntax components
-- Consider performance impact on core calculations
-- Provide migration path for deprecated features
-
-## Best Practices
-
-### Expression Design
-- **Start Simple**: Begin with basic cron, add complexity gradually
-- **Test Thoroughly**: Verify behavior across month/year boundaries
-- **Document Intent**: Comment complex expressions in code
-- **Consider Timezones**: Always specify timezone for global applications
-
-### Performance Optimization
-- **Cache Schedules**: Reuse parsed Schedule objects
-- **Batch Operations**: Group multiple schedule calculations
-- **Monitor Usage**: Track execution patterns for optimization
-- **Profile Regularly**: Measure actual performance in production
-
-### EOD Usage Patterns
-- **Short Durations**: Use `S` reference for time-boxed tasks
-- **Period Boundaries**: Use `E` reference for deadline-based scheduling
-- **Complex Timing**: Combine with timezone for global coordination
-- **Validation**: Always verify EOD calculations in tests
-5. Step values (`/`)
-
-### Validation Rules
-- Second: 0-59
-- Minute: 0-59  
-- Hour: 0-23
-- Day: 1-31 (validated against month)
-- Month: 1-12
-- Weekday: 0-7 (0 and 7 = Sunday)
-- Year: 1970-3000
-- WeekOfYear: 1-53 (ISO 8601 week numbering)
-- Step values must be positive
-- Range start must be ≤ range end
-- `#` values: 1-5 (nth occurrence)
-- `L` cannot combine with other day values
-
-### Error Conditions
-- Invalid field count
-- Out-of-range values
-- Invalid step values (0 or negative)
-- Invalid special character combinations
-- Malformed EOD syntax
-- Invalid timezone names
-- February 29th on non-leap years
-
-### Compatibility Notes
-- **Standard cron**: Fields 2-6 (minute through weekday)
-- **Quartz cron**: Fields 1-7 (second through year)
-- **Vixie cron**: OR logic for day/weekday
-- **JCRON extensions**: 
-  - EOD (End of Duration) calculations
-  - WOY (Week of Year) constraints  
-  - TZ (Timezone) support
-  - Enhanced special characters
-  - Full parsing via `FromJCronString()` function
-
-### JCRON String Format
-Complete format supported by `FromJCronString()`:
-```
-"second minute hour day month weekday [year] [WOY:week_pattern] [TZ:timezone] [EOD:duration]"
+#### Performance Monitoring
+```sql
+-- Execution time tracking
+SELECT 
+    expression,
+    AVG(EXTRACT(EPOCH FROM (end_time - start_time))) as avg_duration_ms
+FROM performance_log 
+GROUP BY expression;
 ```
 
-Examples:
-```go
-// Golang usage examples
-schedule1, _ := jcron.FromJCronString("0 30 9 * * MON-FRI WOY:1-26 EOD:E8H")
-schedule2, _ := jcron.FromJCronString("0 30 14 * * 1-5 WOY:1-26 TZ:UTC EOD:E45M")
-schedule3, _ := jcron.FromJCronString("0 0 9 * * 1 WOY:*/2 TZ:Europe/London")
+#### Debug Helpers
+```sql
+-- Expression analysis
+SELECT 
+    expression,
+    jcron.parse_expression(expression) as parsed_result,
+    jcron.next_time(expression, NOW()) as next_occurrence;
 ```
 
-This specification ensures full compatibility with existing cron implementations while providing powerful extensions for modern scheduling needs.
+---
+
+## Future Enhancements
+
+### 1. Advanced Hybrid Expressions
+
+#### Multiple EOD in Single Expression
+```sql
+'0 0 9 * * * E1W E0M'    -- Hour 9 → week end AND month end
+```
+
+#### Conditional Logic
+```sql
+'IF(MON) E1W ELSE E0M'   -- If Monday then week end, else month end
+```
+
+### 2. Named Patterns
+```sql
+'@monthly_end'           -- Predefined pattern for month end
+'@payroll_friday'        -- Business-specific pattern
+'@quarter_close'         -- Financial quarter patterns
+```
+
+### 3. Duration Calculations
+```sql
+'DURATION(E0W, E1M)'     -- Calculate duration between expressions
+```
+
+### 4. Business Calendar Integration
+```sql
+'E0W SKIP_HOLIDAYS'      -- Skip holidays in calculations
+'BUSINESS_DAYS(5)'       -- 5 business days from now
+```
+
+---
+
+## Quick Reference
+
+### Syntax Cheat Sheet
+
+#### Traditional Cron
+```sql
+'0 30 14 * * *'          -- Daily 14:30
+'0 0 9 * * MON'          -- Monday 09:00
+'0 */10 9-17 * * 1-5'    -- Every 10min, 9-17h, weekdays
+```
+
+#### WOY (Week of Year)
+```sql
+'0 0 9 * * MON WOY:1'    -- Monday 09:00 on first week
+'0 30 14 * * * WOY:*/2'  -- Daily 14:30 every 2nd week
+'0 0 12 * * FRI WOY:1-13' -- Friday noon during Q1
+'0 15 16 * * * WOY:26,52' -- Daily 16:15 on weeks 26,52
+```
+
+#### TZ (Timezone)
+```sql
+'0 0 9 * * * TZ:UTC'           -- Daily 09:00 UTC
+'0 30 14 * * MON TZ:America/New_York' -- Monday 14:30 ET
+'E0W TZ:Europe/London'         -- Week end London time
+'0 0 12 * * * WOY:*/2 TZ:+03:00' -- Bi-weekly noon UTC+3
+```
+
+#### EOD/SOD
+```sql
+'E0W'                    -- This week end
+'E1M2D'                  -- Next month + 2 days end
+'S0D'                    -- Today start
+'S1W'                    -- Next week start
+```
+
+#### L/# Syntax
+```sql
+'0 0 17 L * *'           -- Last day of month 17:00
+'0 0 9 * * 5L'           -- Last Friday 09:00
+'0 30 14 * * 2#1'        -- 1st Tuesday 14:30
+'0 0 10 * * 5#3'         -- 3rd Friday 10:00
+```
+
+#### Hybrid
+```sql
+'0 0 9 * * MON E0M'      -- Monday 09:00 → month end
+'* * 3 * * * E1W'        -- Hour 3 → next week end
+'0 0 17 * * 5L E1W'      -- Last Friday 17:00 → next week end
+```
+
+### Function Reference
+```sql
+-- Universal functions for all syntax types
+jcron.next_time(expression, from_time?, timezone?)
+jcron.prev_time(expression, from_time?, timezone?)
+jcron.is_time_match(expression, check_time, tolerance?)
+jcron.parse_expression(expression)
+```
+
+---
+
+## Conclusion
+
+JCRON represents a paradigm shift in scheduling systems by:
+
+1. **Unifying** multiple expression types under a single API
+2. **Providing** mathematical consistency with 0-based indexing  
+3. **Enabling** complex time calculations through sequential processing
+4. **Supporting** real-world business scheduling needs
+5. **Maintaining** high performance across all expression types
+
+The system bridges the gap between traditional cron scheduling and modern business requirements, providing developers with a powerful, intuitive, and comprehensive scheduling solution.
+
+Whether you need simple daily schedules or complex multi-stage time calculations, JCRON provides the tools to express your scheduling needs naturally and efficiently.
+
+---
+
+**JCRON v1.0** - *Unified Scheduling for the Modern Era*
+
+*Documentation Version: 1.0*  
+*Last Updated: August 2024*

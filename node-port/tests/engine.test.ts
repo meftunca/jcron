@@ -138,16 +138,16 @@ describe("Engine.next - Comprehensive Tests", () => {
       schedule: new Schedule(
         "0",
         "0",
-        "20",
-        "4",
-        "7",
+        "9",
+        "*",
+        "*",
         "*",
         null,
         null, // woy
         "America/New_York" // tz
       ),
-      fromTime: mustParseTime("2025-07-01T00:00:00Z"),
-      expectedTime: mustParseTime("2025-07-05T00:00:00.000Z"), // July 4th + DST conversion
+      fromTime: mustParseTime("2025-01-15T08:00:00Z"), // UTC time
+      expectedTime: mustParseTime("2025-01-15T14:00:00Z"), // 9 AM NYC = 2 PM UTC (EST)
     },
 
     // --- COMPLEX PATTERN SIMPLIFICATIONS ---

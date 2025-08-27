@@ -14,6 +14,7 @@ import {
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
 import { ParseError } from "./errors";
 import { Schedule } from "./schedule";
+import { EndOfDuration, ReferencePoint } from "./eod";
 
 // Optimized expanded schedule with Sets for faster lookups
 class ExpandedSchedule {
@@ -73,6 +74,11 @@ export class Engine {
   private static readonly maxCacheSize = 1000;
 
   public next(schedule: Schedule, fromTime: Date): Date {
+    // Handle pure EOD/SOD expressions (no cron pattern, just EOD calculation)
+    if (schedule.eod && this._isPureEodSchedule(schedule)) {
+      return this._applyEodCalculation(fromTime, schedule.eod, schedule.tz || "UTC");
+    }
+    
     const expSchedule = this._getExpandedSchedule(schedule);
     const location = expSchedule.timezone;
     
@@ -137,22 +143,65 @@ export class Engine {
         continue;
       }
       if (!this._isWeekOfYearMatch(searchTime, expSchedule)) {
-        searchTime = expSchedule.isUTC ?
-          set(addDays(searchTime, 1), {
-            hours: 0,
-            minutes: 0,
-            seconds: 0,
-            milliseconds: 0,
-          }) :
-          fromZonedTime(
-            set(addDays(zonedView, 1), {
+        // FIXED: Support backward week search for start-of-week scenarios
+        const currentWeek = this._getISOWeek(searchTime, expSchedule);
+        const validWeeks = Array.from(expSchedule.weeksOfYearSet).sort((a, b) => a - b);
+        let targetWeek = null;
+        
+        // Find target week - prefer earlier weeks if we're at start of current week
+        const dayOfWeek = expSchedule.isUTC ? searchTime.getUTCDay() : toZonedTime(searchTime, location).getDay();
+        
+        for (const week of validWeeks) {
+          if (week < currentWeek && dayOfWeek <= 1) { // Sunday (0) or Monday (1)
+            targetWeek = week;
+            break;
+          } else if (week >= currentWeek) {
+            targetWeek = week;
+            break;
+          }
+        }
+        
+        if (targetWeek && targetWeek < currentWeek) {
+          // If target week is in the past, move to next year instead of going backward
+          const nextYear = expSchedule.isUTC ? searchTime.getUTCFullYear() + 1 : zonedView.getFullYear() + 1;
+          
+          // Set to beginning of next year, then navigate to target week
+          searchTime = expSchedule.isUTC ?
+            new Date(Date.UTC(nextYear, 0, 1, 0, 0, 0, 0)) :
+            fromZonedTime(
+              set(new Date(nextYear, 0, 1), {
+                hours: 0,
+                minutes: 0,
+                seconds: 0,
+                milliseconds: 0,
+              }),
+              location
+            );
+          
+          // Calculate days to add to reach target week in next year
+          const daysToAdd = (targetWeek - 1) * 7;
+          searchTime = expSchedule.isUTC ?
+            addDays(searchTime, daysToAdd) :
+            fromZonedTime(addDays(toZonedTime(searchTime, location), daysToAdd), location);
+        } else {
+          // Go forward (original logic)
+          searchTime = expSchedule.isUTC ?
+            set(addDays(searchTime, 1), {
               hours: 0,
               minutes: 0,
               seconds: 0,
               milliseconds: 0,
-            }),
-            location
-          );
+            }) :
+            fromZonedTime(
+              set(addDays(zonedView, 1), {
+                hours: 0,
+                minutes: 0,
+                seconds: 0,
+                milliseconds: 0,
+              }),
+              location
+            );
+        }
         continue;
       }
       if (!this._isDayMatch(searchTime, expSchedule)) {
@@ -267,6 +316,12 @@ export class Engine {
             location
           );
         continue;
+      }
+
+      // Check if schedule has EOD (End of Duration) specification
+      if (schedule.eod) {
+        // Apply EOD calculation to the found schedule time
+        return this._applyEodCalculation(searchTime, schedule.eod, expSchedule.timezone);
       }
 
       return searchTime;
@@ -440,6 +495,12 @@ export class Engine {
             location
           );
         continue;
+      }
+
+      // Check if schedule has EOD (End of Duration) specification
+      if (schedule.eod) {
+        // Apply EOD calculation to the found schedule time
+        return this._applyEodCalculation(searchTime, schedule.eod, expSchedule.timezone);
       }
 
       return searchTime;
@@ -687,18 +748,11 @@ export class Engine {
   private _getISOWeek(date: Date, schedule?: ExpandedSchedule): number {
     let targetDate: Date;
     
-    if (schedule?.isUTC === false && schedule?.timezone !== "UTC") {
-      // For non-UTC timezones, work with the zoned time
-      const zonedTime = toZonedTime(date, schedule.timezone);
-      targetDate = new Date(
-        Date.UTC(zonedTime.getFullYear(), zonedTime.getMonth(), zonedTime.getDate())
-      );
-    } else {
-      // For UTC, use UTC date components
-      targetDate = new Date(
-        Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-      );
-    }
+    // FIXED: Always use UTC for week calculation to maintain consistency with PostgreSQL
+    // This prevents timezone conversion from changing week numbers
+    targetDate = new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+    );
     
     // Thursday determines the year of the week
     targetDate.setUTCDate(targetDate.getUTCDate() + 4 - (targetDate.getUTCDay() || 7));
@@ -760,5 +814,50 @@ export class Engine {
     
     // Wrap to next period
     return [sortedArray[0], true];
+  }
+
+  /**
+   * Apply EOD (End of Duration) calculation to a schedule reference time
+   * Implements JCRON sequential processing for complex expressions
+   */
+  private _applyEodCalculation(referenceTime: Date, eod: EndOfDuration, timezone: string): Date {
+    // Determine if this is SOD (Start of Duration) or EOD (End of Duration)
+    // Check if the original string started with 'S'
+    const eodString = eod.toString();
+    const isSOD = eodString.startsWith('S');
+    
+    // Use the appropriate calculation method
+    const result = isSOD ? 
+      eod.calculateStartDate(referenceTime) : 
+      eod.calculateEndDate(referenceTime);
+    
+    // Apply timezone if the result needs timezone conversion
+    if (timezone !== "UTC") {
+      // The result should be in the specified timezone
+      try {
+        return fromZonedTime(toZonedTime(result, "UTC"), timezone);
+      } catch (error) {
+        // If timezone conversion fails, return the result as-is
+        console.warn(`JCRON: Failed to convert EOD/SOD result to timezone ${timezone}, using UTC`);
+        return result;
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Check if this is a pure EOD/SOD schedule (no cron pattern, just EOD calculation)
+   */
+  private _isPureEodSchedule(schedule: Schedule): boolean {
+    // A pure EOD schedule has minimal cron pattern (like "0 0 0 1 1 *") and an EOD object
+    // This is created when parsing expressions like "E0W", "S1M", etc.
+    return schedule.eod !== null &&
+           schedule.s === "0" &&
+           schedule.m === "0" &&
+           schedule.h === "0" &&
+           schedule.D === "1" &&
+           schedule.M === "1" &&
+           schedule.dow === "*";
   }
 }

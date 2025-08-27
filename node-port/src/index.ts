@@ -4,6 +4,8 @@
 import { Engine } from "./engine";
 import { fromCronSyntax, fromJCronString, Schedule, validateSchedule } from "./schedule";
 import { isValidOptimized, validateCronOptimized, getPatternOptimized, BatchValidator } from "./validation";
+import { parseEoD } from "./eod";
+import { ParseError } from "./errors";
 
 // Core Engine and Schedule
 export { Engine } from "./engine";
@@ -139,16 +141,45 @@ try {
 
 /**
  * Helper function to normalize input to Schedule
+ * Implements JCRON unified API auto-detection logic
  */
 function normalizeToSchedule(input: string | Schedule): Schedule {
   if (typeof input === 'string') {
-    // Try to parse as JCRON string first (with WOY:, TZ:, or EOD: extensions)
-    if (input.includes('WOY:') || input.includes('TZ:') || input.includes('EOD:')) {
-      return fromJCronString(input);
-    } else {
-      // Parse as standard cron syntax
-      return fromCronSyntax(input);
+    const expression = input.trim();
+    
+    // JCRON Auto-Detection Logic (following spesification order):
+    
+    // 1. Check for pure EOD/SOD expressions (^[ES][0-9])
+    if (/^[ES][0-9]/.test(expression)) {
+      // Pure EOD/SOD expression - convert to schedule with EOD field
+      try {
+        const eod = parseEoD(expression);
+        // Create a "run once" schedule for EOD/SOD calculation
+        return new Schedule("0", "0", "0", "1", "1", "*", null, null, null, eod);
+      } catch (error) {
+        throw new ParseError(`Invalid EOD/SOD format: ${expression}`);
+      }
     }
+    
+    // 2. Check for hybrid expressions (cron + EOD/SOD patterns)
+    const hasEOD = expression.includes('EOD:') || /\s+[ES][0-9]/.test(expression);
+    
+    // 3. Check for JCRON extensions (WOY:, TZ:, or EOD:)
+    const hasJCronExtensions = expression.includes('WOY:') || expression.includes('TZ:') || hasEOD;
+    
+    if (hasJCronExtensions) {
+      return fromJCronString(expression);
+    }
+    
+    // 4. Check for L/# syntax in cron fields
+    const hasSpecialSyntax = expression.includes('L') || expression.includes('#');
+    
+    if (hasSpecialSyntax) {
+      return fromJCronString(expression);
+    }
+    
+    // 5. Default to traditional cron parsing
+    return fromCronSyntax(expression);
   }
   return validateSchedule(input);
 }
@@ -226,6 +257,36 @@ function validateScheduleFields(schedule: Schedule): boolean {
   if (!validateField(schedule.woy, 1, 53, 'weekOfYear')) return false; // week of year: 1-53
 
   return true;
+}
+
+/**
+ * JCRON Unified API: Get next execution time for any JCRON expression type
+ * Supports: Traditional Cron, WOY, TZ, EOD/SOD, L/#, and Hybrid expressions
+ * Auto-detects expression type and applies appropriate processing
+ */
+export function next_time(expression: string, fromTime?: Date, timezone?: string): Date {
+  return getNext(expression, fromTime);
+}
+
+/**
+ * JCRON Unified API: Get previous execution time for any JCRON expression type
+ */
+export function prev_time(expression: string, fromTime?: Date, timezone?: string): Date {
+  return getPrev(expression, fromTime);
+}
+
+/**
+ * JCRON Unified API: Check if time matches any JCRON expression type
+ */
+export function is_time_match(expression: string, checkTime?: Date, tolerance?: number): boolean {
+  return match(expression, checkTime);
+}
+
+/**
+ * JCRON Unified API: Parse any JCRON expression type to Schedule object
+ */
+export function parse_expression(expression: string): Schedule {
+  return normalizeToSchedule(expression);
 }
 
 /**

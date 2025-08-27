@@ -13,7 +13,7 @@ func TestEODFix(t *testing.T) {
 	fmt.Println("=== GO EOD IMPLEMENTATION TEST ===")
 
 	// Test E1W parsing
-	eod, err := ParseEoD("E1W")
+	eod, err := ParseEOD("E1W")
 	if err != nil {
 		log.Fatalf("Failed to parse E1W: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestEODFix(t *testing.T) {
 	fmt.Println("✅ E1W correctly calculates end of current week")
 
 	// Test E2W (end of next week)
-	eod2, err := ParseEoD("E2W")
+	eod2, err := ParseEOD("E2W")
 	if err != nil {
 		t.Fatalf("Failed to parse E2W: %v", err)
 	}

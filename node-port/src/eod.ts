@@ -17,7 +17,7 @@ export enum ReferencePoint {
 
 /**
  * End-of-Duration (EoD) format representation
- * Format: E[N_Units][R_Point]
+ * Format: E[N_Units][R_Point] or S[N_Units][R_Point]
  * Example: E1DT12H M (1 day 12 hours until end of month)
  */
 export class EndOfDuration {
@@ -30,6 +30,7 @@ export class EndOfDuration {
   public readonly seconds: number = 0;
   public readonly referencePoint: ReferencePoint | null = null;
   public readonly eventIdentifier: string | null = null;
+  public readonly isSOD: boolean = false; // Start of Duration flag
 
   constructor(
     years: number = 0,
@@ -40,7 +41,8 @@ export class EndOfDuration {
     minutes: number = 0,
     seconds: number = 0,
     referencePoint: ReferencePoint | null = null,
-    eventIdentifier: string | null = null
+    eventIdentifier: string | null = null,
+    isSOD: boolean = false
   ) {
     this.years = years;
     this.months = months;
@@ -51,30 +53,31 @@ export class EndOfDuration {
     this.seconds = seconds;
     this.referencePoint = referencePoint;
     this.eventIdentifier = eventIdentifier;
+    this.isSOD = isSOD;
   }
 
   /**
    * Convert EoD to standard EoD string format
    */
   toString(): string {
-    // Simple format
-    const isSimpleFormat = this.referencePoint === ReferencePoint.START || this.referencePoint === ReferencePoint.END;
+    // Use the isSOD flag to determine prefix
+    const prefix = this.isSOD ? "S" : "E";
+    
+    // Simple format for single-unit expressions
     const unitCount = [this.years, this.months, this.weeks, this.days, this.hours, this.minutes, this.seconds].filter(v => v > 0).length;
     
-    if (isSimpleFormat && unitCount === 1) {
-      const prefix = this.referencePoint === ReferencePoint.START ? "S" : "E";
-      
+    if (unitCount === 1) {
       if (this.years > 0) return `${prefix}${this.years}Y`;
       if (this.months > 0) return `${prefix}${this.months}M`;
       if (this.weeks > 0) return `${prefix}${this.weeks}W`;
       if (this.days > 0) return `${prefix}${this.days}D`;
-      if (this.hours > 0) return `${prefix}${this.hours}h`;
+      if (this.hours > 0) return `${prefix}${this.hours}H`;
       if (this.minutes > 0) return `${prefix}${this.minutes}m`; // lowercase m for minutes
       if (this.seconds > 0) return `${prefix}${this.seconds}S`;
     }
     
     // Complex format
-    let result = "E";
+    let result = prefix;
     if (this.years > 0) result += `${this.years}Y`;
     if (this.months > 0) result += `${this.months}M`;
     if (this.weeks > 0) result += `${this.weeks}W`;
@@ -93,11 +96,28 @@ export class EndOfDuration {
 
   /**
    * Calculate the end date based on a starting date
-   * EOD format: En[Unit] means "end of nth [Unit]" where n starts from 1
-   * E1W = end of current week, E2W = end of next week, etc.
+   * JCRON EOD format: 0-based indexing system
+   * E0W = this week end, E1W = next week end, E2W = 2 weeks from now end, etc.
    */
   calculateEndDate(fromDate: Date): Date {
-    const result = new Date(fromDate);
+    return this._calculateDate(fromDate, true); // true = end of period
+  }
+
+  /**
+   * Calculate the start date based on a starting date
+   * JCRON SOD format: 0-based indexing system
+   * S0W = this week start, S1W = next week start, etc.
+   */
+  calculateStartDate(fromDate: Date): Date {
+    return this._calculateDate(fromDate, false); // false = start of period
+  }
+
+  /**
+   * Internal method to calculate either start or end date
+   * Implements JCRON sequential processing: E1M2W3D = Base → +1 Month End → +2 Week End → +3 Day End
+   */
+  private _calculateDate(fromDate: Date, isEndOfPeriod: boolean): Date {
+    let result = new Date(fromDate);
     
     // Handle simple duration additions for START/END reference points
     if (this.referencePoint === ReferencePoint.START || this.referencePoint === ReferencePoint.END || !this.referencePoint) {
@@ -112,59 +132,146 @@ export class EndOfDuration {
       return result;
     }
     
-    // Handle special reference points (DAY, WEEK, MONTH, etc.)
-    // EOD format: En[Unit] where n=1 means current period, n=2 means next period, etc.
-    switch (this.referencePoint) {
-      case ReferencePoint.DAY:
-        // E1D = end of current day, E2D = end of next day, etc.
-        if (this.days > 1) {
-          result.setDate(result.getDate() + (this.days - 1));
-        }
+    // JCRON Sequential Processing for complex expressions
+    // Process in order: Years → Months → Weeks → Days → Hours → Minutes → Seconds
+    // Each step finds the end/start of the period after adding the units
+    
+    // Step 1: Process Years
+    if (this.years > 0) {
+      result.setFullYear(result.getFullYear() + this.years);
+      if (isEndOfPeriod) {
+        result.setMonth(11, 31); // End of year
         result.setHours(23, 59, 59, 999);
-        break;
-        
-      case ReferencePoint.WEEK:
-        // E1W = end of current week, E2W = end of next week, etc.
-        if (this.weeks > 1) {
-          result.setDate(result.getDate() + ((this.weeks - 1) * 7));
-        }
-        // Set to end of the week (Sunday 23:59:59) - ISO 8601 standard
-        // Monday = 1, Sunday = 0, so we need (6 - getDay()) to reach Sunday
-        // For Monday (1): 6 - 1 = 5 days until Sunday
-        // For Sunday (0): 6 - 0 = 6 days until next Sunday (but we want 0)
+      } else {
+        result.setMonth(0, 1); // Start of year
+        result.setHours(0, 0, 0, 0);
+      }
+    }
+    
+    // Step 2: Process Months
+    if (this.months > 0) {
+      result.setMonth(result.getMonth() + this.months);
+      if (isEndOfPeriod) {
+        result.setMonth(result.getMonth() + 1, 0); // Last day of month
+        result.setHours(23, 59, 59, 999);
+      } else {
+        result.setDate(1); // First day of month
+        result.setHours(0, 0, 0, 0);
+      }
+    }
+    
+    // Step 3: Process Weeks
+    if (this.weeks > 0) {
+      result.setDate(result.getDate() + (this.weeks * 7));
+      if (isEndOfPeriod) {
         const daysUntilSunday = result.getDay() === 0 ? 0 : (7 - result.getDay());
         result.setDate(result.getDate() + daysUntilSunday);
         result.setHours(23, 59, 59, 999);
-        break;
-        
-      case ReferencePoint.MONTH:
-        // E1M = end of current month, E2M = end of next month, etc.
-        if (this.months > 1) {
-          result.setMonth(result.getMonth() + (this.months - 1));
-        }
-        // Set to end of the month (last day 23:59:59)
-        result.setMonth(result.getMonth() + 1, 0);
+      } else {
+        const daysFromMonday = result.getDay() === 0 ? 6 : (result.getDay() - 1);
+        result.setDate(result.getDate() - daysFromMonday);
+        result.setHours(0, 0, 0, 0);
+      }
+    }
+    
+    // Step 4: Process Days
+    if (this.days > 0) {
+      result.setDate(result.getDate() + this.days);
+      if (isEndOfPeriod) {
         result.setHours(23, 59, 59, 999);
-        break;
-        
-      case ReferencePoint.QUARTER:
-        // E1Q = end of current quarter, E2Q = end of next quarter, etc.
-        const currentQuarter = Math.floor(result.getMonth() / 3);
-        const targetQuarter = currentQuarter + (this.months > 0 ? this.months - 1 : 0);
-        const quarterEndMonth = (targetQuarter + 1) * 3 - 1;
-        result.setMonth(quarterEndMonth + 1, 0);
-        result.setHours(23, 59, 59, 999);
-        break;
-        
-      case ReferencePoint.YEAR:
-        // E1Y = end of current year, E2Y = end of next year, etc.
-        if (this.years > 1) {
-          result.setFullYear(result.getFullYear() + (this.years - 1));
-        }
-        // Set to end of the year (Dec 31 23:59:59)
-        result.setMonth(11, 31);
-        result.setHours(23, 59, 59, 999);
-        break;
+      } else {
+        result.setHours(0, 0, 0, 0);
+      }
+    }
+    
+    // Step 5: Process Hours
+    if (this.hours > 0) {
+      result.setHours(result.getHours() + this.hours);
+      if (isEndOfPeriod) {
+        result.setMinutes(59, 59, 999);
+      } else {
+        result.setMinutes(0, 0, 0);
+      }
+    }
+    
+    // Step 6: Process Minutes
+    if (this.minutes > 0) {
+      result.setMinutes(result.getMinutes() + this.minutes);
+      if (isEndOfPeriod) {
+        result.setSeconds(59, 999);
+      } else {
+        result.setSeconds(0, 0);
+      }
+    }
+    
+    // Step 7: Process Seconds
+    if (this.seconds > 0) {
+      result.setSeconds(result.getSeconds() + this.seconds);
+      if (isEndOfPeriod) {
+        result.setMilliseconds(999);
+      } else {
+        result.setMilliseconds(0);
+      }
+    }
+    
+    // Handle single-unit special reference points
+    const hasMultipleUnits = [this.years, this.months, this.weeks, this.days, this.hours, this.minutes, this.seconds].filter(v => v > 0).length > 1;
+    if (!hasMultipleUnits) {
+      // Single unit expressions like E0W, E1M use specific reference points
+      switch (this.referencePoint) {
+        case ReferencePoint.DAY:
+          if (isEndOfPeriod) {
+            result.setHours(23, 59, 59, 999);
+          } else {
+            result.setHours(0, 0, 0, 0);
+          }
+          break;
+          
+        case ReferencePoint.WEEK:
+          if (isEndOfPeriod) {
+            const daysUntilSunday = result.getDay() === 0 ? 0 : (7 - result.getDay());
+            result.setDate(result.getDate() + daysUntilSunday);
+            result.setHours(23, 59, 59, 999);
+          } else {
+            const daysFromMonday = result.getDay() === 0 ? 6 : (result.getDay() - 1);
+            result.setDate(result.getDate() - daysFromMonday);
+            result.setHours(0, 0, 0, 0);
+          }
+          break;
+          
+        case ReferencePoint.MONTH:
+          if (isEndOfPeriod) {
+            result.setMonth(result.getMonth() + 1, 0);
+            result.setHours(23, 59, 59, 999);
+          } else {
+            result.setDate(1);
+            result.setHours(0, 0, 0, 0);
+          }
+          break;
+          
+        case ReferencePoint.QUARTER:
+          const currentQuarter = Math.floor(result.getMonth() / 3);
+          if (isEndOfPeriod) {
+            const quarterEndMonth = (currentQuarter + 1) * 3 - 1;
+            result.setMonth(quarterEndMonth + 1, 0);
+            result.setHours(23, 59, 59, 999);
+          } else {
+            const quarterStartMonth = currentQuarter * 3;
+            result.setMonth(quarterStartMonth, 1);
+            result.setHours(0, 0, 0, 0);
+          }
+          break;
+          
+        case ReferencePoint.YEAR:
+          if (isEndOfPeriod) {
+            result.setMonth(11, 31);
+            result.setHours(23, 59, 59, 999);
+          } else {
+            result.setMonth(0, 1);
+            result.setHours(0, 0, 0, 0);
+          }
+          break;
+      }
     }
     
     return result;
@@ -196,74 +303,126 @@ export class EndOfDuration {
 
 /**
  * Parse EoD string format to EndOfDuration object
+ * JCRON EOD/SOD format: E[YEARS]Y[MONTHS]M[WEEKS]W[DAYS]D[HOURS]H[MINUTES]M[SECONDS]S
+ * Examples: E0W, E1M, E2Y1M3W, S0D, S1W
  */
 export function parseEoD(eodStr: string): EndOfDuration {
   if (!eodStr) {
     throw new ParseError("EOD string cannot be empty");
   }
   
-  // Simple patterns: E1H, S30M, E15m, etc.
+  // Normalize string - trim whitespace
+  eodStr = eodStr.trim();
+  
+  // Check for EOD (End of Duration) format: E[numbers and units]
+  const eodMatch = eodStr.match(/^E(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:(\d+)H)?(?:(\d+)m)?(?:(\d+)S)?$/i);
+  if (eodMatch) {
+    const [, years, months, weeks, days, hours, minutes, seconds] = eodMatch;
+    
+    // For simple single-unit expressions like E0W, E1M, determine reference point
+    const unitCount = [years, months, weeks, days, hours, minutes, seconds].filter(v => v).length;
+    let referencePoint: ReferencePoint | null = null;
+    
+    if (unitCount === 1) {
+      if (years) referencePoint = ReferencePoint.YEAR;
+      else if (months) referencePoint = ReferencePoint.MONTH;
+      else if (weeks) referencePoint = ReferencePoint.WEEK;
+      else if (days) referencePoint = ReferencePoint.DAY;
+      // For hours, minutes, seconds - use END for duration calculation
+      else referencePoint = ReferencePoint.END;
+    } else {
+      // For complex expressions, use END for sequential processing
+      referencePoint = ReferencePoint.END;
+    }
+    
+    return new EndOfDuration(
+      years ? parseInt(years, 10) : 0,
+      months ? parseInt(months, 10) : 0,
+      weeks ? parseInt(weeks, 10) : 0,
+      days ? parseInt(days, 10) : 0,
+      hours ? parseInt(hours, 10) : 0,
+      minutes ? parseInt(minutes, 10) : 0,
+      seconds ? parseInt(seconds, 10) : 0,
+      referencePoint
+    );
+  }
+  
+  // Check for SOD (Start of Duration) format: S[numbers and units]
+  const sodMatch = eodStr.match(/^S(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:(\d+)H)?(?:(\d+)m)?(?:(\d+)S)?$/i);
+  if (sodMatch) {
+    const [, years, months, weeks, days, hours, minutes, seconds] = sodMatch;
+    
+    // For SOD, always use START reference point
+    let referencePoint: ReferencePoint = ReferencePoint.START;
+    
+    // For simple single-unit expressions, determine specific reference point
+    const unitCount = [years, months, weeks, days, hours, minutes, seconds].filter(v => v).length;
+    if (unitCount === 1) {
+      if (years) referencePoint = ReferencePoint.YEAR;
+      else if (months) referencePoint = ReferencePoint.MONTH;
+      else if (weeks) referencePoint = ReferencePoint.WEEK;
+      else if (days) referencePoint = ReferencePoint.DAY;
+      else referencePoint = ReferencePoint.START;
+    }
+    
+    return new EndOfDuration(
+      years ? parseInt(years, 10) : 0,
+      months ? parseInt(months, 10) : 0,
+      weeks ? parseInt(weeks, 10) : 0,
+      days ? parseInt(days, 10) : 0,
+      hours ? parseInt(hours, 10) : 0,
+      minutes ? parseInt(minutes, 10) : 0,
+      seconds ? parseInt(seconds, 10) : 0,
+      referencePoint,
+      null, // eventIdentifier
+      true  // isSOD = true for SOD expressions
+    );
+  }
+  
+  // Legacy support for simple patterns: E1H, S30M, E15m, etc.
   const simpleMatch = eodStr.match(/^([SE])(\d+)([YMWDdHhmsS])$/);
   if (simpleMatch) {
     const [, startEnd, amount, unit] = simpleMatch;
     const value = parseInt(amount, 10);
+    const isSOD = startEnd.toUpperCase() === 'S';
     
-    // For E patterns, determine the appropriate reference point based on unit
     let referencePoint: ReferencePoint;
-    if (startEnd.toUpperCase() === 'S') {
-      referencePoint = ReferencePoint.START;
+    if (isSOD) {
+      // For SOD expressions, determine reference point based on unit  
+      switch (unit.toUpperCase()) {
+        case 'Y': referencePoint = ReferencePoint.YEAR; break;
+        case 'M': referencePoint = unit === 'M' ? ReferencePoint.MONTH : ReferencePoint.START; break;
+        case 'W': referencePoint = ReferencePoint.WEEK; break;
+        case 'D': referencePoint = ReferencePoint.DAY; break;
+        default: referencePoint = ReferencePoint.START; break;
+      }
     } else {
-      // E patterns use END reference point for simple duration additions
-      // This ensures E1W adds 1 week duration instead of calculating week endpoint
-      referencePoint = ReferencePoint.END;
+      // E patterns - determine reference point based on unit
+      switch (unit.toUpperCase()) {
+        case 'Y': referencePoint = ReferencePoint.YEAR; break;
+        case 'M': referencePoint = unit === 'M' ? ReferencePoint.MONTH : ReferencePoint.END; break; // M=month, m=minute
+        case 'W': referencePoint = ReferencePoint.WEEK; break;
+        case 'D': referencePoint = ReferencePoint.DAY; break;
+        default: referencePoint = ReferencePoint.END; break;
+      }
     }
     
+    let eod: EndOfDuration;
     switch (unit) {
-      case 'Y': case 'y': return new EndOfDuration(value, 0, 0, 0, 0, 0, 0, referencePoint);
-      case 'M': return new EndOfDuration(0, value, 0, 0, 0, 0, 0, referencePoint); // uppercase M = months
-      case 'W': case 'w': return new EndOfDuration(0, 0, value, 0, 0, 0, 0, referencePoint);
-      case 'D': case 'd': return new EndOfDuration(0, 0, 0, value, 0, 0, 0, referencePoint);
-      case 'H': case 'h': return new EndOfDuration(0, 0, 0, 0, value, 0, 0, referencePoint);
-      case 'm': return new EndOfDuration(0, 0, 0, 0, 0, value, 0, referencePoint); // lowercase m = minutes
-      case 'S': case 's': return new EndOfDuration(0, 0, 0, 0, 0, 0, value, referencePoint);
+      case 'Y': case 'y': eod = new EndOfDuration(value, 0, 0, 0, 0, 0, 0, referencePoint, null, isSOD); break;
+      case 'M': eod = new EndOfDuration(0, value, 0, 0, 0, 0, 0, referencePoint, null, isSOD); break; // uppercase M = months
+      case 'W': case 'w': eod = new EndOfDuration(0, 0, value, 0, 0, 0, 0, referencePoint, null, isSOD); break;
+      case 'D': case 'd': eod = new EndOfDuration(0, 0, 0, value, 0, 0, 0, referencePoint, null, isSOD); break;
+      case 'H': case 'h': eod = new EndOfDuration(0, 0, 0, 0, value, 0, 0, referencePoint, null, isSOD); break;
+      case 'm': eod = new EndOfDuration(0, 0, 0, 0, 0, value, 0, referencePoint, null, isSOD); break; // lowercase m = minutes
+      case 'S': case 's': eod = new EndOfDuration(0, 0, 0, 0, 0, 0, value, referencePoint, null, isSOD); break;
       default:
         throw new ParseError(`Unknown time unit: ${unit}`);
     }
+    return eod;
   }
   
-  // Complex EoD patterns: E1DT1H30M, E1Y2M3W4DT5H6M7S
-  const complexMatch = eodStr.match(/^E(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i);
-  if (complexMatch) {
-    const [, years, months, weeks, days, hours, minutes, seconds] = complexMatch;
-    return new EndOfDuration(
-      years ? parseInt(years, 10) : 0,
-      months ? parseInt(months, 10) : 0,
-      weeks ? parseInt(weeks, 10) : 0,
-      days ? parseInt(days, 10) : 0,
-      hours ? parseInt(hours, 10) : 0,
-      minutes ? parseInt(minutes, 10) : 0,
-      seconds ? parseInt(seconds, 10) : 0,
-      ReferencePoint.END
-    );
-  }
-  
-  // ISO 8601 patterns: P1Y2M3DT4H5M6S
-  const isoMatch = eodStr.match(/^P(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i);
-  if (isoMatch) {
-    const [, years, months, weeks, days, hours, minutes, seconds] = isoMatch;
-    return new EndOfDuration(
-      years ? parseInt(years, 10) : 0,
-      months ? parseInt(months, 10) : 0,
-      weeks ? parseInt(weeks, 10) : 0,
-      days ? parseInt(days, 10) : 0,
-      hours ? parseInt(hours, 10) : 0,
-      minutes ? parseInt(minutes, 10) : 0,
-      seconds ? parseInt(seconds, 10) : 0,
-      ReferencePoint.END
-    );
-  }
-  
-  throw new ParseError(`Invalid EOD format: ${eodStr}`);
+  throw new ParseError(`Invalid EOD/SOD format: ${eodStr}. Expected formats: E0W, E1M2D, S0W, etc.`);
 }
 
 /**
@@ -290,11 +449,12 @@ export function createEoD(
   minutes: number = 0,
   seconds: number = 0,
   referencePoint?: ReferencePoint,
-  eventIdentifier?: string
+  eventIdentifier?: string,
+  isSOD: boolean = false
 ): EndOfDuration {
   return new EndOfDuration(
     years, months, weeks, days, hours, minutes, seconds,
-    referencePoint || null, eventIdentifier || null
+    referencePoint || null, eventIdentifier || null, isSOD
   );
 }
 

@@ -47,7 +47,7 @@ func FromCronSyntax(cronString string) (Schedule, error) {
 		cronString = strings.TrimSpace(cronString[:eodIndex])
 
 		var err error
-		eod, err = ParseEoD(eodStr)
+		eod, err = ParseEOD(eodStr)
 		if err != nil {
 			return Schedule{}, fmt.Errorf("invalid EOD format '%s': %w", eodStr, err)
 		}
@@ -225,7 +225,7 @@ func FromJCronString(jcronString string) (Schedule, error) {
 
 	// Parse EOD if present
 	if eodStr != "" {
-		eod, err := ParseEoD(eodStr)
+		eod, err := ParseEOD(eodStr)
 		if err != nil {
 			return Schedule{}, fmt.Errorf("invalid EOD format '%s': %w", eodStr, err)
 		}

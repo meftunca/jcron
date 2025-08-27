@@ -1175,3 +1175,245 @@ func (s *Schedule) IsRangeNow(now time.Time) bool {
 func (s *Schedule) HasEOD() bool {
 	return s.EOD != nil
 }
+
+// =============================================================================
+// JCRON UNIFIED API - Compatible with JCRON_SYNTAX.md Specification
+// =============================================================================
+
+var defaultEngine = New()
+
+// NextTime returns the next execution time for a JCRON expression
+// Supports traditional cron, pure EOD/SOD expressions, and hybrid expressions
+// Examples:
+//   - "0 30 14 * * *" (traditional cron)
+//   - "E0W" (pure EOD - end of this week)
+//   - "S1M" (pure SOD - start of next month)
+//   - "0 0 9 * * 1-5 EOD:E0M" (hybrid - weekdays 9am + end of month)
+func NextTime(expression string, fromTime time.Time) (time.Time, error) {
+	// Check for pure EOD/SOD expressions first
+	if isPureEODExpression(expression) {
+		eod, err := ParseEOD(expression)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parse EOD: %w", err)
+		}
+		// For pure EOD/SOD, calculate directly
+		return eod.CalculateEndDate(fromTime), nil
+	}
+
+	// For traditional/hybrid expressions, use normal parsing
+	schedule, err := ParseExpression(expression)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse expression: %w", err)
+	}
+
+	nextTime, err := defaultEngine.Next(schedule, fromTime)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	// For hybrid expressions with EOD, use the next execution time as reference point
+	// and calculate EOD time from that reference
+	if schedule.EOD != nil {
+		// Use the next cron execution time as the reference point for EOD calculation
+		eodTime := schedule.EOD.CalculateEndDate(nextTime)
+		return eodTime, nil
+	}
+
+	return nextTime, nil
+}
+
+// PrevTime returns the previous execution time for a JCRON expression
+func PrevTime(expression string, fromTime time.Time) (time.Time, error) {
+	schedule, err := ParseExpression(expression)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse expression: %w", err)
+	}
+	return defaultEngine.Prev(schedule, fromTime)
+}
+
+// IsTimeMatch checks if the given time matches the JCRON expression
+func IsTimeMatch(expression string, targetTime time.Time) (bool, error) {
+	schedule, err := ParseExpression(expression)
+	if err != nil {
+		return false, fmt.Errorf("parse expression: %w", err)
+	}
+
+	// Check if the target time is the next execution time from a second before
+	nextTime, err := defaultEngine.Next(schedule, targetTime.Add(-time.Second))
+	if err != nil {
+		return false, err
+	}
+
+	// Allow for minor precision differences (within 1 second)
+	diff := nextTime.Sub(targetTime)
+	return diff >= 0 && diff < time.Second, nil
+}
+
+// ParseExpression parses a JCRON expression string into a Schedule
+// Auto-detects expression type:
+//   - Pure EOD/SOD: "E0W", "S1M", "E1M2W"
+//   - Traditional cron: "0 30 14 * * *"
+//   - Hybrid: "0 0 9 * * 1-5 EOD:E0M"
+func ParseExpression(expression string) (Schedule, error) {
+	if expression == "" {
+		return Schedule{}, fmt.Errorf("empty expression")
+	}
+
+	// Normalize whitespace
+	expression = strings.TrimSpace(expression)
+
+	// Check for pure EOD/SOD expressions (no spaces, starts with E or S)
+	if isPureEODExpression(expression) {
+		return parsePureEOD(expression)
+	}
+
+	// Parse as traditional/hybrid JCRON expression
+	return parseJCronString(expression)
+}
+
+// isPureEODExpression checks if expression is pure EOD/SOD (no cron fields)
+func isPureEODExpression(expr string) bool {
+	// Must not contain spaces (cron expressions have spaces)
+	if strings.Contains(expr, " ") {
+		return false
+	}
+
+	// Must start with E or S for EOD/SOD
+	if len(expr) == 0 {
+		return false
+	}
+
+	firstChar := strings.ToUpper(string(expr[0]))
+	return firstChar == "E" || firstChar == "S"
+}
+
+// parsePureEOD parses pure EOD/SOD expressions like "E0W", "S1M", "E1M2W"
+func parsePureEOD(expression string) (Schedule, error) {
+	eod, err := ParseEOD(expression)
+	if err != nil {
+		return Schedule{}, fmt.Errorf("parse EOD: %w", err)
+	}
+
+	// For pure EOD/SOD, create a schedule that runs "always" with EOD calculation
+	return Schedule{
+		Second:     strPtr("0"),
+		Minute:     strPtr("0"),
+		Hour:       strPtr("0"),
+		DayOfMonth: strPtr("*"),
+		Month:      strPtr("*"),
+		DayOfWeek:  strPtr("*"),
+		Year:       nil,
+		WeekOfYear: nil,
+		Timezone:   strPtr("UTC"),
+		EOD:        eod,
+	}, nil
+}
+
+// parseJCronString parses traditional or hybrid JCRON expressions
+func parseJCronString(expression string) (Schedule, error) {
+	// Handle predefined shortcuts
+	if expanded, ok := predefinedSchedules[expression]; ok {
+		expression = expanded
+	}
+
+	// Replace textual representations
+	expression = replaceTextualRepresentations(expression)
+
+	// Split main cron part from extensions
+	mainPart, extensions := splitJCronExpression(expression)
+
+	// Parse main cron fields (6 or 7 fields: s m h D M dow [Y])
+	fields := strings.Fields(mainPart)
+	if len(fields) < 6 {
+		return Schedule{}, fmt.Errorf("insufficient fields, expected at least 6, got %d", len(fields))
+	}
+	if len(fields) > 7 {
+		return Schedule{}, fmt.Errorf("too many fields, expected at most 7, got %d", len(fields))
+	}
+
+	schedule := Schedule{
+		Second:     strPtr(fields[0]),
+		Minute:     strPtr(fields[1]),
+		Hour:       strPtr(fields[2]),
+		DayOfMonth: strPtr(fields[3]),
+		Month:      strPtr(fields[4]),
+		DayOfWeek:  strPtr(fields[5]),
+	}
+
+	// Parse year if present
+	if len(fields) == 7 {
+		schedule.Year = strPtr(fields[6])
+	}
+
+	// Parse extensions (WOY, TZ, EOD)
+	err := parseJCronExtensions(&schedule, extensions)
+	if err != nil {
+		return Schedule{}, fmt.Errorf("parse extensions: %w", err)
+	}
+
+	return schedule, nil
+}
+
+// splitJCronExpression splits expression into main cron part and extensions
+func splitJCronExpression(expression string) (string, []string) {
+	parts := strings.Fields(expression)
+	var mainFields []string
+	var extensions []string
+
+	for _, part := range parts {
+		if strings.Contains(part, ":") {
+			// This is an extension (WOY:, TZ:, EOD:)
+			extensions = append(extensions, part)
+		} else {
+			// This is a main cron field
+			mainFields = append(mainFields, part)
+		}
+	}
+
+	return strings.Join(mainFields, " "), extensions
+}
+
+// parseJCronExtensions parses WOY, TZ, EOD extensions
+func parseJCronExtensions(schedule *Schedule, extensions []string) error {
+	for _, ext := range extensions {
+		parts := strings.SplitN(ext, ":", 2)
+		if len(parts) != 2 {
+			return fmt.Errorf("invalid extension format: %s", ext)
+		}
+
+		prefix := strings.ToUpper(parts[0])
+		value := parts[1]
+
+		switch prefix {
+		case "WOY":
+			schedule.WeekOfYear = strPtr(value)
+		case "TZ":
+			schedule.Timezone = strPtr(value)
+		case "EOD":
+			eod, err := ParseEOD(value)
+			if err != nil {
+				return fmt.Errorf("parse EOD %s: %w", value, err)
+			}
+			schedule.EOD = eod
+		default:
+			return fmt.Errorf("unknown extension: %s", prefix)
+		}
+	}
+
+	return nil
+}
+
+// replaceTextualRepresentations replaces day/month names with numbers
+func replaceTextualRepresentations(expression string) string {
+	// Replace day abbreviations
+	for abbr, num := range dayAbbreviations {
+		expression = strings.ReplaceAll(expression, abbr, num)
+	}
+
+	// Replace month abbreviations
+	for abbr, num := range monthAbbreviations {
+		expression = strings.ReplaceAll(expression, abbr, num)
+	}
+
+	return expression
+}

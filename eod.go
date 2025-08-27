@@ -55,6 +55,7 @@ type EndOfDuration struct {
 	Seconds         int
 	ReferencePoint  ReferencePoint
 	EventIdentifier *string // For event-based termination like E[project_deadline]
+	IsSOD           bool    // true for Start of Duration (S), false for End of Duration (E)
 }
 
 // NewEndOfDuration creates a new EndOfDuration instance
@@ -170,9 +171,9 @@ func (eod *EndOfDuration) String() string {
 	return result
 }
 
-// CalculateEndDate calculates the end date based on the EOD configuration
-// EOD format: En[Unit] means "end of nth [Unit]" where n starts from 1
-// E1W = end of current week, E2W = end of next week, etc.
+// CalculateEndDate calculates the end date based on the EOD/SOD configuration
+// JCRON 0-based indexing: E0W = end of this week, E1W = end of next week
+// SOD (Start of Duration): S0W = start of this week, S1W = start of next week
 func (eod *EndOfDuration) CalculateEndDate(fromDate time.Time) time.Time {
 	if eod == nil {
 		return fromDate
@@ -205,223 +206,247 @@ func (eod *EndOfDuration) CalculateEndDate(fromDate time.Time) time.Time {
 		return result
 	}
 
-	// Handle special reference points (DAY, WEEK, MONTH, etc.)
-	// EOD format: En[Unit] where n=1 means current period, n=2 means next period, etc.
+	// Handle special reference points with JCRON 0-based indexing
 	switch eod.ReferencePoint {
 	case ReferenceDay:
-		// E1D = end of current day, E2D = end of next day, etc.
-		if eod.Days > 1 {
-			result = result.AddDate(0, 0, eod.Days-1)
+		// E0D = end of current day, E1D = end of next day, etc.
+		// Always add days (0-based indexing: 0 = current, 1 = next)
+		result = result.AddDate(0, 0, eod.Days)
+		if eod.IsSOD {
+			// SOD: Start of day
+			result = time.Date(result.Year(), result.Month(), result.Day(), 0, 0, 0, 0, result.Location())
+		} else {
+			// EOD: End of day
+			result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 		}
-		result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 	case ReferenceWeek:
-		// E1W = end of current week, E2W = end of next week, etc.
-		if eod.Weeks > 1 {
-			result = result.AddDate(0, 0, (eod.Weeks-1)*7)
+		// E0W = end of current week, E1W = end of next week, etc.
+		// Always add weeks (0-based indexing: 0 = current, 1 = next)
+		result = result.AddDate(0, 0, eod.Weeks*7)
+		if eod.IsSOD {
+			// SOD: Start of week (Monday 00:00:00)
+			daysFromMonday := int(result.Weekday()) - 1
+			if daysFromMonday < 0 {
+				daysFromMonday = 6 // Sunday case
+			}
+			result = result.AddDate(0, 0, -daysFromMonday)
+			result = time.Date(result.Year(), result.Month(), result.Day(), 0, 0, 0, 0, result.Location())
+		} else {
+			// EOD: End of week (Sunday 23:59:59)
+			daysUntilSunday := (7 - int(result.Weekday())) % 7
+			if result.Weekday() == time.Sunday {
+				daysUntilSunday = 0 // Already Sunday
+			}
+			result = result.AddDate(0, 0, daysUntilSunday)
+			result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 		}
-		// Set to end of the week (Sunday 23:59:59)
-		daysUntilSunday := (7 - int(result.Weekday())) % 7
-		if result.Weekday() == time.Sunday {
-			daysUntilSunday = 0 // Already Sunday
-		}
-		result = result.AddDate(0, 0, daysUntilSunday)
-		result = time.Date(result.Year(), result.Month(), result.Day(), 23, 59, 59, 999999999, result.Location())
 	case ReferenceMonth:
-		// E1M = end of current month, E2M = end of next month, etc.
-		if eod.Months > 1 {
-			result = result.AddDate(0, eod.Months-1, 0)
+		// E0M = end of current month, E1M = end of next month, etc.
+		// Always add months (0-based indexing: 0 = current, 1 = next)
+		result = result.AddDate(0, eod.Months, 0)
+		if eod.IsSOD {
+			// SOD: Start of month (1st day 00:00:00)
+			result = time.Date(result.Year(), result.Month(), 1, 0, 0, 0, 0, result.Location())
+		} else {
+			// EOD: End of month (last day 23:59:59)
+			nextMonth := result.AddDate(0, 1, 0)
+			firstOfNextMonth := time.Date(nextMonth.Year(), nextMonth.Month(), 1, 0, 0, 0, 0, result.Location())
+			result = firstOfNextMonth.Add(-time.Nanosecond)
 		}
-		// Set to end of the month (last day 23:59:59)
-		nextMonth := result.AddDate(0, 1, 0)
-		firstOfNextMonth := time.Date(nextMonth.Year(), nextMonth.Month(), 1, 0, 0, 0, 0, result.Location())
-		result = firstOfNextMonth.Add(-time.Nanosecond)
 	case ReferenceQuarter:
-		// E1Q = end of current quarter, E2Q = end of next quarter, etc.
+		// E0Q = end of current quarter, E1Q = end of next quarter, etc.
 		currentQuarter := ((int(result.Month()) - 1) / 3)
-		targetQuarter := currentQuarter
-		if eod.Months > 0 {
-			targetQuarter += eod.Months - 1
+		targetQuarter := currentQuarter + eod.Months // 0-based: add directly
+		if eod.IsSOD {
+			// SOD: Start of quarter
+			quarterStartMonth := targetQuarter*3 + 1
+			result = time.Date(result.Year(), time.Month(quarterStartMonth), 1, 0, 0, 0, 0, result.Location())
+		} else {
+			// EOD: End of quarter
+			quarterEndMonth := (targetQuarter + 1) * 3
+			result = time.Date(result.Year(), time.Month(quarterEndMonth), 1, 0, 0, 0, 0, result.Location())
+			result = result.AddDate(0, 1, 0).Add(-time.Nanosecond)
 		}
-		quarterEndMonth := (targetQuarter + 1) * 3
-		result = time.Date(result.Year(), time.Month(quarterEndMonth), 1, 0, 0, 0, 0, result.Location())
-		result = result.AddDate(0, 1, 0).Add(-time.Nanosecond)
 	case ReferenceYear:
-		// E1Y = end of current year, E2Y = end of next year, etc.
-		if eod.Years > 1 {
-			result = result.AddDate(eod.Years-1, 0, 0)
+		// E0Y = end of current year, E1Y = end of next year, etc.
+		// Always add years (0-based indexing: 0 = current, 1 = next)
+		result = result.AddDate(eod.Years, 0, 0)
+		if eod.IsSOD {
+			// SOD: Start of year (Jan 1 00:00:00)
+			result = time.Date(result.Year(), 1, 1, 0, 0, 0, 0, result.Location())
+		} else {
+			// EOD: End of year (Dec 31 23:59:59)
+			result = time.Date(result.Year(), 12, 31, 23, 59, 59, 999999999, result.Location())
 		}
-		// Set to end of the year (Dec 31 23:59:59)
-		result = time.Date(result.Year(), 12, 31, 23, 59, 59, 999999999, result.Location())
 	}
 
 	return result
 }
 
-// parseEoDPattern parses EOD string patterns like "E8h", "S30m", "E2DT4H M"
-var eodPattern = regexp.MustCompile(`^([SE])(?:(\d+)Y)?(?:(\d+)M)?(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?(?:\s+([DWMQY]))?(?:\s+E\[([^\]]+)\])?$`)
-
-// ParseEoD parses an EOD string and returns an EndOfDuration instance
-func ParseEoD(eodStr string) (*EndOfDuration, error) {
-	if eodStr == "" {
-		return nil, fmt.Errorf("empty EOD string")
+// ParseEOD parses EOD/SOD expressions according to JCRON_SYNTAX.md specification
+// Supports 0-based indexing: E0W = this week end, E1M = next month end
+// Examples:
+//   - "E0W" - End of this week (0-based)
+//   - "E1M" - End of next month (0-based)
+//   - "S0W" - Start of this week (0-based)
+//   - "E1M2W" - Sequential: next month end + 2 weeks end
+func ParseEOD(expression string) (*EndOfDuration, error) {
+	if expression == "" {
+		return nil, fmt.Errorf("empty EOD expression")
 	}
 
-	originalStr := strings.TrimSpace(eodStr)
+	expression = strings.TrimSpace(strings.ToUpper(expression))
 
-	// Handle simple patterns like "E8H", "S30M" first
-	simplePattern := regexp.MustCompile(`^([SE])(\d+)([YMWDHMS])$`)
-	if matches := simplePattern.FindStringSubmatch(originalStr); matches != nil {
-		eod := &EndOfDuration{}
+	// Determine if it's SOD (Start) or EOD (End)
+	isSOD := strings.HasPrefix(expression, "S")
+	if !isSOD && !strings.HasPrefix(expression, "E") {
+		return nil, fmt.Errorf("EOD expression must start with 'E' or 'S', got: %s", expression)
+	}
 
-		// Parse value
-		value, err := strconv.Atoi(matches[2])
+	// Remove the S/E prefix
+	expr := expression[1:]
+
+	// Parse complex expressions like "1M2W" (sequential processing)
+	eod, err := parseComplexEOD(expr, isSOD)
+	if err != nil {
+		return nil, fmt.Errorf("parse EOD expression %s: %w", expression, err)
+	}
+
+	return eod, nil
+}
+
+// parseComplexEOD parses complex EOD expressions with multiple units
+func parseComplexEOD(expr string, isSOD bool) (*EndOfDuration, error) {
+	// Regex to match duration patterns: (\d+)([YMWDHMS])
+	re := regexp.MustCompile(`(\d+)([YMWDHMS])`)
+	matches := re.FindAllStringSubmatch(expr, -1)
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no valid duration units found in: %s", expr)
+	}
+
+	eod := &EndOfDuration{}
+
+	// Determine reference point based on the primary unit (first or most significant)
+	primaryUnit := matches[0][2] // First unit letter
+	eod.ReferencePoint = getJCronReferencePoint(primaryUnit, isSOD)
+
+	// Parse all duration components
+	for _, match := range matches {
+		valueStr := match[1]
+		unit := match[2]
+
+		value, err := strconv.Atoi(valueStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid duration value: %s", matches[2])
+			return nil, fmt.Errorf("invalid number %s: %w", valueStr, err)
 		}
 
-		// For E patterns, determine the appropriate reference point based on unit
-		if matches[1] == "S" {
-			eod.ReferencePoint = ReferenceStart
-		} else {
-			// E patterns use specific reference points based on unit
-			switch matches[3] {
-			case "Y":
-				eod.ReferencePoint = ReferenceYear
-			case "M":
-				eod.ReferencePoint = ReferenceMonth
-			case "W":
-				eod.ReferencePoint = ReferenceWeek
-			case "D":
-				eod.ReferencePoint = ReferenceDay
-			default:
-				eod.ReferencePoint = ReferenceEnd // For H, S
-			}
-		}
-
-		// Parse unit
-		switch matches[3] {
+		switch unit {
 		case "Y":
 			eod.Years = value
 		case "M":
-			if eod.ReferencePoint == ReferenceMonth {
-				eod.Months = value
-			} else {
-				eod.Minutes = value // M after time component is minutes
-			}
+			eod.Months = value
 		case "W":
 			eod.Weeks = value
 		case "D":
 			eod.Days = value
 		case "H":
 			eod.Hours = value
+		case "m": // lowercase m for minutes
+			eod.Minutes = value
 		case "S":
 			eod.Seconds = value
 		default:
-			return nil, fmt.Errorf("invalid time unit: %s", matches[3])
-		}
-
-		return eod, nil
-	}
-
-	// Handle patterns with event identifiers like "E30M E[event]"
-	eventPattern := regexp.MustCompile(`^([SE]\d+[YMWDHMS])\s+E\[([^\]]+)\]$`)
-	if matches := eventPattern.FindStringSubmatch(originalStr); matches != nil {
-		// Parse the duration part first
-		eod, err := ParseEoD(matches[1])
-		if err != nil {
-			return nil, err
-		}
-		// Add event identifier
-		eod.EventIdentifier = &matches[2]
-		return eod, nil
-	}
-
-	// Try complex pattern
-	matches := eodPattern.FindStringSubmatch(originalStr)
-	if matches == nil {
-		return nil, fmt.Errorf("invalid EOD format: %s", eodStr)
-	}
-
-	eod := &EndOfDuration{}
-
-	// Parse reference point (S or E)
-	if matches[1] == "S" {
-		eod.ReferencePoint = ReferenceStart
-	} else {
-		eod.ReferencePoint = ReferenceEnd
-	}
-
-	// Parse duration components
-	var err error
-	if matches[2] != "" {
-		if eod.Years, err = strconv.Atoi(matches[2]); err != nil {
-			return nil, fmt.Errorf("invalid years: %s", matches[2])
-		}
-	}
-	if matches[3] != "" {
-		if eod.Months, err = strconv.Atoi(matches[3]); err != nil {
-			return nil, fmt.Errorf("invalid months: %s", matches[3])
-		}
-	}
-	if matches[4] != "" {
-		if eod.Weeks, err = strconv.Atoi(matches[4]); err != nil {
-			return nil, fmt.Errorf("invalid weeks: %s", matches[4])
-		}
-	}
-	if matches[5] != "" {
-		if eod.Days, err = strconv.Atoi(matches[5]); err != nil {
-			return nil, fmt.Errorf("invalid days: %s", matches[5])
-		}
-	}
-	if matches[6] != "" {
-		if eod.Hours, err = strconv.Atoi(matches[6]); err != nil {
-			return nil, fmt.Errorf("invalid hours: %s", matches[6])
-		}
-	}
-	if matches[7] != "" {
-		if eod.Minutes, err = strconv.Atoi(matches[7]); err != nil {
-			return nil, fmt.Errorf("invalid minutes: %s", matches[7])
-		}
-	}
-	if matches[8] != "" {
-		if eod.Seconds, err = strconv.Atoi(matches[8]); err != nil {
-			return nil, fmt.Errorf("invalid seconds: %s", matches[8])
+			return nil, fmt.Errorf("unknown time unit: %s", unit)
 		}
 	}
 
-	// Parse reference point suffix
-	if matches[9] != "" {
-		switch matches[9] {
-		case "D":
-			eod.ReferencePoint = ReferenceDay
-		case "W":
-			eod.ReferencePoint = ReferenceWeek
-		case "M":
-			eod.ReferencePoint = ReferenceMonth
-		case "Q":
-			eod.ReferencePoint = ReferenceQuarter
-		case "Y":
-			eod.ReferencePoint = ReferenceYear
-		}
-	}
-
-	// Parse event identifier
-	if matches[10] != "" {
-		eod.EventIdentifier = &matches[10]
-	}
-
-	// Validate that at least one duration component is set
-	if !eod.HasDuration() && eod.EventIdentifier == nil {
-		return nil, fmt.Errorf("EOD must specify at least one duration component or event identifier")
+	// Mark as SOD if needed
+	if isSOD {
+		eod.IsSOD = true
 	}
 
 	return eod, nil
 }
 
-// IsValidEoD checks if an EOD string is valid
-func IsValidEoD(eodStr string) bool {
-	_, err := ParseEoD(eodStr)
-	return err == nil
+// getJCronReferencePoint determines reference point for JCRON 0-based indexing
+func getJCronReferencePoint(unit string, isSOD bool) ReferencePoint {
+	switch unit {
+	case "Y":
+		return ReferenceYear
+	case "M":
+		return ReferenceMonth
+	case "W":
+		return ReferenceWeek
+	case "D":
+		return ReferenceDay
+	default:
+		// For H, m, S - use generic start/end reference
+		if isSOD {
+			return ReferenceStart
+		}
+		return ReferenceEnd
+	}
+}
+
+// JCRON String representation for EOD/SOD (0-based indexing)
+func (eod *EndOfDuration) ToJCronString() string {
+	if eod == nil {
+		return ""
+	}
+
+	var builder strings.Builder
+
+	// Determine S or E prefix based on reference point
+	isSOD := eod.ReferencePoint == ReferenceStart
+	if isSOD {
+		builder.WriteString("S")
+	} else {
+		builder.WriteString("E")
+	}
+
+	// Add duration components in standard order
+	if eod.Years > 0 {
+		builder.WriteString(fmt.Sprintf("%dY", eod.Years))
+	}
+	if eod.Months > 0 {
+		builder.WriteString(fmt.Sprintf("%dM", eod.Months))
+	}
+	if eod.Weeks > 0 {
+		builder.WriteString(fmt.Sprintf("%dW", eod.Weeks))
+	}
+	if eod.Days > 0 {
+		builder.WriteString(fmt.Sprintf("%dD", eod.Days))
+	}
+	if eod.Hours > 0 {
+		builder.WriteString(fmt.Sprintf("%dH", eod.Hours))
+	}
+	if eod.Minutes > 0 {
+		builder.WriteString(fmt.Sprintf("%dm", eod.Minutes))
+	}
+	if eod.Seconds > 0 {
+		builder.WriteString(fmt.Sprintf("%dS", eod.Seconds))
+	}
+
+	result := builder.String()
+
+	// If no duration components, default to simple form
+	if len(result) == 1 { // Only S or E
+		switch eod.ReferencePoint {
+		case ReferenceWeek:
+			result += "0W"
+		case ReferenceMonth:
+			result += "0M"
+		case ReferenceDay:
+			result += "0D"
+		case ReferenceYear:
+			result += "0Y"
+		default:
+			result += "0D" // Default to day
+		}
+	}
+
+	return result
 }
 
 // EoDHelpers provides convenience functions for common EOD patterns
@@ -457,26 +482,6 @@ func (EoDHelpers) EndOfMonth(days, hours, minutes int) *EndOfDuration {
 	}
 }
 
-// EndOfQuarter creates an EOD that runs until end of quarter
-func (EoDHelpers) EndOfQuarter(days, hours, minutes int) *EndOfDuration {
-	return &EndOfDuration{
-		Days:           days,
-		Hours:          hours,
-		Minutes:        minutes,
-		ReferencePoint: ReferenceQuarter,
-	}
-}
-
-// EndOfYear creates an EOD that runs until end of year
-func (EoDHelpers) EndOfYear(days, hours, minutes int) *EndOfDuration {
-	return &EndOfDuration{
-		Days:           days,
-		Hours:          hours,
-		Minutes:        minutes,
-		ReferencePoint: ReferenceYear,
-	}
-}
-
 // UntilEvent creates an EOD that runs until a specific event
 func (EoDHelpers) UntilEvent(eventName string, hours, minutes, seconds int) *EndOfDuration {
 	return &EndOfDuration{
@@ -488,5 +493,11 @@ func (EoDHelpers) UntilEvent(eventName string, hours, minutes, seconds int) *End
 	}
 }
 
-// Global EoDHelpers instance
+// Global EODHelpers instance
 var EODHelpers = EoDHelpers{}
+
+// IsValidEoD checks if an EOD string is valid
+func IsValidEoD(eodStr string) bool {
+	_, err := ParseEOD(eodStr)
+	return err == nil
+}
