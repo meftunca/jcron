@@ -71,7 +71,7 @@ func TestWOYSupport(t *testing.T) {
 	}
 }
 
-func TestWOYRangeSupport(t *testing.T) {
+func TestWOYRangeSupport2(t *testing.T) {
 	testCases := []struct {
 		name       string
 		expression string
