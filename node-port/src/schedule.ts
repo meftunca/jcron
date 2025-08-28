@@ -757,6 +757,9 @@ export function fromJCronString(jcronString: string): Schedule {
       tz = part.substring(3);
     } else if (part.startsWith('EOD:')) {
       eodStr = part.substring(4);
+    } else if (/^[ES]\d+[WMD]$/.test(part)) {
+      // Direct EOD modifiers like E1W, S2D, E3M etc.
+      eodStr = part;
     } else {
       cronParts.push(part);
     }
