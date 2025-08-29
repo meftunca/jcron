@@ -1031,6 +1031,84 @@ $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 -- 🧮 CALCULATION FUNCTIONS
 -- =====================================================
 
+-- Calculate next end of time period
+CREATE OR REPLACE FUNCTION jcron.calc_end_time(
+    from_time TIMESTAMPTZ,
+    weeks INTEGER DEFAULT 0,
+    months INTEGER DEFAULT 0,
+    days INTEGER DEFAULT 0
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    target_time TIMESTAMPTZ := from_time;
+BEGIN
+    -- Add periods
+    IF weeks > 0 THEN
+        target_time := target_time + (weeks * interval '1 week');
+    END IF;
+    
+    IF months > 0 THEN
+        target_time := target_time + (months * interval '1 month');
+    END IF;
+    
+    IF days > 0 THEN
+        target_time := target_time + (days * interval '1 day');
+    END IF;
+    
+    -- Set to end of period
+    IF weeks > 0 THEN
+        -- End of week (Sunday 23:59:59)
+        target_time := date_trunc('week', target_time) + interval '6 days 23 hours 59 minutes 59 seconds';
+    ELSIF months > 0 THEN
+        -- End of month
+        target_time := date_trunc('month', target_time) + interval '1 month - 1 second';
+    ELSIF days > 0 THEN
+        -- End of day
+        target_time := date_trunc('day', target_time) + interval '23 hours 59 minutes 59 seconds';
+    END IF;
+    
+    RETURN target_time;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Calculate next start of time period
+CREATE OR REPLACE FUNCTION jcron.calc_start_time(
+    from_time TIMESTAMPTZ,
+    weeks INTEGER DEFAULT 0,
+    months INTEGER DEFAULT 0,
+    days INTEGER DEFAULT 0
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    target_time TIMESTAMPTZ := from_time;
+BEGIN
+    -- Add periods
+    IF weeks > 0 THEN
+        target_time := target_time + (weeks * interval '1 week');
+    END IF;
+    
+    IF months > 0 THEN
+        target_time := target_time + (months * interval '1 month');
+    END IF;
+    
+    IF days > 0 THEN
+        target_time := target_time + (days * interval '1 day');
+    END IF;
+    
+    -- Set to start of period
+    IF weeks > 0 THEN
+        -- Start of week (Monday 00:00:00)
+        target_time := date_trunc('week', target_time);
+    ELSIF months > 0 THEN
+        -- Start of month
+        target_time := date_trunc('month', target_time);
+    ELSIF days > 0 THEN
+        -- Start of day
+        target_time := date_trunc('day', target_time);
+    END IF;
+    
+    RETURN target_time;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 -- Get week start date for WOY
 CREATE OR REPLACE FUNCTION jcron.get_week_start(year_val INTEGER, week_num INTEGER)
 RETURNS DATE AS $$
@@ -1384,42 +1462,75 @@ BEGIN
     -- Apply WOY filtering if needed (ULTRA-OPTIMIZED V3 - Smart Search Algorithm)
     IF parsed.has_woy THEN
         DECLARE
-            candidate_time TIMESTAMPTZ := adjusted_base;
+            candidate_time TIMESTAMPTZ;
             max_attempts INTEGER := 100; -- Limit attempts for safety
             attempt_count INTEGER := 0;
             found_match BOOLEAN := FALSE;
             target_week INTEGER;
-            current_week INTEGER;
-            time_increment INTERVAL := INTERVAL '1 day'; -- Start with day increments
+            candidate_week INTEGER;
+            input_week INTEGER;
+            current_year INTEGER;
+            candidate_year INTEGER;
         BEGIN
-            -- OPTIMIZATION: For large WOY arrays, find the next nearest week efficiently
+            -- Get the current week and year of input time
+            input_week := EXTRACT(week FROM adjusted_base)::INTEGER;
+            current_year := EXTRACT(year FROM adjusted_base)::INTEGER;
+            
+            -- Start by looking for next valid week (not same week)
+            candidate_time := adjusted_base;
+            
+            -- Find next target week that is AFTER current week
+            SELECT MIN(w) INTO target_week 
+            FROM unnest(parsed.woy_weeks) AS w 
+            WHERE w > input_week;
+            
+            IF target_week IS NULL THEN
+                -- No more weeks this year, jump to next year
+                candidate_time := date_trunc('year', adjusted_base) + INTERVAL '1 year';
+                SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
+                
+                IF target_week IS NOT NULL THEN
+                    -- Jump to target week in next year (approximately)
+                    candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
+                END IF;
+            ELSE
+                -- Jump to target week in same year
+                candidate_time := adjusted_base + ((target_week - input_week) * INTERVAL '7 days');
+            END IF;
+            
+            -- Now search around this candidate time for exact cron match
             WHILE attempt_count < max_attempts AND NOT found_match LOOP
-                -- Get next cron occurrence
-                candidate_time := jcron.next_cron_time(parsed.clean_cron, candidate_time);
+                candidate_week := EXTRACT(week FROM candidate_time)::INTEGER;
+                candidate_year := EXTRACT(year FROM candidate_time)::INTEGER;
                 
-                -- Check week quickly
-                current_week := EXTRACT(week FROM candidate_time)::INTEGER;
+                -- Check if this week is in WOY list
+                IF candidate_week = ANY(parsed.woy_weeks) THEN
+                    -- Get proper cron time for this candidate week
+                    base_result := jcron.next_cron_time(parsed.clean_cron, candidate_time);
+                    
+                    -- Verify the cron result is still in a valid WOY week and after input
+                    IF EXTRACT(week FROM base_result)::INTEGER = ANY(parsed.woy_weeks) AND
+                       base_result > adjusted_base THEN
+                        found_match := TRUE;
+                    END IF;
+                END IF;
                 
-                -- Direct array membership check (PostgreSQL optimized)
-                IF current_week = ANY(parsed.woy_weeks) THEN
-                    base_result := candidate_time;
-                    found_match := TRUE;
-                ELSE
-                    -- SMART INCREMENT: Jump to next potential week instead of small increments
-                    -- Find next target week
+                IF NOT found_match THEN
+                    -- Move to next potential week
                     SELECT MIN(w) INTO target_week 
                     FROM unnest(parsed.woy_weeks) AS w 
-                    WHERE w > current_week;
+                    WHERE w > candidate_week;
                     
                     IF target_week IS NULL THEN
                         -- No more weeks this year, jump to next year
                         candidate_time := date_trunc('year', candidate_time) + INTERVAL '1 year';
-                        target_week := parsed.woy_weeks[1]; -- First week of next year
-                    END IF;
-                    
-                    -- Jump closer to target week (smart increment)
-                    IF target_week > current_week THEN
-                        candidate_time := candidate_time + ((target_week - current_week) * INTERVAL '7 days');
+                        SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
+                        IF target_week IS NOT NULL THEN
+                            candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
+                        END IF;
+                    ELSE
+                        -- Jump to next target week
+                        candidate_time := candidate_time + ((target_week - candidate_week) * INTERVAL '7 days');
                     END IF;
                 END IF;
                 
@@ -2628,6 +2739,202 @@ BEGIN
     RAISE NOTICE '🔥 V4 EXTREME: ZERO ALLOCATION + BITWISE CACHE + NO I/O = 100K OPS/SEC! 🔥';
 END;
 $$ LANGUAGE plpgsql;
+
+-- =====================================================
+-- 🎯 MATCH TIME FUNCTIONS
+-- =====================================================
+
+-- Check if the given time matches the JCRON pattern
+CREATE OR REPLACE FUNCTION jcron.match_time(
+    pattern TEXT,
+    target_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS BOOLEAN AS $$
+DECLARE
+    parsed RECORD;
+    target_week INTEGER;
+    week_start DATE;
+    week_end DATE;
+    closest_trigger TIMESTAMPTZ;
+    eod_end_time TIMESTAMPTZ;
+    candidate_time TIMESTAMPTZ;
+    day_offset INTEGER;
+BEGIN
+    -- Parse the pattern
+    SELECT * INTO parsed FROM jcron.parse_clean_pattern(pattern);
+    
+    -- Non-WOY pattern - use simple matching
+    IF NOT parsed.has_woy THEN
+        -- Simple next/prev time comparison for non-WOY
+        DECLARE
+            next_time TIMESTAMPTZ;
+            prev_time TIMESTAMPTZ;
+        BEGIN
+            next_time := jcron.next_time(pattern, target_time - INTERVAL '1 second', TRUE, FALSE);
+            IF ABS(EXTRACT(EPOCH FROM (next_time - target_time))) < 1 THEN
+                RETURN TRUE;
+            END IF;
+            
+            prev_time := jcron.prev_time(pattern, target_time + INTERVAL '1 second', NULL);
+            IF ABS(EXTRACT(EPOCH FROM (target_time - prev_time))) < 1 THEN
+                RETURN TRUE;
+            END IF;
+            
+            RETURN FALSE;
+        EXCEPTION WHEN OTHERS THEN
+            RETURN FALSE;
+        END;
+    END IF;
+    
+    -- WOY pattern matching
+    target_week := EXTRACT(week FROM target_time)::INTEGER;
+    
+    -- Check if target week is in WOY list
+    IF target_week != ANY(parsed.woy_weeks) THEN
+        RETURN FALSE;
+    END IF;
+    
+    -- Calculate week boundaries (ISO 8601: Monday to Sunday)
+    week_start := date_trunc('week', target_time::date);
+    week_end := week_start + INTERVAL '6 days';
+    
+    -- Find closest cron trigger time in this week
+    closest_trigger := NULL;
+    
+    -- Check each day of the week
+    FOR day_offset IN 0..6 LOOP
+        candidate_time := (week_start + day_offset * INTERVAL '1 day')::timestamptz;
+        
+        -- Check if this day matches cron pattern
+        IF jcron.matches_cron_time(parsed.clean_cron, candidate_time) THEN
+            -- Find the closest match to target_time
+            IF closest_trigger IS NULL OR 
+               ABS(EXTRACT(EPOCH FROM (candidate_time - target_time))) < 
+               ABS(EXTRACT(EPOCH FROM (closest_trigger - target_time))) THEN
+                closest_trigger := candidate_time;
+            END IF;
+        END IF;
+    END LOOP;
+    
+    -- No cron trigger found in this week
+    IF closest_trigger IS NULL THEN
+        RETURN FALSE;
+    END IF;
+    
+    -- Handle EOD/SOD logic
+    IF parsed.has_end THEN
+        -- Calculate end time based on EOD pattern
+        DECLARE
+            modifier_data RECORD;
+        BEGIN
+            SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.end_modifier);
+            eod_end_time := jcron.calc_end_time(closest_trigger, modifier_data.weeks, modifier_data.months, modifier_data.days);
+            
+            -- Target must be between trigger and EOD end
+            RETURN target_time >= closest_trigger AND target_time <= eod_end_time;
+        EXCEPTION WHEN OTHERS THEN
+            RETURN FALSE;
+        END;
+    ELSIF parsed.has_start THEN
+        -- SOD logic would go here
+        RETURN target_time >= closest_trigger;
+    ELSE
+        -- No EOD/SOD - exact cron match required
+        RETURN ABS(EXTRACT(EPOCH FROM (target_time - closest_trigger))) < 1;
+    END IF;
+    
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Helper function to check if a time matches cron pattern exactly
+CREATE OR REPLACE FUNCTION jcron.matches_cron_time(
+    cron_pattern TEXT,
+    check_time TIMESTAMPTZ
+) RETURNS BOOLEAN AS $$
+DECLARE
+    cron_parts TEXT[];
+    second_part TEXT;
+    minute_part TEXT;
+    hour_part TEXT;
+    day_part TEXT;
+    month_part TEXT;
+    dow_part TEXT;
+BEGIN
+    -- Parse cron pattern (assuming 6-field: s m h d M dow)
+    cron_parts := string_to_array(trim(cron_pattern), ' ');
+    
+    IF array_length(cron_parts, 1) < 6 THEN
+        RETURN FALSE;
+    END IF;
+    
+    second_part := cron_parts[1];
+    minute_part := cron_parts[2];
+    hour_part := cron_parts[3];
+    day_part := cron_parts[4];
+    month_part := cron_parts[5];
+    dow_part := cron_parts[6];
+    
+    -- Check each field
+    IF NOT jcron.matches_field(EXTRACT(second FROM check_time)::INTEGER, second_part, 0, 59) THEN
+        RETURN FALSE;
+    END IF;
+    
+    IF NOT jcron.matches_field(EXTRACT(minute FROM check_time)::INTEGER, minute_part, 0, 59) THEN
+        RETURN FALSE;
+    END IF;
+    
+    IF NOT jcron.matches_field(EXTRACT(hour FROM check_time)::INTEGER, hour_part, 0, 23) THEN
+        RETURN FALSE;
+    END IF;
+    
+    IF NOT jcron.matches_field(EXTRACT(day FROM check_time)::INTEGER, day_part, 1, 31) THEN
+        RETURN FALSE;
+    END IF;
+    
+    IF NOT jcron.matches_field(EXTRACT(month FROM check_time)::INTEGER, month_part, 1, 12) THEN
+        RETURN FALSE;
+    END IF;
+    
+    IF NOT jcron.matches_field(EXTRACT(dow FROM check_time)::INTEGER, dow_part, 0, 6) THEN
+        RETURN FALSE;
+    END IF;
+    
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Alternative function with custom tolerance
+CREATE OR REPLACE FUNCTION jcron.match_time_with_tolerance(
+    pattern TEXT,
+    target_time TIMESTAMPTZ,
+    tolerance_seconds INTEGER DEFAULT 1
+) RETURNS BOOLEAN AS $$
+DECLARE
+    next_time TIMESTAMPTZ;
+    time_diff INTERVAL;
+    tolerance_interval INTERVAL;
+BEGIN
+    tolerance_interval := (tolerance_seconds || ' seconds')::INTERVAL;
+    
+    -- Get the next execution time from tolerance seconds before target
+    next_time := jcron.next_time(pattern, target_time - tolerance_interval, TRUE, FALSE);
+    
+    -- Calculate the difference
+    time_diff := next_time - target_time;
+    
+    -- Match if the difference is within tolerance
+    RETURN time_diff >= INTERVAL '0 seconds' AND time_diff < tolerance_interval;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Convenience alias for match_time
+CREATE OR REPLACE FUNCTION jcron.is_match(
+    pattern TEXT,
+    target_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN jcron.match_time(pattern, target_time);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
 
 -- =====================================================
 -- END OF JCRON V4 EXTREME SYSTEM

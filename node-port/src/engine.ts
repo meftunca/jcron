@@ -7,8 +7,13 @@ import {
   addSeconds,
   getDate,
   getDay,
+  getISOWeek,
+  getISOWeekYear,
   lastDayOfMonth,
   set,
+  setISOWeek,
+  startOfISOWeek,
+  startOfISOWeekYear,
   subSeconds,
 } from "date-fns";
 import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
@@ -143,65 +148,43 @@ export class Engine {
         continue;
       }
       if (!this._isWeekOfYearMatch(searchTime, expSchedule)) {
-        // FIXED: Support backward week search for start-of-week scenarios
-        const currentWeek = this._getISOWeek(searchTime, expSchedule);
+        // SIMPLIFIED WOY LOGIC using date-fns: Find next valid week occurrence
+        const currentWeek = getISOWeek(searchTime);
+        const currentYear = getISOWeekYear(searchTime);
         const validWeeks = Array.from(expSchedule.weeksOfYearSet).sort((a, b) => a - b);
+        
         let targetWeek = null;
+        let targetYear = currentYear;
         
-        // Find target week - prefer earlier weeks if we're at start of current week
-        const dayOfWeek = expSchedule.isUTC ? searchTime.getUTCDay() : toZonedTime(searchTime, location).getDay();
-        
+        // Find next valid week in current year
         for (const week of validWeeks) {
-          if (week < currentWeek && dayOfWeek <= 1) { // Sunday (0) or Monday (1)
-            targetWeek = week;
-            break;
-          } else if (week >= currentWeek) {
+          if (week >= currentWeek) {
             targetWeek = week;
             break;
           }
         }
         
-        if (targetWeek && targetWeek < currentWeek) {
-          // If target week is in the past, move to next year instead of going backward
-          const nextYear = expSchedule.isUTC ? searchTime.getUTCFullYear() + 1 : zonedView.getFullYear() + 1;
-          
-          // Set to beginning of next year, then navigate to target week
-          searchTime = expSchedule.isUTC ?
-            new Date(Date.UTC(nextYear, 0, 1, 0, 0, 0, 0)) :
-            fromZonedTime(
-              set(new Date(nextYear, 0, 1), {
-                hours: 0,
-                minutes: 0,
-                seconds: 0,
-                milliseconds: 0,
-              }),
-              location
-            );
-          
-          // Calculate days to add to reach target week in next year
-          const daysToAdd = (targetWeek - 1) * 7;
-          searchTime = expSchedule.isUTC ?
-            addDays(searchTime, daysToAdd) :
-            fromZonedTime(addDays(toZonedTime(searchTime, location), daysToAdd), location);
-        } else {
-          // Go forward (original logic)
-          searchTime = expSchedule.isUTC ?
-            set(addDays(searchTime, 1), {
-              hours: 0,
-              minutes: 0,
-              seconds: 0,
-              milliseconds: 0,
-            }) :
-            fromZonedTime(
-              set(addDays(zonedView, 1), {
-                hours: 0,
-                minutes: 0,
-                seconds: 0,
-                milliseconds: 0,
-              }),
-              location
-            );
+        // If no valid week found in current year, use first week of next year
+        if (targetWeek === null) {
+          targetWeek = validWeeks[0];
+          targetYear = currentYear + 1;
         }
+        
+        // Create date for the target week using date-fns
+        try {
+          // Start with beginning of the target year
+          const yearStart = startOfISOWeekYear(new Date(targetYear, 0, 1));
+          // Set to the target week
+          const targetDate = setISOWeek(yearStart, targetWeek);
+          // Get start of that week (Monday)
+          searchTime = startOfISOWeek(targetDate);
+          
+        } catch (error) {
+          console.error('Date-fns WOY calculation failed:', error);
+          // Fallback to next year if calculation fails
+          searchTime = new Date(targetYear + 1, 0, 1);
+        }
+        
         continue;
       }
       if (!this._isDayMatch(searchTime, expSchedule)) {
@@ -318,12 +301,7 @@ export class Engine {
         continue;
       }
 
-      // Check if schedule has EOD (End of Duration) specification
-      if (schedule.eod) {
-        // Apply EOD calculation to the found schedule time
-        return this._applyEodCalculation(searchTime, schedule.eod, expSchedule.timezone);
-      }
-
+      // Return the normal trigger time - EOD is only used for end time calculation in isRangeNow()
       return searchTime;
     }
 
@@ -497,12 +475,7 @@ export class Engine {
         continue;
       }
 
-      // Check if schedule has EOD (End of Duration) specification
-      if (schedule.eod) {
-        // Apply EOD calculation to the found schedule time
-        return this._applyEodCalculation(searchTime, schedule.eod, expSchedule.timezone);
-      }
-
+      // Return the normal trigger time - EOD is only used for end time calculation in isRangeNow()
       return searchTime;
     }
 
@@ -744,23 +717,10 @@ export class Engine {
   }
   // --- DÜZELTME SONU ---
 
-  // Helper function to get ISO week number (1-53) with timezone support
+  // Helper function to get ISO week number (1-53) using reliable date-fns
   private _getISOWeek(date: Date, schedule?: ExpandedSchedule): number {
-    let targetDate: Date;
-    
-    // FIXED: Always use UTC for week calculation to maintain consistency with PostgreSQL
-    // This prevents timezone conversion from changing week numbers
-    targetDate = new Date(
-      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
-    );
-    
-    // Thursday determines the year of the week
-    targetDate.setUTCDate(targetDate.getUTCDate() + 4 - (targetDate.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(targetDate.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil(
-      ((targetDate.getTime() - yearStart.getTime()) / 86400000 + 1) / 7
-    );
-    return weekNo;
+    // Use date-fns getISOWeek for reliable ISO week calculation
+    return getISOWeek(date);
   }
 
   private _isWeekOfYearMatch(

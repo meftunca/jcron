@@ -256,27 +256,141 @@ export class Schedule {
 
   // isrange now
   /**
-   * Check if the current time is within the execution window of this schedule
-   * For EOD schedules, checks if now is between the previous trigger and next endOf
-   * @param now The time to check (defaults to current time)
-   * @returns true if now is within the execution window, false otherwise
+   * Check if timeCreated is within an active execution window
+   * For EOD schedules, checks if timeCreated is between previous trigger and its end time
+   * @param timeCreated The time to check if it's within an active execution window
+   * @returns true if timeCreated is within an active execution window, false otherwise
    */
-  isRangeNow(now: Date = new Date()): boolean {
+  isRangeNow(timeCreated: Date): boolean {
     if (!this.eod) {
       return false;
     }
     
-    // Get the previous trigger time (start of current window)
-    const start = this.startOf(now);
-    // Get the end time for current execution window
-    // Since endOf now uses next trigger, we need to calculate end from previous trigger
-    let end: Date | null = null;
-    if (start) {
-      end = this.eod.calculateEndDate(start);
+    try {
+      // Special logic for WOY patterns
+      if (this.woy) {
+        return this._isRangeNowForWOY(timeCreated);
+      }
+      
+      // Standard logic for regular cron patterns
+      const prevTrigger = getPrev(this, timeCreated);
+      
+      if (prevTrigger) {
+        const endTime = this.eod.calculateEndDate(prevTrigger);
+        
+        // Check if timeCreated is between previous trigger and its end time
+        if (timeCreated.getTime() >= prevTrigger.getTime() && timeCreated.getTime() <= endTime.getTime()) {
+          return true;
+        }
+      }
+      
+      return false;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * WOY-specific isRangeNow logic
+   * For WOY patterns, the entire week is considered the execution window
+   */
+  private _isRangeNowForWOY(timeCreated: Date): boolean {
+    if (!this.woy || !this.eod) {
+      return false;
+    }
+
+    // Get current week number of timeCreated using manual calculation
+    const currentWeek = this._getISOWeek(timeCreated);
+    
+    // Parse WOY pattern to get target weeks
+    const targetWeeks = this._parseWOYWeeks();
+    
+    // Check if current week matches any target week
+    if (targetWeeks.includes(currentWeek)) {
+      // Get ISO week year (not calendar year!) for correct week calculation
+      const isoWeekYear = this._getISOWeekYear(timeCreated);
+      
+      // Calculate week start (trigger time) and week end + EOD (end time)
+      const weekStart = this._getWeekStartDate(isoWeekYear, currentWeek);
+      const weekEnd = this.eod.calculateEndDate(weekStart);
+      
+      // Check if timeCreated is within this week's execution window
+      return timeCreated.getTime() >= weekStart.getTime() && timeCreated.getTime() <= weekEnd.getTime();
     }
     
-    // Check if both start and end are valid and now is within the range
-    return start !== null && end !== null && now >= start && now <= end;
+    return false;
+  }
+
+  /**
+   * Parse WOY pattern to extract week numbers
+   */
+  private _parseWOYWeeks(): number[] {
+    if (!this.woy) return [];
+    
+    const weeks: number[] = [];
+    const pattern = this.woy.replace(/^WOY:/, '');
+    
+    if (pattern === '*') {
+      // All weeks 1-53
+      for (let i = 1; i <= 53; i++) {
+        weeks.push(i);
+      }
+    } else {
+      // Parse comma-separated weeks: "6,19,32,45"
+      const parts = pattern.split(',');
+      for (const part of parts) {
+        const week = parseInt(part.trim(), 10);
+        if (!isNaN(week) && week >= 1 && week <= 53) {
+          weeks.push(week);
+        }
+      }
+    }
+    
+    return weeks;
+  }
+
+  /**
+   * Get ISO week start date for week numbering
+   */
+  private _getWeekStartDate(year: number, week: number): Date {
+    const jan4 = new Date(year, 0, 4);
+    const jan4DayOfWeek = jan4.getDay() || 7; // Convert Sunday=0 to Sunday=7
+    
+    // Find Monday of week 1
+    const firstMonday = new Date(jan4);
+    firstMonday.setDate(jan4.getDate() - jan4DayOfWeek + 1);
+    
+    // Calculate target week
+    const targetWeek = new Date(firstMonday);
+    targetWeek.setDate(firstMonday.getDate() + (week - 1) * 7);
+    
+    return targetWeek;
+  }
+
+  /**
+   * Get ISO week number for a date
+   */
+  private _getISOWeek(date: Date): number {
+    const target = new Date(date.valueOf());
+    const dayNumber = (date.getDay() + 6) % 7;
+    target.setDate(target.getDate() - dayNumber + 3);
+    const firstThursday = target.valueOf();
+    target.setMonth(0, 1);
+    if (target.getDay() !== 4) {
+      target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+    }
+    return 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
+  }
+
+  /**
+   * Get ISO week year for a date (may differ from calendar year)
+   * Example: Dec 30, 2024 is in ISO Week Year 2025
+   */
+  private _getISOWeekYear(date: Date): number {
+    const target = new Date(date.valueOf());
+    const dayNumber = (date.getDay() + 6) % 7;
+    target.setDate(target.getDate() - dayNumber + 3);
+    return target.getFullYear();
   }
 
   /**
