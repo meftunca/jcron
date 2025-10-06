@@ -751,79 +751,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Calculate end time
-CREATE OR REPLACE FUNCTION jcron.calc_end_time(base_time TIMESTAMPTZ, weeks INTEGER, months INTEGER, days INTEGER)
-RETURNS TIMESTAMPTZ AS $$
-DECLARE
-    result_time TIMESTAMPTZ;
-BEGIN
-    result_time := base_time;
-    
-    -- Add periods
-    IF months > 0 THEN
-        result_time := result_time + (months || ' months')::INTERVAL;
-    END IF;
-    
-    IF weeks > 0 THEN
-        result_time := result_time + (weeks || ' weeks')::INTERVAL;
-    END IF;
-    
-    IF days > 0 THEN
-        result_time := result_time + (days || ' days')::INTERVAL;
-    END IF;
-    
-    -- Go to end of the final period
-    IF weeks > 0 THEN
-        -- End of week (Sunday 23:59:59)
-        result_time := date_trunc('week', result_time) + INTERVAL '6 days 23 hours 59 minutes 59 seconds';
-    ELSIF months > 0 THEN
-        -- End of month
-        result_time := date_trunc('month', result_time) + INTERVAL '1 month - 1 second';
-    ELSIF days > 0 THEN
-        -- End of day
-        result_time := date_trunc('day', result_time) + INTERVAL '23 hours 59 minutes 59 seconds';
-    END IF;
-    
-    RETURN result_time;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
 
--- Calculate start time
-CREATE OR REPLACE FUNCTION jcron.calc_start_time(base_time TIMESTAMPTZ, weeks INTEGER, months INTEGER, days INTEGER)
-RETURNS TIMESTAMPTZ AS $$
-DECLARE
-    result_time TIMESTAMPTZ;
-BEGIN
-    result_time := base_time;
-    
-    -- Add periods
-    IF months > 0 THEN
-        result_time := result_time + (months || ' months')::INTERVAL;
-    END IF;
-    
-    IF weeks > 0 THEN
-        result_time := result_time + (weeks || ' weeks')::INTERVAL;
-    END IF;
-    
-    IF days > 0 THEN
-        result_time := result_time + (days || ' days')::INTERVAL;
-    END IF;
-    
-    -- Go to start of the final period
-    IF weeks > 0 THEN
-        -- Start of week (Monday 00:00:00)
-        result_time := date_trunc('week', result_time) + INTERVAL '1 day';
-    ELSIF months > 0 THEN
-        -- Start of month
-        result_time := date_trunc('month', result_time);
-    ELSIF days > 0 THEN
-        -- Start of day
-        result_time := date_trunc('day', result_time);
-    END IF;
-    
-    RETURN result_time;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
+
+
 
 -- Parse hybrid expressions (Cron | EOD/SOD)
 CREATE OR REPLACE FUNCTION jcron.parse_hybrid(expression TEXT)
@@ -1211,6 +1141,7 @@ DECLARE
     test_time TIMESTAMPTZ;
     max_iterations INTEGER;
     iteration_count INTEGER := 0;
+    has_special_syntax BOOLEAN := FALSE;
 BEGIN
     -- Parse expression
     parts := string_to_array(trim(expression), ' ');
@@ -1228,6 +1159,16 @@ BEGIN
     -- Add year if missing (6 -> 7 parts)
     IF array_length(parts, 1) = 6 THEN
         parts := array_append(parts, '*');
+    END IF;
+    
+    -- Check for special L or # syntax in day or DOW fields
+    IF parts[4] ~ '[L#]' OR parts[6] ~ '[L#]' THEN
+        has_special_syntax := TRUE;
+    END IF;
+    
+    -- Handle special L/# syntax separately
+    IF has_special_syntax THEN
+        RETURN jcron.handle_special_syntax(expression, from_time);
     END IF;
     
     -- Set max iterations and increment interval
@@ -1290,46 +1231,83 @@ CREATE OR REPLACE FUNCTION jcron.handle_special_syntax(
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     parts TEXT[];
+    sec_part TEXT;
+    min_part TEXT;
+    hour_part TEXT;
     day_part TEXT;
+    month_part TEXT;
+    dow_part TEXT;
     month_val INTEGER;
     year_val INTEGER;
     target_date DATE;
     nth_occurrence INTEGER;
     weekday_num INTEGER;
     result_time TIMESTAMPTZ;
+    hour_val INTEGER;
+    min_val INTEGER;
+    sec_val INTEGER;
 BEGIN
     parts := string_to_array(trim(expression), ' ');
-    IF array_length(parts, 1) < 6 THEN RETURN NULL; END IF;
     
-    day_part := parts[3];
+    -- Add seconds if missing (5 -> 6 parts)
+    IF array_length(parts, 1) = 5 THEN
+        parts := array_prepend('0', parts);
+    END IF;
+    
+    IF array_length(parts, 1) < 6 THEN 
+        RAISE EXCEPTION 'Invalid cron expression for special syntax: %', expression;
+    END IF;
+    
+    sec_part := parts[1];
+    min_part := parts[2];
+    hour_part := parts[3];
+    day_part := parts[4];
+    month_part := parts[5];
+    dow_part := parts[6];
+    
     month_val := EXTRACT(month FROM from_time)::INTEGER;
     year_val := EXTRACT(year FROM from_time)::INTEGER;
     
-    -- Handle L syntax
+    -- Parse time components
+    sec_val := CASE WHEN sec_part = '*' THEN 0 ELSE sec_part::INTEGER END;
+    min_val := CASE WHEN min_part = '*' THEN 0 ELSE min_part::INTEGER END;
+    hour_val := CASE WHEN hour_part = '*' THEN 0 ELSE hour_part::INTEGER END;
+    
+    -- Handle L syntax in day field
     IF day_part ~ 'L$' THEN
         IF day_part = 'L' THEN
-            target_date := (date_trunc('month', from_time) + interval '1 month - 1 day')::DATE;
-        ELSE
-            weekday_num := substring(day_part from '(\d+)')::INTEGER;
-            target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
+            -- Last day of month
+            target_date := (date_trunc('month', make_date(year_val, month_val, 1)) + interval '1 month - 1 day')::DATE;
         END IF;
-    -- Handle # syntax
-    ELSIF day_part ~ '#' THEN
-        parts := string_to_array(day_part, '#');
-        weekday_num := parts[1]::INTEGER;
-        nth_occurrence := parts[2]::INTEGER;
-        target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+    -- Handle L syntax in DOW field (e.g., 1L = last Monday)
+    ELSIF dow_part ~ 'L$' THEN
+        weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
+        target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
+    -- Handle # syntax in DOW field (e.g., 5#2 = 2nd Friday)
+    ELSIF dow_part ~ '#' THEN
+        DECLARE
+            dow_parts TEXT[];
+        BEGIN
+            dow_parts := string_to_array(dow_part, '#');
+            weekday_num := dow_parts[1]::INTEGER;
+            nth_occurrence := dow_parts[2]::INTEGER;
+            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+        END;
     ELSE
-        RETURN NULL;
+        RAISE EXCEPTION 'No special syntax found in expression: %', expression;
+    END IF;
+    
+    -- Check if target_date is NULL (invalid date)
+    IF target_date IS NULL THEN
+        RAISE EXCEPTION 'Could not calculate valid date for expression: %', expression;
     END IF;
     
     -- Apply time
-    result_time := target_date + 
-        (parts[2]::INTEGER * interval '1 minute') + 
-        (parts[1]::INTEGER * interval '1 hour');
+    result_time := target_date::TIMESTAMPTZ + 
+        make_interval(hours => hour_val, mins => min_val, secs => sec_val);
     
     -- Ensure future
-    IF result_time <= from_time THEN
+    WHILE result_time <= from_time LOOP
         -- Next month
         IF month_val = 12 THEN
             month_val := 1;
@@ -1338,21 +1316,35 @@ BEGIN
             month_val := month_val + 1;
         END IF;
         
-        -- Recalculate
-        IF day_part ~ 'L$' THEN
-            IF day_part = 'L' THEN
-                target_date := (date_trunc('month', make_date(year_val, month_val, 1)) + interval '1 month - 1 day')::DATE;
-            ELSE
-                target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
-            END IF;
-        ELSE
-            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+        -- Recalculate target date
+        IF day_part ~ 'L$' AND day_part = 'L' THEN
+            -- Last day of month
+            target_date := (date_trunc('month', make_date(year_val, month_val, 1)) + interval '1 month - 1 day')::DATE;
+        ELSIF dow_part ~ 'L$' THEN
+            -- Last weekday
+            weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
+            target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
+        ELSIF dow_part ~ '#' THEN
+            -- Nth weekday
+            DECLARE
+                dow_parts TEXT[];
+            BEGIN
+                dow_parts := string_to_array(dow_part, '#');
+                weekday_num := dow_parts[1]::INTEGER;
+                nth_occurrence := dow_parts[2]::INTEGER;
+                target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+            END;
         END IF;
         
-        result_time := target_date + 
-            (parts[2]::INTEGER * interval '1 minute') + 
-            (parts[1]::INTEGER * interval '1 hour');
-    END IF;
+        -- Check if target_date is NULL (invalid date)
+        IF target_date IS NULL THEN
+            -- Skip this month, continue to next
+            CONTINUE;
+        END IF;
+        
+        result_time := target_date::TIMESTAMPTZ + 
+            make_interval(hours => hour_val, mins => min_val, secs => sec_val);
+    END LOOP;
     
     RETURN result_time;
 END;

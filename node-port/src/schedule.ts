@@ -523,15 +523,15 @@ export class Schedule {
   }
 }
 
-// Standart cron kısaltmaları için harita
+// Standart cron kısaltmaları için harita - JCRON 7-field format (s m h D M dow Y)
 const SHORTCUTS: Record<string, string> = {
-  "@yearly": "0 0 1 1 *",
-  "@annually": "0 0 1 1 *",
-  "@monthly": "0 0 1 * *",
-  "@weekly": "0 0 * * 0",
-  "@daily": "0 0 * * *",
-  "@midnight": "0 0 * * *",
-  "@hourly": "0 * * * *",
+  "@yearly": "0 0 0 1 1 * *",      // Yılda bir - 1 Ocak gece yarısı
+  "@annually": "0 0 0 1 1 * *",    // Yılda bir - @yearly ile aynı
+  "@monthly": "0 0 0 1 * * *",     // Ayda bir - ayın 1'i gece yarısı
+  "@weekly": "0 0 0 * * 0 *",      // Haftada bir - Pazar gece yarısı
+  "@daily": "0 0 0 * * * *",       // Günde bir - gece yarısı
+  "@midnight": "0 0 0 * * * *",    // Gece yarısı - @daily ile aynı
+  "@hourly": "0 0 * * * * *",      // Saatte bir - dakika 0'da
 };
 
 // Metinsel ifadeleri sayısal değerlere çeviren yardımcı fonksiyon

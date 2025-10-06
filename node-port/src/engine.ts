@@ -563,10 +563,9 @@ export class Engine {
         ? Array.from({ length: 30 }, (_, i) => currentYear - 10 + i) // Include 10 years in the past and 20 in the future
         : this._expandPartOptimized(Y, currentYear - 10, currentYear + 100);
         
-    // Expand day-related fields (for complex patterns like L, #, etc.)
-    // For simple numeric patterns, we'll use sets directly in _isDayMatch
-    exp.daysOfMonth = D === "*" || D === "?" ? [] : (D.match(/[LW#]/) ? [] : this._expandPartOptimized(D, 1, 31));
-    exp.daysOfWeek = dow === "*" || dow === "?" ? [] : (dow.match(/[LW#]/) ? [] : this._expandPartOptimized(dow.replace("7", "0"), 0, 6));
+    // Expand day-related fields properly for all patterns
+    exp.daysOfMonth = D === "*" || D === "?" ? [] : this._expandPartOptimized(D, 1, 31);
+    exp.daysOfWeek = dow === "*" || dow === "?" ? [] : this._expandPartOptimized(dow.replace("7", "0"), 0, 6);
     
     // Create Sets for fast lookups
     exp.secondsSet = new Set(exp.seconds);

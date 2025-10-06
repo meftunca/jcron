@@ -58,13 +58,30 @@ export class EndOfDuration {
 
   /**
    * Convert EoD to standard EoD string format
+   * Preserves JCRON semantics: E0W, E0D, S0W are meaningful patterns
    */
   toString(): string {
     // Use the isSOD flag to determine prefix
     const prefix = this.isSOD ? "S" : "E";
     
+    // Check if this is a zero-based reference pattern (E0W, E0D, S0W, etc.)
+    // These patterns are special in JCRON and should be preserved even with 0 values
+    const nonZeroValues = [this.years, this.months, this.weeks, this.days, this.hours, this.minutes, this.seconds].filter(v => v > 0);
+    const hasOnlyZeroValues = nonZeroValues.length === 0;
+    
+    // For zero-value patterns, use referencePoint to reconstruct correct format
+    if (hasOnlyZeroValues && this.referencePoint) {
+      switch (this.referencePoint) {
+        case "YEAR": return `${prefix}0Y`;
+        case "MONTH": return `${prefix}0M`;
+        case "WEEK": return `${prefix}0W`;
+        case "DAY": return `${prefix}0D`;
+        default: return prefix; // Fallback for unknown reference points
+      }
+    }
+    
     // Simple format for single-unit expressions
-    const unitCount = [this.years, this.months, this.weeks, this.days, this.hours, this.minutes, this.seconds].filter(v => v > 0).length;
+    const unitCount = nonZeroValues.length;
     
     if (unitCount === 1) {
       if (this.years > 0) return `${prefix}${this.years}Y`;
