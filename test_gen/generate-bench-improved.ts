@@ -745,7 +745,9 @@ function formatSQL(tests: TestCase[], tableName: string): string {
       `ARRAY[${test.tags.map(t => `'${t.replace(/'/g, "''")}'`).join(", ")}]`,
     ];
     
-    const line = `  (${values.join(", ")})${idx < tests.length - 1 ? "," : ";"}`;
+    // Check if this is the last item in current batch or last item overall
+    const isLastInBatch = currentBatch.length === 99 || idx === tests.length - 1;
+    const line = `  (${values.join(", ")})${isLastInBatch ? ";" : ","}`;
     currentBatch.push(line);
     
     if (currentBatch.length >= 100 || idx === tests.length - 1) {

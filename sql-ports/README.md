@@ -425,6 +425,63 @@ END $$;
 -- Add seconds field (typically '0')
 ```
 
+## 🎯 Performance & Benchmarking
+
+### Realistic Benchmark Suite
+
+JCRON v4.0 includes a comprehensive benchmark suite with **production-like test data**:
+
+```bash
+# Quick benchmark (100 tests)
+cd ..
+./run_benchmark.sh --tests 100 --docker
+
+# Full benchmark (5000 tests with all features)
+./run_benchmark.sh --tests 5000 --woy --eod --special --docker
+```
+
+### Performance Metrics
+
+| Complexity | Avg Time | Throughput | Pattern Example |
+|------------|----------|------------|-----------------|
+| **Simple** | ~1.4 ms | ~700/sec | `0 */5 * * * *` |
+| **Medium** | ~1.8 ms | ~550/sec | `TZ:UTC 0 0 9 * * *` |
+| **Complex** | ~2.5 ms | ~400/sec | `0 0 0 L * * WOY:10,20,30` |
+| **Extreme** | ~3.1 ms | ~320/sec | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
+
+### Benchmark Test Categories
+
+1. **Valid Pattern Parsing** - Tests realistic production patterns
+2. **Invalid Pattern Detection** - Validates error handling
+3. **Complexity-Based Performance** - Measures performance by pattern complexity
+4. **Feature-Specific Tests** - WOY, EOD/SOD, timezone, special syntax
+
+📖 **See [BENCHMARK_README.md](../BENCHMARK_README.md)** for complete benchmark documentation.
+
+### Generate Custom Test Data
+
+```bash
+cd ../test_gen
+
+# Generate 1000 realistic test patterns
+bun run generate-bench-improved.ts --total 1000 --woy --eod --special --format sql
+
+# Options:
+#   --total <N>        Number of tests (default: 1000)
+#   --validPct <N>     Valid pattern percentage (default: 70)
+#   --woy              Include WOY patterns
+#   --eod              Include EOD/SOD modifiers
+#   --special          Include L, #, W syntax
+#   --format           json | jsonl | sql
+```
+
+**Features:**
+- ✅ Realistic pattern distribution (business hours, weekly, monthly)
+- ✅ Correct `expectedTime` calculation
+- ✅ WOY and EOD/SOD support
+- ✅ Complexity levels (simple → extreme)
+- ✅ Multiple output formats
+
 ## Contributing
 
 Contributions welcome! This is part of the JCRON project.
@@ -440,6 +497,8 @@ MIT License - See LICENSE file for details
 - [Syntax Guide](SYNTAX.md)
 - [API Documentation](API.md)
 - [Scheduler Guide](SCHEDULER.md)
+- [Benchmark Documentation](../BENCHMARK_README.md)
+- [Test Generator](../test_gen/README_GENERATOR.md)
 
 ## Support
 
@@ -447,6 +506,7 @@ For issues, questions, or contributions:
 - GitHub Issues: [Report bugs or request features]
 - Documentation: Check guides above
 - Examples: See [SCHEDULER.md](SCHEDULER.md)
+- Benchmarks: See [BENCHMARK_README.md](../BENCHMARK_README.md)
 
 ---
 

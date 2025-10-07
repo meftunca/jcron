@@ -643,23 +643,57 @@ END $$;
 
 ## Performance Notes
 
-### Function Performance
+### Function Performance (Benchmarked)
 
-| Function | Avg Time | Notes |
-|----------|----------|-------|
-| `next_time()` (simple) | ~1-3µs | Cached patterns |
-| `next_time()` (complex) | ~5-10µs | With L/# syntax |
-| `match_time()` | ~1-2µs | Fast boolean check |
-| `fast_dow()` | <0.5µs | Pure mathematical |
+| Pattern Complexity | Avg Time | Throughput | Example |
+|-------------------|----------|------------|---------|
+| **Simple** | ~1.4 ms | ~700/sec | `0 */5 * * * *` |
+| **Medium** (with TZ) | ~1.8 ms | ~550/sec | `TZ:UTC 0 0 9 * * *` |
+| **Complex** (WOY/EOD) | ~2.5 ms | ~400/sec | `0 0 0 L * * WOY:10,20,30` |
+| **Extreme** (all features) | ~3.1 ms | ~320/sec | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
+
+**Based on realistic benchmark with 1000+ production-like patterns**
 
 ### Optimization Tips
 
-1. **Cache patterns** - Repeated patterns are faster
-2. **Use simple patterns** when possible
-3. **Avoid frequent L/# syntax** in tight loops
-4. **Batch operations** instead of individual calls
-5. **Use indexes** on scheduled_time columns
+1. **Cache patterns** - Repeated patterns are faster due to regex caching
+2. **Use simple patterns** when possible - ~2x faster than complex patterns
+3. **Batch operations** - Use set-based operations instead of loops
+4. **Use indexes** on scheduled_time columns for query optimization
+5. **Prepare statements** for frequently used patterns
+6. **Enable parallel execution** - Functions are marked `PARALLEL SAFE`
+
+### Benchmark Your Setup
+
+Run realistic benchmarks on your database:
+
+```bash
+# Generate test data
+cd ../test_gen
+bun run generate-bench-improved.ts --total 1000 --woy --eod --special --format sql --out ../test_data.sql
+
+# Load and benchmark
+psql -U postgres -d your_db -f ../test_data.sql
+psql -U postgres -d your_db -f ../test_jcron_benchmark.sql
+```
+
+**Or use the automated runner:**
+
+```bash
+cd ..
+./run_benchmark.sh --tests 1000 --woy --eod --special --db your_db
+```
+
+### Performance Targets
+
+| Environment | Target Throughput | Notes |
+|-------------|------------------|-------|
+| Development | >500 patterns/sec | Basic functionality testing |
+| Production | >1000 patterns/sec | With indexes and optimization |
+| High Performance | >5000 patterns/sec | With caching and connection pooling |
+
+📖 **See [BENCHMARK_README.md](../BENCHMARK_README.md)** for detailed benchmark documentation and CI/CD integration.
 
 ---
 
-**Next:** [Scheduler Guide](SCHEDULER.md) | [Syntax Reference](SYNTAX.md)
+**Next:** [Scheduler Guide](SCHEDULER.md) | [Syntax Reference](SYNTAX.md) | [Benchmark Guide](../BENCHMARK_README.md)
