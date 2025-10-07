@@ -10,6 +10,9 @@ Complete guide for building production-ready job schedulers with JCRON SQL.
 - [Execution Engine](#execution-engine)
 - [Monitoring](#monitoring)
 - [Best Practices](#best-practices)
+- [Distributed Locking](#distributed-locking)
+- [Horizontal Scaling](#horizontal-scaling)
+- [High Availability](#high-availability)
 
 ## Quick Start
 
@@ -566,6 +569,339 @@ WHERE enabled = TRUE
   AND last_run IS NOT NULL
   AND NOW() - last_run > INTERVAL '24 hours'
   AND cron_pattern NOT LIKE '%* * * *%'; -- Exclude frequent jobs
+```
+
+---
+
+## Distributed Locking
+
+### Advisory Locks (Single Database)
+
+```sql
+CREATE OR REPLACE FUNCTION try_execute_job(job_id INTEGER)
+RETURNS BOOLEAN AS $$
+DECLARE
+    lock_acquired BOOLEAN;
+    job_record RECORD;
+BEGIN
+    -- Try to acquire advisory lock (non-blocking)
+    lock_acquired := pg_try_advisory_lock(job_id);
+    
+    IF NOT lock_acquired THEN
+        RAISE NOTICE 'Job % already running', job_id;
+        RETURN FALSE;
+    END IF;
+    
+    BEGIN
+        -- Execute job
+        SELECT * INTO job_record FROM scheduled_jobs WHERE id = job_id;
+        PERFORM execute_job(job_record);
+        
+        -- Release lock
+        PERFORM pg_advisory_unlock(job_id);
+        RETURN TRUE;
+    EXCEPTION WHEN OTHERS THEN
+        -- Always release lock on error
+        PERFORM pg_advisory_unlock(job_id);
+        RAISE;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Distributed Lock Table (Multi-Instance)
+
+```sql
+CREATE TABLE job_locks (
+    job_id INTEGER PRIMARY KEY,
+    worker_id VARCHAR(100) NOT NULL,
+    locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE OR REPLACE FUNCTION acquire_distributed_lock(
+    p_job_id INTEGER,
+    p_worker_id VARCHAR(100),
+    p_lock_duration INTERVAL DEFAULT '5 minutes'
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    lock_acquired BOOLEAN := FALSE;
+BEGIN
+    -- Clean up expired locks
+    DELETE FROM job_locks 
+    WHERE expires_at < NOW();
+    
+    -- Try to insert lock
+    BEGIN
+        INSERT INTO job_locks (job_id, worker_id, expires_at)
+        VALUES (p_job_id, p_worker_id, NOW() + p_lock_duration);
+        
+        lock_acquired := TRUE;
+    EXCEPTION WHEN unique_violation THEN
+        -- Lock already held
+        lock_acquired := FALSE;
+    END;
+    
+    RETURN lock_acquired;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION release_distributed_lock(
+    p_job_id INTEGER,
+    p_worker_id VARCHAR(100)
+)
+RETURNS VOID AS $$
+BEGIN
+    DELETE FROM job_locks 
+    WHERE job_id = p_job_id 
+      AND worker_id = p_worker_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Usage
+DO $$
+DECLARE
+    worker_id VARCHAR(100) := 'worker-' || pg_backend_pid();
+    job_id INTEGER := 1;
+BEGIN
+    IF acquire_distributed_lock(job_id, worker_id) THEN
+        BEGIN
+            -- Execute job
+            PERFORM execute_job((SELECT * FROM scheduled_jobs WHERE id = job_id));
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'Job % failed: %', job_id, SQLERRM;
+        END;
+        
+        -- Always release lock
+        PERFORM release_distributed_lock(job_id, worker_id);
+    ELSE
+        RAISE NOTICE 'Job % already running', job_id;
+    END IF;
+END $$;
+```
+
+---
+
+## Horizontal Scaling
+
+### Load Balancer Pattern
+
+```sql
+-- Assign jobs to workers using hash
+CREATE OR REPLACE FUNCTION get_worker_for_job(
+    p_job_id INTEGER,
+    p_worker_count INTEGER
+)
+RETURNS INTEGER AS $$
+BEGIN
+    RETURN (p_job_id % p_worker_count);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Worker fetches only its jobs
+CREATE OR REPLACE FUNCTION get_jobs_for_worker(
+    p_worker_id INTEGER,
+    p_worker_count INTEGER
+)
+RETURNS TABLE(
+    id INTEGER,
+    name VARCHAR(255),
+    cron_pattern VARCHAR(100)
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT sj.id, sj.name, sj.cron_pattern
+    FROM scheduled_jobs sj
+    WHERE sj.enabled = TRUE
+      AND sj.next_run <= NOW()
+      AND get_worker_for_job(sj.id, p_worker_count) = p_worker_id
+    ORDER BY sj.next_run
+    FOR UPDATE SKIP LOCKED;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Queue-Based Pattern
+
+```sql
+-- Job queue table
+CREATE TABLE job_queue (
+    id BIGSERIAL PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES scheduled_jobs(id),
+    scheduled_for TIMESTAMPTZ NOT NULL,
+    priority INTEGER DEFAULT 0,
+    worker_id VARCHAR(100),
+    claimed_at TIMESTAMPTZ,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_queue_pending ON job_queue(scheduled_for, priority DESC)
+WHERE status = 'pending';
+
+-- Enqueue jobs
+CREATE OR REPLACE FUNCTION enqueue_due_jobs()
+RETURNS INTEGER AS $$
+DECLARE
+    jobs_queued INTEGER := 0;
+BEGIN
+    INSERT INTO job_queue (job_id, scheduled_for, priority)
+    SELECT 
+        id,
+        next_run,
+        CASE 
+            WHEN cron_pattern LIKE '%* * * *%' THEN 1  -- High frequency
+            ELSE 0
+        END
+    FROM scheduled_jobs
+    WHERE enabled = TRUE
+      AND next_run <= NOW()
+      AND NOT EXISTS (
+          SELECT 1 FROM job_queue 
+          WHERE job_id = scheduled_jobs.id 
+            AND status IN ('pending', 'running')
+      );
+    
+    GET DIAGNOSTICS jobs_queued = ROW_COUNT;
+    RETURN jobs_queued;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Worker claims job from queue
+CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id VARCHAR(100))
+RETURNS TABLE(
+    queue_id BIGINT,
+    job_id INTEGER,
+    job_name VARCHAR(255),
+    cron_pattern VARCHAR(100)
+) AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE job_queue jq
+    SET 
+        status = 'running',
+        worker_id = p_worker_id,
+        claimed_at = NOW()
+    FROM scheduled_jobs sj
+    WHERE jq.job_id = sj.id
+      AND jq.id = (
+          SELECT id FROM job_queue
+          WHERE status = 'pending'
+            AND scheduled_for <= NOW()
+          ORDER BY priority DESC, scheduled_for
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+      )
+    RETURNING jq.id, jq.job_id, sj.name, sj.cron_pattern;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+---
+
+## High Availability
+
+### Health Check
+
+```sql
+CREATE TABLE worker_heartbeat (
+    worker_id VARCHAR(100) PRIMARY KEY,
+    hostname VARCHAR(255),
+    last_heartbeat TIMESTAMPTZ DEFAULT NOW(),
+    jobs_processed INTEGER DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'active'
+);
+
+CREATE OR REPLACE FUNCTION update_heartbeat(p_worker_id VARCHAR(100))
+RETURNS VOID AS $$
+BEGIN
+    INSERT INTO worker_heartbeat (worker_id, hostname)
+    VALUES (p_worker_id, inet_server_addr()::TEXT)
+    ON CONFLICT (worker_id) DO UPDATE
+    SET last_heartbeat = NOW();
+END;
+$$ LANGUAGE plpgsql;
+
+-- Detect dead workers
+CREATE OR REPLACE FUNCTION cleanup_dead_workers()
+RETURNS INTEGER AS $$
+DECLARE
+    dead_workers INTEGER;
+BEGIN
+    -- Mark workers as dead if no heartbeat for 5 minutes
+    UPDATE worker_heartbeat
+    SET status = 'dead'
+    WHERE last_heartbeat < NOW() - INTERVAL '5 minutes'
+      AND status = 'active';
+    
+    GET DIAGNOSTICS dead_workers = ROW_COUNT;
+    
+    -- Release locks held by dead workers
+    DELETE FROM job_locks
+    WHERE worker_id IN (
+        SELECT worker_id FROM worker_heartbeat WHERE status = 'dead'
+    );
+    
+    RETURN dead_workers;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### Failover Strategy
+
+```sql
+-- Job reassignment on worker failure
+CREATE OR REPLACE FUNCTION reassign_orphaned_jobs()
+RETURNS INTEGER AS $$
+DECLARE
+    reassigned INTEGER;
+BEGIN
+    -- Reset jobs claimed by dead workers
+    UPDATE job_queue
+    SET 
+        status = 'pending',
+        worker_id = NULL,
+        claimed_at = NULL
+    WHERE status = 'running'
+      AND worker_id IN (
+          SELECT worker_id FROM worker_heartbeat WHERE status = 'dead'
+      );
+    
+    GET DIAGNOSTICS reassigned = ROW_COUNT;
+    RETURN reassigned;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Run cleanup periodically
+SELECT cleanup_dead_workers();
+SELECT reassign_orphaned_jobs();
+```
+
+### Split-Brain Prevention
+
+```sql
+-- Implement fencing tokens
+ALTER TABLE job_locks ADD COLUMN fence_token BIGSERIAL;
+
+CREATE OR REPLACE FUNCTION validate_fence_token(
+    p_job_id INTEGER,
+    p_worker_id VARCHAR(100),
+    p_fence_token BIGINT
+)
+RETURNS BOOLEAN AS $$
+DECLARE
+    current_token BIGINT;
+BEGIN
+    SELECT fence_token INTO current_token
+    FROM job_locks
+    WHERE job_id = p_job_id AND worker_id = p_worker_id;
+    
+    RETURN current_token = p_fence_token;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Always check fence token before job execution
 ```
 
 ---

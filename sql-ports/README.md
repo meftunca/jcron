@@ -16,6 +16,23 @@ High-performance cron expression scheduler for PostgreSQL with advanced features
 - 🚀 **Zero Dependencies** - Pure PostgreSQL/SQL
 - 💾 **Production Ready** - Battle-tested and optimized
 
+---
+
+## 📋 Quick Reference Table
+
+| Pattern | Description | Example Time |
+|---------|-------------|--------------|
+| `0 0 9 * * *` | Daily at 9 AM | 09:00:00 |
+| `0 0 0,12 * * *` | Midnight & Noon | 00:00 & 12:00 |
+| `0 */15 * * * *` | Every 15 minutes | :00, :15, :30, :45 |
+| `0 0 9 * * 1-5` | Weekdays at 9 AM | Mon-Fri 09:00 |
+| `0 0 0 1 * *` | Monthly 1st day | 1st 00:00 |
+| `0 0 0 L * *` | Last day of month | 28-31st 00:00 |
+| `0 0 9 * * 1#2` | 2nd Monday | 2nd Mon 09:00 |
+| `0 0 17 * * 5L` | Last Friday 5 PM | Last Fri 17:00 |
+| `E1D` | End of day | 23:59:59.999 |
+| `S1W` | Start of next week | Mon 00:00:00 |
+
 ## Quick Start
 
 ### Installation
@@ -355,6 +372,46 @@ SELECT jcron.validate_timezone('America/New_York');
 
 -- List available timezones
 SELECT name FROM pg_timezone_names ORDER BY name;
+```
+
+### L Syntax Not Working
+
+```sql
+-- WRONG: L with day number prefix
+SELECT jcron.next_time('0 0 0 5L * *', NOW());
+
+-- CORRECT: L alone for last day, OR L with weekday
+SELECT jcron.next_time('0 0 0 L * *', NOW());   -- Last day
+SELECT jcron.next_time('0 0 9 * * 5L', NOW());  -- Last Friday
+```
+
+### # Syntax Returns NULL
+
+```sql
+-- Check if # value is valid (1-5)
+SELECT jcron.next_time('0 0 9 * * 1#2', NOW());  -- ✅ 2nd Monday
+
+-- WRONG: Out of range
+SELECT jcron.next_time('0 0 9 * * 1#6', NOW());  -- ❌ NULL (6 > 5)
+```
+
+### Pattern Returns NULL
+
+```sql
+-- Enable debug mode to see what's happening
+DO $$
+DECLARE
+    pattern TEXT := '0 0 9 * * 1#2';
+    result TIMESTAMPTZ;
+BEGIN
+    result := jcron.next_time(pattern, NOW());
+    
+    IF result IS NULL THEN
+        RAISE NOTICE 'Pattern % returned NULL - check syntax', pattern;
+    ELSE
+        RAISE NOTICE 'Next time: %', result;
+    END IF;
+END $$;
 ```
 
 ## Migration

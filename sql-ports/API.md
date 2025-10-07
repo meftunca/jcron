@@ -96,6 +96,86 @@ SELECT jcron.next_from('0 0 9 * * *', '2025-01-01');
 
 ---
 
+### `jcron.next_end()`
+
+Next occurrence'ın period sonu (simplified).
+
+**Signature:**
+```sql
+jcron.next_end(pattern TEXT) RETURNS TIMESTAMPTZ
+```
+
+**Parameters:**
+- `pattern` - Cron pattern
+
+**Returns:** Next end of period
+
+**Example:**
+```sql
+SELECT jcron.next_end('E1D');  -- End of today
+```
+
+---
+
+### `jcron.next_end_from()`
+
+Belirli zamandan sonraki period sonu.
+
+**Signature:**
+```sql
+jcron.next_end_from(
+    pattern TEXT,
+    from_time TIMESTAMPTZ
+) RETURNS TIMESTAMPTZ
+```
+
+**Example:**
+```sql
+SELECT jcron.next_end_from('E1W', '2025-01-01');
+```
+
+---
+
+### `jcron.next_start()`
+
+Next occurrence'ın period başı (simplified).
+
+**Signature:**
+```sql
+jcron.next_start(pattern TEXT) RETURNS TIMESTAMPTZ
+```
+
+**Parameters:**
+- `pattern` - Cron pattern
+
+**Returns:** Next start of period
+
+**Example:**
+```sql
+SELECT jcron.next_start('S1D');  -- Start of tomorrow
+```
+
+---
+
+### `jcron.next_start_from()`
+
+Belirli zamandan sonraki period başı.
+
+**Signature:**
+```sql
+jcron.next_start_from(
+    pattern TEXT,
+    from_time TIMESTAMPTZ
+) RETURNS TIMESTAMPTZ
+```
+
+**Example:**
+```sql
+SELECT jcron.next_start_from('S1M', '2025-01-15');
+```
+
+---
+
 ### `jcron.prev_time()`
 
 Önceki çalışma zamanını hesaplar.
@@ -150,6 +230,77 @@ SELECT jcron.match_time(
     '0 0 9 * * 1-5',
     '2025-10-06 09:00:00'::TIMESTAMPTZ
 );
+```
+
+---
+
+## Period Calculation Functions
+
+### `jcron.calc_end_time()`
+
+Period sonunu hesaplar (E modifier işlemleri için).
+
+**Signature:**
+```sql
+jcron.calc_end_time(
+    from_time TIMESTAMPTZ,
+    weeks INTEGER DEFAULT 0,
+    months INTEGER DEFAULT 0,
+    days INTEGER DEFAULT 0
+) RETURNS TIMESTAMPTZ
+```
+
+**Parameters:**
+- `from_time` - Starting timestamp
+- `weeks` - Number of weeks to add
+- `months` - Number of months to add
+- `days` - Number of days to add
+
+**Returns:** End of the specified period
+
+**Examples:**
+```sql
+-- End of current day
+SELECT jcron.calc_end_time(NOW(), 0, 0, 0);
+
+-- End of current week
+SELECT jcron.calc_end_time(NOW(), 0, 0, 0);
+
+-- End of current month
+SELECT jcron.calc_end_time(NOW(), 0, 1, 0);
+```
+
+---
+
+### `jcron.calc_start_time()`
+
+Period başlangıcını hesaplar (S modifier işlemleri için).
+
+**Signature:**
+```sql
+jcron.calc_start_time(
+    from_time TIMESTAMPTZ,
+    weeks INTEGER DEFAULT 0,
+    months INTEGER DEFAULT 0,
+    days INTEGER DEFAULT 0
+) RETURNS TIMESTAMPTZ
+```
+
+**Parameters:**
+- Same as `calc_end_time()`
+
+**Returns:** Start of the specified period
+
+**Examples:**
+```sql
+-- Start of tomorrow
+SELECT jcron.calc_start_time(NOW(), 0, 0, 1);
+
+-- Start of next week
+SELECT jcron.calc_start_time(NOW(), 1, 0, 0);
+
+-- Start of next month
+SELECT jcron.calc_start_time(NOW(), 0, 1, 0);
 ```
 
 ---

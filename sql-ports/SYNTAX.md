@@ -371,6 +371,94 @@ $$ LANGUAGE plpgsql;
 SELECT * FROM test_pattern('0 0 9 * * 1-5', 10);
 ```
 
+## Advanced Combinations
+
+### L + Timezone
+```sql
+-- Last day at 10 PM NY time
+SELECT jcron.next_time('0 0 22 L * * America/New_York', NOW());
+
+-- Last Friday 9 AM London time
+SELECT jcron.next_time('0 0 9 * * 5L Europe/London', NOW());
+```
+
+### # + Multiple Values
+```sql
+-- 2nd Monday AND 2nd Wednesday
+SELECT jcron.next_time('0 0 9 * * 1#2,3#2', NOW());
+
+-- 1st and 3rd Friday at noon
+SELECT jcron.next_time('0 0 12 * * 5#1,5#3', NOW());
+```
+
+### Complex Business Rules
+```sql
+-- Weekdays at 9 AM
+SELECT jcron.next_time('0 0 9 * * 1-5', NOW());
+
+-- 8:30 AM, 12:30 PM, 5:30 PM on weekdays
+SELECT jcron.next_time('0 30 8,12,17 * * 1-5', NOW());
+
+-- 1st and 15th of every month
+SELECT jcron.next_time('0 0 0 1,15 * *', NOW());
+```
+
+---
+
+## Common Pitfalls & Solutions
+
+### ❌ Day AND Weekday Both Specified
+```sql
+-- WRONG: Ambiguous! Day=15 OR Monday?
+SELECT jcron.next_time('0 0 9 15 * 1', NOW());
+
+-- RIGHT: Use only one
+SELECT jcron.next_time('0 0 9 15 * *', NOW());  -- 15th of every month
+SELECT jcron.next_time('0 0 9 * * 1', NOW());   -- Every Monday
+```
+
+### ❌ Invalid L Syntax
+```sql
+-- WRONG: L in day field doesn't take prefix
+SELECT jcron.next_time('0 0 0 5L * *', NOW());
+
+-- RIGHT: Use L alone for day, or with weekday prefix
+SELECT jcron.next_time('0 0 0 L * *', NOW());   -- Last day of month
+SELECT jcron.next_time('0 0 9 * * 5L', NOW());  -- Last Friday
+```
+
+### ❌ # Outside Valid Range
+```sql
+-- WRONG: 6th Monday (most months only have 4-5)
+SELECT jcron.next_time('0 0 9 * * 1#6', NOW());
+
+-- RIGHT: Use only 1-5 for # patterns
+SELECT jcron.next_time('0 0 9 * * 1#2', NOW());  -- 2nd Monday
+SELECT jcron.next_time('0 0 9 * * 5L', NOW());   -- Last occurrence
+```
+
+### ❌ Invalid Timezone
+```sql
+-- WRONG: Invalid timezone name
+SELECT jcron.next_time('0 0 9 * * * US/Pacific', NOW());
+
+-- RIGHT: Use standard IANA names
+SELECT jcron.next_time('0 0 9 * * * America/Los_Angeles', NOW());
+SELECT jcron.next_time('0 0 9 * * * Europe/Istanbul', NOW());
+```
+
+### ❌ E/S with Regular Pattern
+```sql
+-- WRONG: Mixing period and specific time
+SELECT jcron.next_time('E1D 0 0 9 * * *', NOW());
+
+-- RIGHT: Use E/S alone or regular pattern alone
+SELECT jcron.next_end('E1D');              -- End of period
+SELECT jcron.next_time('0 0 9 * * *', NOW());  -- Specific time
+```
+
+---
+
 ## Best Practices
 
 1. **Always specify all 6 fields** for clarity
@@ -380,6 +468,9 @@ SELECT * FROM test_pattern('0 0 9 * * 1-5', 10);
 5. **Avoid overly frequent** patterns (e.g., every second)
 6. **Use ranges** instead of long lists when possible
 7. **Document business logic** behind complex patterns
+8. **Validate L and # patterns** - ensure they make logical sense
+9. **Use match_time()** to verify pattern matches expected times
+10. **Consider DST transitions** when using timezones
 
 ---
 
