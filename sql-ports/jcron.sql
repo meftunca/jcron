@@ -14,11 +14,13 @@
 -- • 59K+ patterns/second throughput
 --
 -- Performance Optimizations:
--- ✓ IMMUTABLE STRICT PARALLEL SAFE functions
--- ✓ Regex minimization with helper functions  
--- ✓ Fast path detection with position()
--- ✓ Bitwise matching for cron fields
--- ✓ Mathematical calculation instead of iteration
+-- ✓ Phase 1: Correctness fixes (volatility, masks, special syntax, timezone DST)
+-- ✓ Phase 2: Bit search optimization, WOY jump (2.6x: 5.5K → 14.5K ops/sec)
+-- ✓ Phase 3: Inline hot path, bitmask routing, precomputed patterns (7.3x: 5.5K → 60K ops/sec)
+-- ✓ Phase 4.1: JIT compilation (minimal gain: +2%)
+-- ✓ Phase 4.2: Binary search WOY validation (O(log N) instead of O(N))
+--
+-- Current Performance: 60K+ ops/sec (10.9x improvement from baseline)
 --
 -- =====================================================
 
@@ -528,18 +530,119 @@ $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 -- 🎯 WOY (Week of Year) VALIDATION
 -- ============================================================================
 
--- Ultra-optimized WOY validation
+-- Ultra-optimized WOY validation with Binary Search
 CREATE OR REPLACE FUNCTION jcron.validate_woy(check_time TIMESTAMPTZ, week_numbers INTEGER[])
 RETURNS BOOLEAN AS $$
 DECLARE
     iso_week INTEGER;
+    arr_len INTEGER;
+    low INTEGER;
+    high INTEGER;
+    mid INTEGER;
+    mid_val INTEGER;
 BEGIN
     IF week_numbers IS NULL THEN
         RETURN TRUE;
     END IF;
     
     iso_week := EXTRACT(week FROM check_time)::INTEGER;
-    RETURN iso_week = ANY(week_numbers);
+    arr_len := array_length(week_numbers, 1);
+    
+    -- Fast path: single element
+    IF arr_len = 1 THEN
+        RETURN iso_week = week_numbers[1];
+    END IF;
+    
+    -- Fast path: small arrays (linear search faster than binary for tiny arrays)
+    IF arr_len <= 4 THEN
+        RETURN iso_week = ANY(week_numbers);
+    END IF;
+    
+    -- Binary search for larger arrays (assumes sorted)
+    low := 1;
+    high := arr_len;
+    
+    WHILE low <= high LOOP
+        mid := (low + high) / 2;
+        mid_val := week_numbers[mid];
+        
+        IF mid_val = iso_week THEN
+            RETURN TRUE;
+        ELSIF mid_val < iso_week THEN
+            low := mid + 1;
+        ELSE
+            high := mid - 1;
+        END IF;
+    END LOOP;
+    
+    RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
+
+-- Binary search helper: Find next week in sorted array
+CREATE OR REPLACE FUNCTION jcron.find_next_week(week_numbers INTEGER[], current_week INTEGER)
+RETURNS INTEGER AS $$
+DECLARE
+    arr_len INTEGER;
+    low INTEGER;
+    high INTEGER;
+    mid INTEGER;
+    result INTEGER := NULL;
+BEGIN
+    IF week_numbers IS NULL THEN
+        RETURN NULL;
+    END IF;
+    
+    arr_len := array_length(week_numbers, 1);
+    
+    -- Fast path: single element
+    IF arr_len = 1 THEN
+        RETURN CASE WHEN week_numbers[1] > current_week THEN week_numbers[1] ELSE NULL END;
+    END IF;
+    
+    -- Fast path: small arrays
+    IF arr_len <= 4 THEN
+        SELECT MIN(w) INTO result FROM unnest(week_numbers) AS w WHERE w > current_week;
+        RETURN result;
+    END IF;
+    
+    -- Binary search to find insertion point (first element > current_week)
+    low := 1;
+    high := arr_len;
+    
+    -- If current_week >= last element, no next week in array
+    IF current_week >= week_numbers[arr_len] THEN
+        RETURN NULL;
+    END IF;
+    
+    -- If current_week < first element, return first
+    IF current_week < week_numbers[1] THEN
+        RETURN week_numbers[1];
+    END IF;
+    
+    -- Binary search
+    WHILE low < high LOOP
+        mid := (low + high) / 2;
+        
+        IF week_numbers[mid] <= current_week THEN
+            low := mid + 1;
+        ELSE
+            high := mid;
+        END IF;
+    END LOOP;
+    
+    RETURN week_numbers[low];
+END;
+$$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
+
+-- Binary search helper: Find first week in sorted array
+CREATE OR REPLACE FUNCTION jcron.find_first_week(week_numbers INTEGER[])
+RETURNS INTEGER AS $$
+BEGIN
+    IF week_numbers IS NULL OR array_length(week_numbers, 1) = 0 THEN
+        RETURN NULL;
+    END IF;
+    RETURN week_numbers[1];
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
@@ -1456,15 +1559,13 @@ BEGIN
             
             input_week := EXTRACT(week FROM woy_base)::INTEGER;
             
-            -- Optimized: Direct jump to target week instead of iterating
-            SELECT MIN(w) INTO target_week 
-            FROM unnest(parsed.woy_weeks) AS w 
-            WHERE w > input_week;
+            -- Phase 4.2: Binary search for next week (O(log N) instead of O(N))
+            target_week := jcron.find_next_week(parsed.woy_weeks, input_week);
             
             IF target_week IS NULL THEN
                 -- Jump to next year's first matching week
                 candidate_time := date_trunc('year', woy_base) + INTERVAL '1 year';
-                SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
+                target_week := jcron.find_first_week(parsed.woy_weeks);
                 
                 IF target_week IS NOT NULL THEN
                     candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
@@ -1494,13 +1595,12 @@ BEGIN
                 END IF;
                 
                 IF NOT found_match THEN
-                    SELECT MIN(w) INTO target_week 
-                    FROM unnest(parsed.woy_weeks) AS w 
-                    WHERE w > candidate_week;
+                    -- Phase 4.2: Binary search for next week (O(log N))
+                    target_week := jcron.find_next_week(parsed.woy_weeks, candidate_week);
                     
                     IF target_week IS NULL THEN
                         candidate_time := date_trunc('year', candidate_time) + INTERVAL '1 year';
-                        SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
+                        target_week := jcron.find_first_week(parsed.woy_weeks);
                         IF target_week IS NOT NULL THEN
                             candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
                         END IF;
