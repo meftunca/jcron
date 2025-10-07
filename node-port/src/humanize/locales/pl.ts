@@ -38,8 +38,9 @@ export const plLocale: LocaleStrings = {
   fifth: "piąty",
   weekday: "dzień roboczy",
   weekend: "weekend",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Niedziela",
     "Poniedziałek",

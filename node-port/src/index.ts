@@ -2,43 +2,64 @@
 
 // Core imports
 import { Engine } from "./engine";
-import { fromCronSyntax, fromJCronString, Schedule, validateSchedule } from "./schedule";
-import { isValidOptimized, validateCronOptimized, getPatternOptimized, BatchValidator } from "./validation";
 import { parseEoD } from "./eod";
 import { ParseError } from "./errors";
+import {
+  fromCronSyntax,
+  fromJCronString,
+  Schedule,
+  validateSchedule,
+} from "./schedule";
+import {
+  getPatternOptimized,
+  isValidOptimized,
+  validateCronOptimized,
+} from "./validation";
 
 // Core Engine and Schedule
 export { Engine } from "./engine";
-export { fromCronSyntax, fromJCronString, fromObject, Schedule, withWeekOfYear, fromCronWithWeekOfYear, WeekPatterns, validateSchedule, isValidScheduleObject } from "./schedule";
+export {
+  fromCronSyntax,
+  fromCronWithWeekOfYear,
+  fromJCronString,
+  fromObject,
+  isValidScheduleObject,
+  Schedule,
+  validateSchedule,
+  WeekPatterns,
+  withWeekOfYear,
+} from "./schedule";
 
 // EOD (End of Duration) functionality
-export { 
-  EndOfDuration, 
-  ReferencePoint, 
-  parseEoD, 
-  isValidEoD, 
-  createEoD, 
-  EoDHelpers 
+export {
+  createEoD,
+  EndOfDuration,
+  EoDHelpers,
+  isValidEoD,
+  parseEoD,
+  ReferencePoint,
 } from "./eod";
 
 // Humanization API - Import originals and create optimized wrappers
-import { 
-  toString as originalToString,
-  toResult as originalToResult, 
+import {
   fromSchedule as originalFromSchedule,
-  registerLocale as originalRegisterLocale,
+  getDetectedLocale as originalGetDetectedLocale,
   getSupportedLocales as originalGetSupportedLocales,
   isLocaleSupported as originalIsLocaleSupported,
-  getDetectedLocale as originalGetDetectedLocale,
-  setDefaultLocale as originalSetDefaultLocale
+  registerLocale as originalRegisterLocale,
+  setDefaultLocale as originalSetDefaultLocale,
+  toResult as originalToResult,
+  toString as originalToString,
 } from "./humanize/index";
 
 // Export optimized versions of humanization functions
-export { originalRegisterLocale as registerLocale };
-export { originalGetSupportedLocales as getSupportedLocales };
-export { originalIsLocaleSupported as isLocaleSupported };
-export { originalGetDetectedLocale as getDetectedLocale };
-export { originalSetDefaultLocale as setDefaultLocale };
+export {
+  originalGetDetectedLocale as getDetectedLocale,
+  originalGetSupportedLocales as getSupportedLocales,
+  originalIsLocaleSupported as isLocaleSupported,
+  originalRegisterLocale as registerLocale,
+  originalSetDefaultLocale as setDefaultLocale,
+};
 
 // 🚀 OPTIMIZED WRAPPER FUNCTIONS
 /**
@@ -50,12 +71,16 @@ export function toString(schedule: string | Schedule, options?: any): string {
     try {
       return Optimized.toString(schedule, options);
     } catch (error) {
-      console.warn('⚠️  Humanization optimization failed, falling back to standard:', error);
+      console.warn(
+        "⚠️  Humanization optimization failed, falling back to standard:",
+        error
+      );
     }
   }
-  
+
   // Convert Schedule to string if needed for original function
-  const scheduleStr = typeof schedule === 'string' ? schedule : schedule.toString();
+  const scheduleStr =
+    typeof schedule === "string" ? schedule : schedule.toString();
   return originalToString(scheduleStr, options);
 }
 export const toHumanize = toString; // Alias for compatibility
@@ -68,12 +93,16 @@ export function toResult(schedule: string | Schedule, options?: any): any {
     try {
       return Optimized.toResult(schedule, options);
     } catch (error) {
-      console.warn('⚠️  Humanization optimization failed, falling back to standard:', error);
+      console.warn(
+        "⚠️  Humanization optimization failed, falling back to standard:",
+        error
+      );
     }
   }
-  
+
   // Convert Schedule to string if needed for original function
-  const scheduleStr = typeof schedule === 'string' ? schedule : schedule.toString();
+  const scheduleStr =
+    typeof schedule === "string" ? schedule : schedule.toString();
   return originalToResult(scheduleStr, options);
 }
 
@@ -86,33 +115,52 @@ export function fromSchedule(schedule: Schedule, options?: any): string {
     try {
       return Optimized.fromSchedule(schedule, options);
     } catch (error) {
-      console.warn('⚠️  Humanization optimization failed, falling back to standard:', error);
+      console.warn(
+        "⚠️  Humanization optimization failed, falling back to standard:",
+        error
+      );
     }
   }
   return originalFromSchedule(schedule, options);
 }
 
 // Humanization types
-export type { HumanizeOptions, HumanizeResult, LocaleStrings } from "./humanize/types";
+export type {
+  HumanizeOptions,
+  HumanizeResult,
+  LocaleStrings,
+} from "./humanize/types";
 
 // Locale utilities
-export { 
+export {
   AVAILABLE_LOCALES,
+  getAllLocaleCodes,
   getLocaleDisplayName,
-  getAllLocaleCodes 
 } from "./humanize/locales/index";
 
 // Job Runner
 export { Runner } from "./runner";
 
 // Export validation functions
-export { isValidOptimized, validateCronOptimized, getPatternOptimized, BatchValidator } from "./validation";
+export {
+  BatchValidator,
+  getPatternOptimized,
+  isValidOptimized,
+  validateCronOptimized,
+} from "./validation";
 
 // Options and utilities
 export { withRetries } from "./options";
 
 // Types
-export type { IJob, ILogger, JobFunc, JobOption, RetryOptions, ManagedJob } from "./types";
+export type {
+  IJob,
+  ILogger,
+  JobFunc,
+  JobOption,
+  ManagedJob,
+  RetryOptions,
+} from "./types";
 
 // Convenience functions for Engine methods
 const defaultEngine = new Engine();
@@ -123,20 +171,37 @@ const defaultEngine = new Engine();
 
 /**
  * OPTIMIZED JCRON API - Automatically provides enhanced performance
- * 
+ *
  * Bu modül tüm ana fonksiyonları optimize edilmiş versiyonlarını kullanır.
  * Kullanıcılar hiçbir değişiklik yapmadan 100x+ performans artışı alır.
  */
 let Optimized: any = null;
 
-// Safe import of optimization adapter
+// Safe import of optimization adapter (React Native compatible)
 try {
-  const { OptimizedJCRON } = require('./optimization-adapter');
+  // Static import for better bundler compatibility (Metro, Webpack, etc.)
+  const { OptimizedJCRON } = require("./optimization-adapter");
   Optimized = OptimizedJCRON;
-  console.log('✅ JCRON optimizations loaded successfully - enhanced performance enabled!');
+
+  // Only log in development (React Native compatible)
+  if (
+    typeof process !== "undefined" &&
+    process.env?.NODE_ENV !== "production"
+  ) {
+    console.log(
+      "✅ JCRON optimizations loaded successfully - enhanced performance enabled!"
+    );
+  }
 } catch (error) {
   // Optimization modules not available - this is fine for backward compatibility
-  console.info('ℹ️  JCRON optimization modules not available. Using standard performance.');
+  if (
+    typeof process !== "undefined" &&
+    process.env?.NODE_ENV !== "production"
+  ) {
+    console.info(
+      "ℹ️  JCRON optimization modules not available. Using standard performance."
+    );
+  }
 }
 
 /**
@@ -144,23 +209,34 @@ try {
  * Implements JCRON unified API auto-detection logic
  */
 function normalizeToSchedule(input: string | Schedule): Schedule {
-  if (typeof input === 'string') {
+  if (typeof input === "string") {
     const expression = input.trim();
-    
+
     // JCRON Auto-Detection Logic (following spesification order):
-    
+
     // 1. Check for pure EOD/SOD expressions (^[ES][0-9])
     if (/^[ES][0-9]/.test(expression)) {
       // Pure EOD/SOD expression - convert to schedule with EOD field
       try {
         const eod = parseEoD(expression);
         // Create a "run once" schedule for EOD/SOD calculation
-        return new Schedule("0", "0", "0", "1", "1", "*", null, null, null, eod);
+        return new Schedule(
+          "0",
+          "0",
+          "0",
+          "1",
+          "1",
+          "*",
+          null,
+          null,
+          null,
+          eod
+        );
       } catch (error) {
         throw new ParseError(`Invalid EOD/SOD format: ${expression}`);
       }
     }
-    
+
     // 2. Check for pure WOY expressions (^WOY:)
     if (/^WOY:\d+/.test(expression)) {
       // Pure WOY expression - convert to cron with WOY
@@ -169,24 +245,27 @@ function normalizeToSchedule(input: string | Schedule): Schedule {
         return fromJCronString(`0 0 0 * * * ${expression}`);
       }
     }
-    
+
     // 3. Check for hybrid expressions (cron + EOD/SOD patterns)
-    const hasEOD = expression.includes('EOD:') || /\s+[ES][0-9]/.test(expression);
-    
+    const hasEOD =
+      expression.includes("EOD:") || /\s+[ES][0-9]/.test(expression);
+
     // 4. Check for JCRON extensions (WOY:, TZ:, or EOD:)
-    const hasJCronExtensions = expression.includes('WOY:') || expression.includes('TZ:') || hasEOD;
-    
+    const hasJCronExtensions =
+      expression.includes("WOY:") || expression.includes("TZ:") || hasEOD;
+
     if (hasJCronExtensions) {
       return fromJCronString(expression);
     }
-    
+
     // 5. Check for L/# syntax in cron fields
-    const hasSpecialSyntax = expression.includes('L') || expression.includes('#');
-    
+    const hasSpecialSyntax =
+      expression.includes("L") || expression.includes("#");
+
     if (hasSpecialSyntax) {
       return fromJCronString(expression);
     }
-    
+
     // 6. Default to traditional cron parsing
     return fromCronSyntax(expression);
   }
@@ -198,55 +277,68 @@ function normalizeToSchedule(input: string | Schedule): Schedule {
  */
 function validateScheduleFields(schedule: Schedule): boolean {
   // Helper function to validate a field with a range
-  const validateField = (value: string | null, min: number, max: number, fieldType?: string): boolean => {
-    if (!value || value === '*') return true;
-    
+  const validateField = (
+    value: string | null,
+    min: number,
+    max: number,
+    fieldType?: string
+  ): boolean => {
+    if (!value || value === "*") return true;
+
     // Special characters validation based on field type
-    if (fieldType === 'dayOfMonth' && (value === 'L' || value.includes('L'))) {
+    if (fieldType === "dayOfMonth" && (value === "L" || value.includes("L"))) {
       // 'L' means last day of month, or '#L' patterns
       return true;
     }
-    
-    if (fieldType === 'dayOfWeek' && value.includes('#')) {
+
+    if (fieldType === "dayOfWeek" && value.includes("#")) {
       // '#' for nth occurrence: "1#2" (second Monday)
-      const parts = value.split('#');
+      const parts = value.split("#");
       if (parts.length === 2) {
         const day = parseInt(parts[0]);
         const occurrence = parseInt(parts[1]);
         return day >= 0 && day <= 7 && occurrence >= 1 && occurrence <= 5;
       }
     }
-    
-    if (fieldType === 'dayOfWeek' && value.includes('L')) {
+
+    if (fieldType === "dayOfWeek" && value.includes("L")) {
       // 'L' for last occurrence: "5L" (last Friday)
-      const day = value.replace('L', '');
+      const day = value.replace("L", "");
       if (day) {
         const dayNum = parseInt(day);
         return dayNum >= 0 && dayNum <= 7;
       }
       return true;
     }
-    
+
     // Handle textual names (MON-FRI, JAN-DEC, etc.)
     if (/[A-Z]/i.test(value)) {
       // If contains letters, it's likely a textual name which should be valid
       // The actual validation will happen in the Engine
       return true;
     }
-    
+
     // Handle ranges, lists, and steps
-    const parts = value.split(',');
+    const parts = value.split(",");
     for (const part of parts) {
-      if (part.includes('/')) {
+      if (part.includes("/")) {
         // Step values: "*/5" or "1-10/2"
-        const [range, step] = part.split('/');
+        const [range, step] = part.split("/");
         if (step && (parseInt(step) <= 0 || parseInt(step) > max)) return false;
-        if (range !== '*' && !validateField(range, min, max, fieldType)) return false;
-      } else if (part.includes('-')) {
+        if (range !== "*" && !validateField(range, min, max, fieldType))
+          return false;
+      } else if (part.includes("-")) {
         // Range values: "1-5"
-        const [start, end] = part.split('-').map(n => parseInt(n));
-        if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) return false;
-      } else if (part !== '*') {
+        const [start, end] = part.split("-").map((n) => parseInt(n));
+        if (
+          isNaN(start) ||
+          isNaN(end) ||
+          start < min ||
+          end > max ||
+          start > end
+        )
+          return false;
+      } else if (part !== "*") {
         // Single value
         const num = parseInt(part);
         if (isNaN(num) || num < min || num > max) return false;
@@ -256,14 +348,14 @@ function validateScheduleFields(schedule: Schedule): boolean {
   };
 
   // Validate each field according to cron specification with special character support
-  if (!validateField(schedule.s, 0, 59, 'seconds')) return false;  // seconds: 0-59
-  if (!validateField(schedule.m, 0, 59, 'minutes')) return false;  // minutes: 0-59
-  if (!validateField(schedule.h, 0, 23, 'hours')) return false;    // hours: 0-23
-  if (!validateField(schedule.D, 1, 31, 'dayOfMonth')) return false; // day of month: 1-31 + L
-  if (!validateField(schedule.M, 1, 12, 'month')) return false;    // month: 1-12
-  if (!validateField(schedule.dow, 0, 7, 'dayOfWeek')) return false; // day of week: 0-7 + #, L
-  if (!validateField(schedule.Y, 1970, 3000, 'year')) return false; // year: reasonable range
-  if (!validateField(schedule.woy, 1, 53, 'weekOfYear')) return false; // week of year: 1-53
+  if (!validateField(schedule.s, 0, 59, "seconds")) return false; // seconds: 0-59
+  if (!validateField(schedule.m, 0, 59, "minutes")) return false; // minutes: 0-59
+  if (!validateField(schedule.h, 0, 23, "hours")) return false; // hours: 0-23
+  if (!validateField(schedule.D, 1, 31, "dayOfMonth")) return false; // day of month: 1-31 + L
+  if (!validateField(schedule.M, 1, 12, "month")) return false; // month: 1-12
+  if (!validateField(schedule.dow, 0, 7, "dayOfWeek")) return false; // day of week: 0-7 + #, L
+  if (!validateField(schedule.Y, 1970, 3000, "year")) return false; // year: reasonable range
+  if (!validateField(schedule.woy, 1, 53, "weekOfYear")) return false; // week of year: 1-53
 
   return true;
 }
@@ -273,21 +365,33 @@ function validateScheduleFields(schedule: Schedule): boolean {
  * Supports: Traditional Cron, WOY, TZ, EOD/SOD, L/#, and Hybrid expressions
  * Auto-detects expression type and applies appropriate processing
  */
-export function next_time(expression: string, fromTime?: Date, timezone?: string): Date {
+export function next_time(
+  expression: string,
+  fromTime?: Date,
+  timezone?: string
+): Date {
   return getNext(expression, fromTime);
 }
 
 /**
  * JCRON Unified API: Get previous execution time for any JCRON expression type
  */
-export function prev_time(expression: string, fromTime?: Date, timezone?: string): Date {
+export function prev_time(
+  expression: string,
+  fromTime?: Date,
+  timezone?: string
+): Date {
   return getPrev(expression, fromTime);
 }
 
 /**
  * JCRON Unified API: Check if time matches any JCRON expression type
  */
-export function is_time_match(expression: string, checkTime?: Date, tolerance?: number): boolean {
+export function is_time_match(
+  expression: string,
+  checkTime?: Date,
+  tolerance?: number
+): boolean {
   return match(expression, checkTime);
 }
 
@@ -301,7 +405,10 @@ export function parse_expression(expression: string): Schedule {
 /**
  * Get next execution time for a cron expression or Schedule
  */
-export function getNext(cronExpression: string | Schedule, fromTime?: Date): Date {
+export function getNext(
+  cronExpression: string | Schedule,
+  fromTime?: Date
+): Date {
   const schedule = normalizeToSchedule(cronExpression);
   return defaultEngine.next(schedule, fromTime || new Date());
 }
@@ -309,7 +416,10 @@ export function getNext(cronExpression: string | Schedule, fromTime?: Date): Dat
 /**
  * Get previous execution time for a cron expression or Schedule
  */
-export function getPrev(cronExpression: string | Schedule, fromTime?: Date): Date {
+export function getPrev(
+  cronExpression: string | Schedule,
+  fromTime?: Date
+): Date {
   const schedule = normalizeToSchedule(cronExpression);
   return defaultEngine.prev(schedule, fromTime || new Date());
 }
@@ -317,16 +427,20 @@ export function getPrev(cronExpression: string | Schedule, fromTime?: Date): Dat
 /**
  * Get multiple next execution times
  */
-export function getNextN(cronExpression: string | Schedule, count: number, fromTime?: Date): Date[] {
+export function getNextN(
+  cronExpression: string | Schedule,
+  count: number,
+  fromTime?: Date
+): Date[] {
   const schedule = normalizeToSchedule(cronExpression);
   const results: Date[] = [];
   let currentTime = fromTime || new Date();
-  
+
   for (let i = 0; i < count; i++) {
     currentTime = defaultEngine.next(schedule, currentTime);
     results.push(new Date(currentTime));
   }
-  
+
   return results;
 }
 
@@ -349,7 +463,10 @@ export function isValid(cronExpression: string | Schedule): boolean {
       return Optimized.isValid(cronExpression);
     } catch (error) {
       // Fallback to original implementation on error
-      console.warn('⚠️  Optimization failed, falling back to standard validation:', error);
+      console.warn(
+        "⚠️  Optimization failed, falling back to standard validation:",
+        error
+      );
     }
   }
 
@@ -360,19 +477,23 @@ export function isValid(cronExpression: string | Schedule): boolean {
 /**
  * Check if it's time to execute (within tolerance)
  */
-export function isTime(cronExpression: string | Schedule, date?: Date, toleranceMs: number = 1000): boolean {
+export function isTime(
+  cronExpression: string | Schedule,
+  date?: Date,
+  toleranceMs: number = 1000
+): boolean {
   const checkDate = date || new Date();
   const schedule = normalizeToSchedule(cronExpression);
-  
+
   // Check exact match first
   if (defaultEngine.isMatch(schedule, checkDate)) {
     return true;
   }
-  
+
   // Check within tolerance
   const before = new Date(checkDate.getTime() - toleranceMs);
   const after = new Date(checkDate.getTime() + toleranceMs);
-  
+
   try {
     const nextRun = defaultEngine.next(schedule, before);
     return nextRun >= before && nextRun <= after;
@@ -384,7 +505,10 @@ export function isTime(cronExpression: string | Schedule, date?: Date, tolerance
 /**
  * Detailed validation with error messages
  */
-export function validateCron(cronExpression: string | Schedule): { valid: boolean; errors: string[] } {
+export function validateCron(cronExpression: string | Schedule): {
+  valid: boolean;
+  errors: string[];
+} {
   // Use optimized validation with detailed error messages
   return validateCronOptimized(cronExpression);
 }
@@ -392,7 +516,9 @@ export function validateCron(cronExpression: string | Schedule): { valid: boolea
 /**
  * Get pattern type from cron expression
  */
-export function getPattern(cronExpression: string): "daily" | "weekly" | "monthly" | "yearly" | "custom" {
+export function getPattern(
+  cronExpression: string
+): "daily" | "weekly" | "monthly" | "yearly" | "custom" {
   // Use optimized pattern detection
   return getPatternOptimized(cronExpression);
 }
@@ -400,7 +526,10 @@ export function getPattern(cronExpression: string): "daily" | "weekly" | "monthl
 /**
  * Check if cron expression matches a specific pattern
  */
-export function matchPattern(cronExpression: string, pattern: "daily" | "weekly" | "monthly" | "yearly"): boolean {
+export function matchPattern(
+  cronExpression: string,
+  pattern: "daily" | "weekly" | "monthly" | "yearly"
+): boolean {
   return getPattern(cronExpression) === pattern;
 }
 
@@ -410,7 +539,10 @@ export function matchPattern(cronExpression: string, pattern: "daily" | "weekly"
  * @param fromDate Starting date for calculation (defaults to current time)
  * @returns Date when the schedule should end, or null if no EOD is configured
  */
-export function endOfDuration(schedule: string | Schedule, fromDate: Date = new Date()): Date | null {
+export function endOfDuration(
+  schedule: string | Schedule,
+  fromDate: Date = new Date()
+): Date | null {
   const normalizedSchedule = normalizeToSchedule(schedule);
   return normalizedSchedule.endOf(fromDate);
 }
@@ -425,10 +557,10 @@ export function endOfDuration(schedule: string | Schedule, fromDate: Date = new 
 
 /**
  * EXPERIMENTAL: High-performance optimized API
- * 
+ *
  * Bu API, mevcut JCRON fonksiyonlarının optimize edilmiş versiyonlarını sağlar.
  * Mevcut kodunuzda değişiklik yapmadan performans artışı elde edebilirsiniz.
- * 
+ *
  * Not: Ana API fonksiyonları (isValid, humanize vb.) artık otomatik olarak
  * optimize edilmiş versiyonları kullanır. Bu export manuel kontrol için.
  */
@@ -443,7 +575,7 @@ export { ParseError, RuntimeError } from "./errors";
 
 /**
  * V2 Clean Architecture: 4-parameter design with enhanced WOY logic
- * 
+ *
  * Bu API PostgreSQL JCRON V2 implementasyonuyla tam uyumlu çalışır.
  * Ana özellikler:
  * - Clean pattern separation (pattern, modifier, base_time, target_tz)
@@ -461,37 +593,37 @@ export { ParseError, RuntimeError } from "./errors";
  * @returns Next occurrence timestamp
  */
 export function next_time_v2(
-  pattern: string, 
-  base_time?: Date, 
-  end_of: boolean = false, 
+  pattern: string,
+  base_time?: Date,
+  end_of: boolean = false,
   start_of: boolean = false
 ): Date {
   const fromTime = base_time || new Date();
-  
+
   try {
     // V2 enhanced pattern processing
     const schedule = normalizeToSchedule(pattern);
-    
+
     // Enhanced WOY + E1W logic for problematic patterns
-    if (pattern.includes('WOY:') && pattern.includes('E1W')) {
+    if (pattern.includes("WOY:") && pattern.includes("E1W")) {
       return calculateWoyWithE1W(pattern, fromTime);
     }
-    
+
     // Standard V2 processing
     let result = defaultEngine.next(schedule, fromTime);
-    
+
     // Apply end_of modifier
     if (end_of && schedule.eod) {
       const endTime = schedule.endOf(result);
       if (endTime) result = endTime;
     }
-    
-    // Apply start_of modifier  
+
+    // Apply start_of modifier
     if (start_of && schedule.eod) {
       const startTime = schedule.startOf(result);
       if (startTime) result = startTime;
     }
-    
+
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -506,7 +638,11 @@ export function next_time_v2(
  * @param base_time Base time (optional)
  * @returns Next occurrence
  */
-export function next(pattern: string, modifier?: string, base_time?: Date): Date {
+export function next(
+  pattern: string,
+  modifier?: string,
+  base_time?: Date
+): Date {
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time);
 }
@@ -528,7 +664,11 @@ export function next_from(pattern: string, from_time: Date): Date {
  * @param base_time Base time (optional)
  * @returns Next occurrence with end calculation
  */
-export function next_end(pattern: string, modifier?: string, base_time?: Date): Date {
+export function next_end(
+  pattern: string,
+  modifier?: string,
+  base_time?: Date
+): Date {
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time, true, false);
 }
@@ -540,7 +680,11 @@ export function next_end(pattern: string, modifier?: string, base_time?: Date): 
  * @param base_time Base time (optional)
  * @returns Next occurrence with start calculation
  */
-export function next_start(pattern: string, modifier?: string, base_time?: Date): Date {
+export function next_start(
+  pattern: string,
+  modifier?: string,
+  base_time?: Date
+): Date {
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time, false, true);
 }
@@ -552,18 +696,18 @@ export function next_start(pattern: string, modifier?: string, base_time?: Date)
 function calculateWoyWithE1W(pattern: string, fromTime: Date): Date {
   // Parse WOY and other components
   const woyMatch = pattern.match(/WOY:(\d+(?:,\d+)*)/);
-  if (!woyMatch) throw new ParseError('Invalid WOY pattern');
-  
-  const weeks = woyMatch[1].split(',').map(w => parseInt(w));
-  const hasE1W = pattern.includes('E1W');
-  
+  if (!woyMatch) throw new ParseError("Invalid WOY pattern");
+
+  const weeks = woyMatch[1].split(",").map((w) => parseInt(w));
+  const hasE1W = pattern.includes("E1W");
+
   // Multi-year WOY search (like PostgreSQL V2)
   for (let yearOffset = 0; yearOffset < 2; yearOffset++) {
     const targetYear = fromTime.getFullYear() + yearOffset;
-    
+
     for (const week of weeks) {
       const weekStart = getWeekStartDate(targetYear, week);
-      
+
       if (weekStart > fromTime) {
         if (hasE1W) {
           // End of next week after the WOY week
@@ -577,8 +721,10 @@ function calculateWoyWithE1W(pattern: string, fromTime: Date): Date {
       }
     }
   }
-  
-  throw new ParseError(`Could not find WOY match for pattern: ${pattern} within 2 years`);
+
+  throw new ParseError(
+    `Could not find WOY match for pattern: ${pattern} within 2 years`
+  );
 }
 
 /**
@@ -589,15 +735,15 @@ function getWeekStartDate(year: number, week: number): Date {
   // ISO 8601 week calculation
   const jan4 = new Date(year, 0, 4);
   const jan4DayOfWeek = jan4.getDay() || 7; // Convert Sunday=0 to Sunday=7
-  
+
   // Find Monday of week 1
   const firstMonday = new Date(jan4);
   firstMonday.setDate(jan4.getDate() - jan4DayOfWeek + 1);
-  
+
   // Calculate target week
   const targetWeek = new Date(firstMonday);
   targetWeek.setDate(firstMonday.getDate() + (week - 1) * 7);
-  
+
   return targetWeek;
 }
 
@@ -630,7 +776,7 @@ export function is_match(pattern: string, time: Date): boolean {
  * V2 version info
  */
 export function version_v2(): string {
-  return 'JCRON V2.0 - Clean Architecture + Enhanced WOY Logic + Node.js Port';
+  return "JCRON V2.0 - Clean Architecture + Enhanced WOY Logic + Node.js Port";
 }
 
 // ==============================================================================

@@ -1,0 +1,56 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Target ES2020 for maximum compatibility (Node.js 16+, modern browsers)
+    "target": "ES2020",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    
+    // Output settings
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    
+    // Strict type checking (relaxed for compatibility)
+    "strict": false,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitReturns": false,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "exactOptionalPropertyTypes": false,
+    
+    // Module resolution
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    
+    // Code quality
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    
+    // Emit settings
+    "removeComments": false, // Keep JSDoc comments for users
+    "preserveConstEnums": true,
+    "importHelpers": false, // Don't require tslib dependency
+    
+    // Interop
+    "allowJs": false,
+    "checkJs": false
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "tests",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "benchmark"
+  ]
+}
+

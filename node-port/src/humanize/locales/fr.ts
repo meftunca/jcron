@@ -38,8 +38,9 @@ export const frLocale: LocaleStrings = {
   fifth: "cinquième",
   weekday: "jour de semaine",
   weekend: "week-end",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Dimanche",
     "Lundi",

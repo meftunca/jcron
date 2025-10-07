@@ -39,8 +39,9 @@ export const nlLocale: LocaleStrings = {
   fifth: "vijfde",
   weekday: "werkdag",
   weekend: "weekend",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Zondag",
     "Maandag",

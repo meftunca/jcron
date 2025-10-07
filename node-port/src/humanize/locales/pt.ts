@@ -38,8 +38,9 @@ export const ptLocale: LocaleStrings = {
   fifth: "quinto",
   weekday: "dia útil",
   weekend: "fim de semana",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Domingo",
     "Segunda-feira",

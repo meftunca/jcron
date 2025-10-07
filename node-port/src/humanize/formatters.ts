@@ -61,8 +61,37 @@ export class Formatters {
       }
     }
 
-    // Multiple times - validate each one
+    // Multiple times - check if it's a simple range first
     const times: string[] = [];
+
+    // 🚀 IMPROVEMENT: Detect range patterns to avoid verbose listing
+    const isHourRange =
+      hours.length > 3 &&
+      hours.every(
+        (h, i, arr) => i === 0 || parseInt(h) === parseInt(arr[i - 1]) + 1
+      );
+    const isMinuteStep =
+      minutes.length > 3 && minutes.some((m) => m.includes("/"));
+
+    // If it's a range with step (e.g., */15 9-17), use concise format
+    if (isHourRange && isMinuteStep && times.length > 10) {
+      const startHour = parseInt(hours[0]);
+      const endHour = parseInt(hours[hours.length - 1]);
+      const minuteStep = minutes.length === 1 ? minutes[0] : null;
+
+      if (minuteStep && minuteStep.includes("/")) {
+        const step = parseInt(minuteStep.split("/")[1]);
+        const startTime = options.use24HourTime
+          ? `${startHour.toString().padStart(2, "0")}:00`
+          : `${startHour % 12 || 12}:00 ${startHour >= 12 ? "PM" : "AM"}`;
+        const endTime = options.use24HourTime
+          ? `${endHour.toString().padStart(2, "0")}:00`
+          : `${endHour % 12 || 12}:00 ${endHour >= 12 ? "PM" : "AM"}`;
+
+        return `${locale.every} ${step} ${locale.minutes}, ${locale.between} ${startTime} ${locale.and} ${endTime}`;
+      }
+    }
+
     for (const hour of hours) {
       for (const minute of minutes) {
         if (hour !== "*" && minute !== "*") {
@@ -75,8 +104,16 @@ export class Formatters {
           if (isNaN(m) || m < 0 || m > 59) continue;
           if (isNaN(s) || s < 0 || s > 59) continue;
 
+          // 🚀 IMPROVEMENT: Limit verbose time listings to max 10 entries
+          if (times.length >= 10) {
+            times.push("...");
+            break;
+          }
+
           if (options.use24HourTime) {
-            let timeStr = `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+            let timeStr = `${h.toString().padStart(2, "0")}:${m
+              .toString()
+              .padStart(2, "0")}`;
             if (options.includeSeconds && s > 0) {
               timeStr += `:${s.toString().padStart(2, "0")}`;
             }
@@ -103,6 +140,7 @@ export class Formatters {
           }
         }
       }
+      if (times[times.length - 1] === "...") break;
     }
 
     return this.formatList(times, locale);
@@ -117,20 +155,46 @@ export class Formatters {
       return "";
     }
 
+    // 🚀 IMPROVEMENT: Detect weekdays (Mon-Fri) and weekends (Sat-Sun)
+    const sortedDays = [...daysOfWeek]
+      .map((d) => parseInt(d, 10))
+      .filter((d) => !isNaN(d))
+      .sort((a, b) => a - b);
+
+    // Check for weekdays pattern (1,2,3,4,5)
+    if (sortedDays.length === 5 && sortedDays.join(",") === "1,2,3,4,5") {
+      return options.useShorthand !== false ? locale.weekdays : "";
+    }
+
+    // Check for weekend pattern (0,6 or 6,0)
+    if (sortedDays.length === 2) {
+      const daySet = new Set(sortedDays);
+      if (
+        (daySet.has(0) && daySet.has(6)) ||
+        (daySet.has(6) && daySet.has(0))
+      ) {
+        return options.useShorthand !== false ? locale.weekends : "";
+      }
+    }
+
     const dayNames = this.getDayNames(options.dayFormat || "long", locale);
     const formattedDays: string[] = [];
+    let hasNthPattern = false;
 
     for (const day of daysOfWeek) {
       if (day.includes("L")) {
         const dayNum = parseInt(day.replace("L", ""), 10);
         if (dayNames[dayNum]) {
           formattedDays.push(`${locale.last} ${dayNames[dayNum]}`);
+          hasNthPattern = true;
         }
       } else if (day.includes("#")) {
         const [dayNum, occurrence] = day.split("#").map(Number);
         const ordinal = this.getOrdinal(occurrence, locale);
         if (dayNames[dayNum]) {
+          // 🚀 IMPROVEMENT: Add clearer context for nth patterns
           formattedDays.push(`${ordinal} ${dayNames[dayNum]}`);
+          hasNthPattern = true;
         }
       } else {
         const dayNum = parseInt(day, 10);
@@ -140,7 +204,14 @@ export class Formatters {
       }
     }
 
-    return this.formatList(formattedDays, locale);
+    const result = this.formatList(formattedDays, locale);
+
+    // 🚀 IMPROVEMENT: Add "of the month" context for nth patterns
+    if (hasNthPattern && result) {
+      return `${result} ${locale.of} ${locale.theMonth}`;
+    }
+
+    return result;
   }
 
   static formatDayOfMonth(
@@ -222,42 +293,53 @@ export class Formatters {
     }
 
     let eodString: string;
-    
+
     // Handle EndOfDuration object
-    if (typeof eod === 'object' && eod.toString) {
+    if (typeof eod === "object" && eod.toString) {
       eodString = eod.toString();
-    } else if (typeof eod === 'string') {
+    } else if (typeof eod === "string") {
       eodString = eod;
     } else {
       eodString = String(eod);
     }
 
     // Parse EOD format: E1W, E2D, S30M, E1DT12H30M, etc.
-    const eodPattern = /^([SE])(\d+)([DWMQY])(?:T(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/;
+    const eodPattern =
+      /^([SE])(\d+)([DWMQY])(?:T(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/;
     const match = eodString.match(eodPattern);
-    
+
     let eodDescription: string;
-    
+
     if (match) {
       const [, refPoint, num, unit, hours, minutes, seconds] = match;
       const number = parseInt(num, 10);
-      
+
       // Build duration description
       const parts: string[] = [];
-      
+
       // Reference point description
-      const isEndRef = refPoint === 'E';
-      
+      const isEndRef = refPoint === "E";
+
       // Main unit
-      let unitDesc = '';
+      let unitDesc = "";
       switch (unit) {
-        case 'D': unitDesc = number === 1 ? locale.day : locale.days; break;
-        case 'W': unitDesc = number === 1 ? 'week' : 'weeks'; break;
-        case 'M': unitDesc = number === 1 ? locale.month : locale.months; break;
-        case 'Q': unitDesc = number === 1 ? 'quarter' : 'quarters'; break;
-        case 'Y': unitDesc = number === 1 ? locale.year : locale.years; break;
+        case "D":
+          unitDesc = number === 1 ? locale.day : locale.days;
+          break;
+        case "W":
+          unitDesc = number === 1 ? "week" : "weeks";
+          break;
+        case "M":
+          unitDesc = number === 1 ? locale.month : locale.months;
+          break;
+        case "Q":
+          unitDesc = number === 1 ? "quarter" : "quarters";
+          break;
+        case "Y":
+          unitDesc = number === 1 ? locale.year : locale.years;
+          break;
       }
-      
+
       if (isEndRef) {
         if (number === 1) {
           parts.push(`end of current ${unitDesc}`);
@@ -267,18 +349,19 @@ export class Formatters {
       } else {
         parts.push(`${number} ${unitDesc} from start`);
       }
-      
+
       // Add time components if present
       const timeComponents: string[] = [];
       if (hours) timeComponents.push(`${parseInt(hours, 10)} ${locale.hours}`);
-      if (minutes) timeComponents.push(`${parseInt(minutes, 10)} ${locale.minutes}`);
+      if (minutes)
+        timeComponents.push(`${parseInt(minutes, 10)} ${locale.minutes}`);
       if (seconds) timeComponents.push(`${parseInt(seconds, 10)} seconds`);
-      
+
       if (timeComponents.length > 0) {
-        parts.push(`+ ${timeComponents.join(' ')}`);
+        parts.push(`+ ${timeComponents.join(" ")}`);
       }
-      
-      eodDescription = `${locale.endOfDuration} ${parts.join(' ')}`;
+
+      eodDescription = `${locale.endOfDuration} ${parts.join(" ")}`;
     } else {
       // Fallback for complex or unparseable EOD
       eodDescription = `${locale.endOfDuration}: ${eodString}`;
@@ -327,11 +410,11 @@ export class Formatters {
     if (!locale || !locale.ordinals || !Array.isArray(locale.ordinals)) {
       return num.toString();
     }
-    
+
     if (num >= 1 && num <= locale.ordinals.length) {
       return locale.ordinals[num - 1];
     }
-    
+
     // Fallback for numbers beyond ordinals array
     return num.toString();
   }

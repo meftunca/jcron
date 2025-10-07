@@ -1,7 +1,7 @@
 // src/schedule.ts
-import { ParseError } from "./errors";
+import { getNext, getPrev } from ".";
 import { EndOfDuration, parseEoD } from "./eod";
-import { getPrev, getNext } from ".";
+import { ParseError } from "./errors";
 
 // Interface for timezone validation
 interface TimezoneValidation {
@@ -18,42 +18,42 @@ export interface ScheduleObjectNotation {
   month?: string;
   dayOfWeek?: string;
   year?: string;
-  
+
   // JCRON extensions
   timezone?: string;
   weekOfYear?: string;
   eod?: string | EndOfDuration; // End-of-Duration format
-  
+
   // Special fields for different schedule types
-  type?: 'CRON' | 'ONCE';
+  type?: "CRON" | "ONCE";
   date?: Date | string; // For ONCE type schedules
 }
 
 // Simple timezone validation - basic check for common timezone formats
 function isValidTimezone(tz: string): boolean {
   if (!tz) return false;
-  
+
   // Common timezone formats: UTC, GMT, EST, PST, etc.
   if (/^(UTC|GMT|EST|PST|CST|MST|EDT|PDT|CDT|MDT)$/i.test(tz)) {
     return true;
   }
-  
+
   // IANA timezone format: Continent/City
   if (/^[A-Za-z_]+\/[A-Za-z_]+$/.test(tz)) {
     return true;
   }
-  
+
   // UTC offset format: +05:30, -08:00
   if (/^[+-]\d{2}:\d{2}$/.test(tz)) {
     return true;
   }
-  
+
   return false;
 }
 
 export class Schedule {
   public readonly s: string | null;
-  
+
   constructor(
     scheduleOrS: string | null = null,
     public readonly m: string | null = null,
@@ -67,7 +67,7 @@ export class Schedule {
     public readonly eod: EndOfDuration | null = null // End-of-Duration support
   ) {
     // If first parameter is a string and no other parameters, parse as JCRON string
-    if (typeof scheduleOrS === 'string' && arguments.length === 1) {
+    if (typeof scheduleOrS === "string" && arguments.length === 1) {
       const parsed = fromJCronString(scheduleOrS);
       this.s = parsed.s;
       (this as any).m = parsed.m;
@@ -81,10 +81,10 @@ export class Schedule {
       (this as any).eod = parsed.eod;
       return;
     }
-    
+
     // Regular constructor behavior
     this.s = scheduleOrS;
-    
+
     // Handle backward compatibility where 8th parameter might be timezone instead of woy
     // This only applies when exactly 8 parameters are passed and last one looks like timezone
     if (
@@ -93,8 +93,8 @@ export class Schedule {
       arguments[7] &&
       !this.tz &&
       // Check if it looks like a timezone (contains / or common timezone abbreviations)
-      (arguments[7].includes('/') || 
-       /^(UTC|GMT|EST|PST|CST|MST|EDT|PDT|CDT|MDT)$/i.test(arguments[7]))
+      (arguments[7].includes("/") ||
+        /^(UTC|GMT|EST|PST|CST|MST|EDT|PDT|CDT|MDT)$/i.test(arguments[7]))
     ) {
       // If 8 params and 8th looks like timezone, it's the old format (s,m,h,D,M,dow,Y,tz)
       // Move tz from woy position to tz position
@@ -111,12 +111,12 @@ export class Schedule {
   toString(): string {
     // Build the basic cron expression (6 or 7 fields)
     const fields = [
-      this.s || "*",        // seconds
-      this.m || "*",        // minutes
-      this.h || "*",        // hours
-      this.D || "*",        // day of month
-      this.M || "*",        // month
-      this.dow || "*",      // day of week
+      this.s || "*", // seconds
+      this.m || "*", // minutes
+      this.h || "*", // hours
+      this.D || "*", // day of month
+      this.M || "*", // month
+      this.dow || "*", // day of week
     ];
 
     // Add year if specified
@@ -125,23 +125,23 @@ export class Schedule {
     }
 
     let result = fields.join(" ");
-    
+
     // Add JCRON extensions
     // Add week-of-year if specified (JCRON extension)
     if (this.woy) {
       result += ` WOY:${this.woy}`;
     }
-    
+
     // Add timezone if specified (JCRON extension)
     if (this.tz) {
       result += ` TZ:${this.tz}`;
     }
-    
+
     // Add End-of-Duration if specified (JCRON extension)
     if (this.eod) {
       result += ` EOD:${this.eod.toString()}`;
     }
-    
+
     return result;
   }
 
@@ -155,9 +155,9 @@ export class Schedule {
     // Convert textual names to numbers for compatibility if requested
     const convertField = (field: string | null): string => {
       if (!field) return "*";
-      
+
       if (!convertTextualNames) return field;
-      
+
       // Convert day names to numbers
       let converted = field
         .replace(/SUN/gi, "0")
@@ -167,7 +167,7 @@ export class Schedule {
         .replace(/THU/gi, "4")
         .replace(/FRI/gi, "5")
         .replace(/SAT/gi, "6");
-      
+
       // Convert month names to numbers
       converted = converted
         .replace(/JAN/gi, "1")
@@ -182,18 +182,18 @@ export class Schedule {
         .replace(/OCT/gi, "10")
         .replace(/NOV/gi, "11")
         .replace(/DEC/gi, "12");
-      
+
       return converted;
     };
 
     // Build standard cron expression (5, 6 or 7 fields)
     const fields = [
-      this.s || "*",                    // seconds
-      this.m || "*",                    // minutes
-      this.h || "*",                    // hours
-      this.D || "*",                    // day of month
-      convertField(this.M),             // month
-      convertField(this.dow),           // day of week
+      this.s || "*", // seconds
+      this.m || "*", // minutes
+      this.h || "*", // hours
+      this.D || "*", // day of month
+      convertField(this.M), // month
+      convertField(this.dow), // day of week
     ];
 
     // Add year if specified
@@ -222,13 +222,13 @@ export class Schedule {
     if (!this.eod) {
       return null;
     }
-    
+
     // Get the next trigger time (when the schedule will be triggered)
     const nextTime = getNext(this, fromDate);
     if (!nextTime) {
       return null; // No next trigger time found
     }
-    
+
     // Calculate end time from the next trigger time
     return this.eod.calculateEndDate(nextTime);
   }
@@ -243,13 +243,13 @@ export class Schedule {
     if (!this.eod) {
       return null;
     }
-    
+
     // Get the previous trigger time (when the schedule would have been triggered)
     const prev = getPrev(this, fromDate);
     if (!prev) {
       return null; // No previous trigger time found
     }
-    
+
     // The start time is the previous trigger time itself
     return prev;
   }
@@ -265,25 +265,28 @@ export class Schedule {
     if (!this.eod) {
       return false;
     }
-    
+
     try {
       // Special logic for WOY patterns
       if (this.woy) {
         return this._isRangeNowForWOY(timeCreated);
       }
-      
+
       // Standard logic for regular cron patterns
       const prevTrigger = getPrev(this, timeCreated);
-      
+
       if (prevTrigger) {
         const endTime = this.eod.calculateEndDate(prevTrigger);
-        
+
         // Check if timeCreated is between previous trigger and its end time
-        if (timeCreated.getTime() >= prevTrigger.getTime() && timeCreated.getTime() <= endTime.getTime()) {
+        if (
+          timeCreated.getTime() >= prevTrigger.getTime() &&
+          timeCreated.getTime() <= endTime.getTime()
+        ) {
           return true;
         }
       }
-      
+
       return false;
     } catch (error) {
       return false;
@@ -301,23 +304,26 @@ export class Schedule {
 
     // Get current week number of timeCreated using manual calculation
     const currentWeek = this._getISOWeek(timeCreated);
-    
+
     // Parse WOY pattern to get target weeks
     const targetWeeks = this._parseWOYWeeks();
-    
+
     // Check if current week matches any target week
     if (targetWeeks.includes(currentWeek)) {
       // Get ISO week year (not calendar year!) for correct week calculation
       const isoWeekYear = this._getISOWeekYear(timeCreated);
-      
+
       // Calculate week start (trigger time) and week end + EOD (end time)
       const weekStart = this._getWeekStartDate(isoWeekYear, currentWeek);
       const weekEnd = this.eod.calculateEndDate(weekStart);
-      
+
       // Check if timeCreated is within this week's execution window
-      return timeCreated.getTime() >= weekStart.getTime() && timeCreated.getTime() <= weekEnd.getTime();
+      return (
+        timeCreated.getTime() >= weekStart.getTime() &&
+        timeCreated.getTime() <= weekEnd.getTime()
+      );
     }
-    
+
     return false;
   }
 
@@ -326,18 +332,18 @@ export class Schedule {
    */
   private _parseWOYWeeks(): number[] {
     if (!this.woy) return [];
-    
+
     const weeks: number[] = [];
-    const pattern = this.woy.replace(/^WOY:/, '');
-    
-    if (pattern === '*') {
+    const pattern = this.woy.replace(/^WOY:/, "");
+
+    if (pattern === "*") {
       // All weeks 1-53
       for (let i = 1; i <= 53; i++) {
         weeks.push(i);
       }
     } else {
       // Parse comma-separated weeks: "6,19,32,45"
-      const parts = pattern.split(',');
+      const parts = pattern.split(",");
       for (const part of parts) {
         const week = parseInt(part.trim(), 10);
         if (!isNaN(week) && week >= 1 && week <= 53) {
@@ -345,7 +351,7 @@ export class Schedule {
         }
       }
     }
-    
+
     return weeks;
   }
 
@@ -355,15 +361,15 @@ export class Schedule {
   private _getWeekStartDate(year: number, week: number): Date {
     const jan4 = new Date(year, 0, 4);
     const jan4DayOfWeek = jan4.getDay() || 7; // Convert Sunday=0 to Sunday=7
-    
+
     // Find Monday of week 1
     const firstMonday = new Date(jan4);
     firstMonday.setDate(jan4.getDate() - jan4DayOfWeek + 1);
-    
+
     // Calculate target week
     const targetWeek = new Date(firstMonday);
     targetWeek.setDate(firstMonday.getDate() + (week - 1) * 7);
-    
+
     return targetWeek;
   }
 
@@ -377,7 +383,7 @@ export class Schedule {
     const firstThursday = target.valueOf();
     target.setMonth(0, 1);
     if (target.getDay() !== 4) {
-      target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+      target.setMonth(0, 1 + ((4 - target.getDay() + 7) % 7));
     }
     return 1 + Math.ceil((firstThursday - target.valueOf()) / 604800000);
   }
@@ -405,82 +411,99 @@ export class Schedule {
    * Create a Schedule from a ScheduleObjectNotation or Schedule format object
    * Supports both semantic field names (second, minute, hour...) and short format (s, m, h...)
    */
-  static fromObject(schedule: ScheduleObjectNotation | {
-    s?: string | null;
-    m?: string | null;
-    h?: string | null;
-    D?: string | null;
-    M?: string | null;
-    dow?: string | null;
-    Y?: string | null;
-    woy?: string | null;
-    tz?: string | null;
-    eod?: EndOfDuration | string | null;
-  }): Schedule {
+  static fromObject(
+    schedule:
+      | ScheduleObjectNotation
+      | {
+          s?: string | null;
+          m?: string | null;
+          h?: string | null;
+          D?: string | null;
+          M?: string | null;
+          dow?: string | null;
+          Y?: string | null;
+          woy?: string | null;
+          tz?: string | null;
+          eod?: EndOfDuration | string | null;
+        }
+  ): Schedule {
     // Check if it's short format (has 's', 'm', 'h', etc.) or long format (has 'second', 'minute', etc.)
-    const hasShortFormat = 's' in schedule || 'm' in schedule || 'h' in schedule || 
-                          'D' in schedule || 'M' in schedule || 'dow' in schedule;
-    const hasLongFormat = 'second' in schedule || 'minute' in schedule || 'hour' in schedule ||
-                         'dayOfMonth' in schedule || 'month' in schedule || 'dayOfWeek' in schedule;
-    
+    const hasShortFormat =
+      "s" in schedule ||
+      "m" in schedule ||
+      "h" in schedule ||
+      "D" in schedule ||
+      "M" in schedule ||
+      "dow" in schedule;
+    const hasLongFormat =
+      "second" in schedule ||
+      "minute" in schedule ||
+      "hour" in schedule ||
+      "dayOfMonth" in schedule ||
+      "month" in schedule ||
+      "dayOfWeek" in schedule;
+
     if (hasShortFormat) {
       // Use the existing fromObject function for short format
       return fromObject(schedule as any);
     }
-    
+
     // Handle long format (ScheduleObjectNotation)
     const longSchedule = schedule as ScheduleObjectNotation;
     let parts: string[] = [];
-    
+
     if (longSchedule.timezone && !isValidTimezone(longSchedule.timezone)) {
       throw new ParseError(`Invalid timezone: ${longSchedule.timezone}`);
     }
-    
+
     // Handle ONCE schedule with date
-    if (longSchedule.type === 'ONCE' && longSchedule.date) {
-      const date = typeof longSchedule.date === 'string' ? new Date(longSchedule.date) : longSchedule.date;
-      
+    if (longSchedule.type === "ONCE" && longSchedule.date) {
+      const date =
+        typeof longSchedule.date === "string"
+          ? new Date(longSchedule.date)
+          : longSchedule.date;
+
       parts.push(date.getSeconds().toString());
       parts.push(date.getMinutes().toString());
       parts.push(date.getHours().toString());
       parts.push(date.getDate().toString());
       parts.push((date.getMonth() + 1).toString());
-      parts.push('?');
+      parts.push("?");
       parts.push(date.getFullYear().toString());
-      
-      let expression = parts.join(' ');
-      
+
+      let expression = parts.join(" ");
+
       if (longSchedule.timezone) {
         expression += ` TZ:${longSchedule.timezone}`;
       }
-      
+
       return new Schedule(expression);
     }
-    
+
     // Regular CRON schedule
     parts = [
-      longSchedule.second ?? '*',
-      longSchedule.minute ?? '*', 
-      longSchedule.hour ?? '*',
-      longSchedule.dayOfMonth ?? '*',
-      longSchedule.month ?? '*',
-      longSchedule.dayOfWeek ?? '*'
+      longSchedule.second ?? "*",
+      longSchedule.minute ?? "*",
+      longSchedule.hour ?? "*",
+      longSchedule.dayOfMonth ?? "*",
+      longSchedule.month ?? "*",
+      longSchedule.dayOfWeek ?? "*",
     ];
-    
+
     if (longSchedule.year !== undefined) {
       parts.push(longSchedule.year);
     }
-    
-    let expression = parts.join(' ');
-    
+
+    let expression = parts.join(" ");
+
     // Extract woy and tz for later use
     const woy = longSchedule.weekOfYear || null;
     const tz = longSchedule.timezone || null;
-    
+
     if (longSchedule.timezone) {
       expression += ` TZ:${longSchedule.timezone}`;
     }
-    
+
     if (longSchedule.weekOfYear) {
       expression += ` WOY:${longSchedule.weekOfYear}`;
     }
@@ -490,27 +513,30 @@ export class Schedule {
     if (longSchedule.eod) {
       try {
         // If eod is already an EndOfDuration object, use it directly
-        if (typeof longSchedule.eod === 'object' && 'toString' in longSchedule.eod) {
+        if (
+          typeof longSchedule.eod === "object" &&
+          "toString" in longSchedule.eod
+        ) {
           eodObject = longSchedule.eod as EndOfDuration;
           expression += ` EOD:${longSchedule.eod.toString()}`;
-        } else if (typeof longSchedule.eod === 'string') {
+        } else if (typeof longSchedule.eod === "string") {
           // Parse string to EndOfDuration object
           eodObject = parseEoD(longSchedule.eod);
           expression += ` EOD:${longSchedule.eod}`;
         } else {
-          throw new ParseError('EoD must be a string or EndOfDuration object');
+          throw new ParseError("EoD must be a string or EndOfDuration object");
         }
       } catch (error) {
         throw new ParseError(`Invalid EoD format: ${longSchedule.eod}`);
       }
     }
-    
+
     // Instead of creating Schedule from expression, create directly with all parameters
     // This preserves the original EoD object instead of re-parsing it
-    
+
     return new Schedule(
       longSchedule.second ?? "*",
-      longSchedule.minute ?? "*", 
+      longSchedule.minute ?? "*",
       longSchedule.hour ?? "*",
       longSchedule.dayOfMonth ?? "*",
       longSchedule.month ?? "*",
@@ -525,13 +551,13 @@ export class Schedule {
 
 // Standart cron kısaltmaları için harita - JCRON 7-field format (s m h D M dow Y)
 const SHORTCUTS: Record<string, string> = {
-  "@yearly": "0 0 0 1 1 * *",      // Yılda bir - 1 Ocak gece yarısı
-  "@annually": "0 0 0 1 1 * *",    // Yılda bir - @yearly ile aynı
-  "@monthly": "0 0 0 1 * * *",     // Ayda bir - ayın 1'i gece yarısı
-  "@weekly": "0 0 0 * * 0 *",      // Haftada bir - Pazar gece yarısı
-  "@daily": "0 0 0 * * * *",       // Günde bir - gece yarısı
-  "@midnight": "0 0 0 * * * *",    // Gece yarısı - @daily ile aynı
-  "@hourly": "0 0 * * * * *",      // Saatte bir - dakika 0'da
+  "@yearly": "0 0 0 1 1 * *", // Yılda bir - 1 Ocak gece yarısı
+  "@annually": "0 0 0 1 1 * *", // Yılda bir - @yearly ile aynı
+  "@monthly": "0 0 0 1 * * *", // Ayda bir - ayın 1'i gece yarısı
+  "@weekly": "0 0 0 * * 0 *", // Haftada bir - Pazar gece yarısı
+  "@daily": "0 0 0 * * * *", // Günde bir - gece yarısı
+  "@midnight": "0 0 0 * * * *", // Gece yarısı - @daily ile aynı
+  "@hourly": "0 0 * * * * *", // Saatte bir - dakika 0'da
 };
 
 // Metinsel ifadeleri sayısal değerlere çeviren yardımcı fonksiyon
@@ -607,6 +633,60 @@ export function fromCronSyntax(cronString: string): Schedule {
   M = replaceTextualNames(M || "");
   dow = replaceTextualNames(dow || "");
 
+  // Validate fields before creating Schedule
+  const validateField = (
+    value: string | undefined | null,
+    min: number,
+    max: number,
+    fieldName: string
+  ): void => {
+    if (!value || value === "*" || value === "?") return;
+
+    const parts = value.split(",");
+    for (const part of parts) {
+      if (part.includes("#") || part.includes("L")) continue;
+      if (part.includes("/")) {
+        const [range, step] = part.split("/");
+        const stepNum = parseInt(step);
+        if (isNaN(stepNum) || stepNum <= 0) {
+          throw new ParseError(`Invalid step value in ${fieldName}: ${step}`);
+        }
+        if (range !== "*") validateField(range, min, max, fieldName);
+      } else if (part.includes("-")) {
+        const [start, end] = part.split("-");
+        const startNum = parseInt(start);
+        const endNum = parseInt(end);
+        if (
+          isNaN(startNum) ||
+          isNaN(endNum) ||
+          startNum < min ||
+          endNum > max ||
+          startNum > endNum
+        ) {
+          throw new ParseError(
+            `Invalid range in ${fieldName}: ${part} (valid range: ${min}-${max})`
+          );
+        }
+      } else if (part !== "*") {
+        const num = parseInt(part);
+        if (isNaN(num) || num < min || num > max) {
+          throw new ParseError(
+            `Invalid value in ${fieldName}: ${num} (valid range: ${min}-${max})`
+          );
+        }
+      }
+    }
+  };
+
+  validateField(s, 0, 59, "seconds");
+  validateField(m, 0, 59, "minutes");
+  validateField(h, 0, 23, "hours");
+  validateField(D, 1, 31, "day of month");
+  validateField(M, 1, 12, "month");
+  validateField(dow, 0, 7, "day of week");
+  validateField(Y, 1970, 3000, "year");
+  validateField(tz, 0, 0, "timezone"); // timezone is string, skip numeric validation
+
   return new Schedule(s, m, h, D, M, dow, Y || null, woy, tz || null);
 }
 
@@ -666,26 +746,43 @@ export function fromCronWithWeekOfYear(
  * Create a Schedule from a Schedule object or Schedule instance
  * Accepts objects with Schedule format: {s,m,h,D,M,dow,Y,woy,tz,eod}
  */
-export function fromObject(obj: {
-  s?: string | null;
-  m?: string | null;
-  h?: string | null;
-  D?: string | null;
-  M?: string | null;
-  dow?: string | null;
-  Y?: string | null;
-  woy?: string | null;
-  tz?: string | null;
-  eod?: EndOfDuration | string | null;
-} | Schedule): Schedule {
+export function fromObject(
+  obj:
+    | {
+        s?: string | null;
+        m?: string | null;
+        h?: string | null;
+        D?: string | null;
+        M?: string | null;
+        dow?: string | null;
+        Y?: string | null;
+        woy?: string | null;
+        tz?: string | null;
+        eod?: EndOfDuration | string | null;
+      }
+    | Schedule
+): Schedule {
   // If it's already a Schedule instance, create a new one from its properties
   if (obj instanceof Schedule) {
-    return new Schedule(obj.s, obj.m, obj.h, obj.D, obj.M, obj.dow, obj.Y, obj.woy, obj.tz, obj.eod);
+    return new Schedule(
+      obj.s,
+      obj.m,
+      obj.h,
+      obj.D,
+      obj.M,
+      obj.dow,
+      obj.Y,
+      obj.woy,
+      obj.tz,
+      obj.eod
+    );
   }
 
   // Check if we have meaningful time or date components
-  const hasTimeComponents = obj.s !== undefined || obj.m !== undefined || obj.h !== undefined;
-  const hasDateComponents = obj.D !== undefined || obj.M !== undefined || obj.dow !== undefined;
+  const hasTimeComponents =
+    obj.s !== undefined || obj.m !== undefined || obj.h !== undefined;
+  const hasDateComponents =
+    obj.D !== undefined || obj.M !== undefined || obj.dow !== undefined;
 
   // If we have a meaningful time-based schedule, provide smart defaults
   let s: string | null, m: string | null, h: string | null;
@@ -696,7 +793,7 @@ export function fromObject(obj: {
   if (hasTimeComponents || hasDateComponents) {
     // Provide sensible defaults for a complete cron expression
     s = obj.s != null ? String(obj.s) : "0";
-    m = obj.m != null ? String(obj.m) : (obj.h !== undefined ? "0" : "*");
+    m = obj.m != null ? String(obj.m) : obj.h !== undefined ? "0" : "*";
     h = obj.h != null ? String(obj.h) : "*";
     D = obj.D != null ? String(obj.D) : "*";
     M = obj.M != null ? String(obj.M) : "*";
@@ -717,12 +814,16 @@ export function fromObject(obj: {
 
   // Handle EoD field
   if (obj.eod) {
-    if (typeof obj.eod === 'string') {
+    if (typeof obj.eod === "string") {
       // Parse EoD string
       try {
         eod = parseEoD(obj.eod);
       } catch (error) {
-        throw new ParseError(`Invalid EoD format: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        throw new ParseError(
+          `Invalid EoD format: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
       }
     } else if (obj.eod instanceof EndOfDuration) {
       eod = obj.eod;
@@ -741,15 +842,25 @@ export function fromObject(obj: {
  * This ensures compatibility with objects that might have been JSON.parsed or created dynamically
  */
 export function validateSchedule(schedule: any): Schedule {
-  if (!schedule || typeof schedule !== 'object') {
-    throw new ParseError('Invalid schedule: must be a Schedule object or compatible object');
+  if (!schedule || typeof schedule !== "object") {
+    throw new ParseError(
+      "Invalid schedule: must be a Schedule object or compatible object"
+    );
   }
 
   // If it's already a Schedule instance, return a new instance to ensure immutability
   if (schedule instanceof Schedule) {
     return new Schedule(
-      schedule.s, schedule.m, schedule.h, schedule.D, schedule.M, 
-      schedule.dow, schedule.Y, schedule.woy, schedule.tz, schedule.eod
+      schedule.s,
+      schedule.m,
+      schedule.h,
+      schedule.D,
+      schedule.M,
+      schedule.dow,
+      schedule.Y,
+      schedule.woy,
+      schedule.tz,
+      schedule.eod
     );
   }
 
@@ -764,13 +875,13 @@ export function validateSchedule(schedule: any): Schedule {
     Y: schedule.Y ?? null,
     woy: schedule.woy ?? null,
     tz: schedule.tz ?? null,
-    eod: schedule.eod ?? null
+    eod: schedule.eod ?? null,
   };
 
   // Convert empty strings to null to ensure consistent handling
-  Object.keys(normalized).forEach(key => {
+  Object.keys(normalized).forEach((key) => {
     const value = normalized[key as keyof typeof normalized];
-    if (value === '' || value === undefined) {
+    if (value === "" || value === undefined) {
       normalized[key as keyof typeof normalized] = null;
     }
   });
@@ -778,11 +889,15 @@ export function validateSchedule(schedule: any): Schedule {
   // Parse EoD if it's a string
   let eod: EndOfDuration | null = null;
   if (normalized.eod) {
-    if (typeof normalized.eod === 'string') {
+    if (typeof normalized.eod === "string") {
       try {
         eod = parseEoD(normalized.eod);
       } catch (error) {
-        throw new ParseError(`Invalid EoD format: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        throw new ParseError(
+          `Invalid EoD format: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`
+        );
       }
     } else if (normalized.eod instanceof EndOfDuration) {
       eod = normalized.eod;
@@ -808,14 +923,21 @@ export function validateSchedule(schedule: any): Schedule {
  * Only requires at least one field to be present
  */
 export function isValidScheduleObject(obj: any): boolean {
-  if (!obj || typeof obj !== 'object') return false;
-  
+  if (!obj || typeof obj !== "object") return false;
+
   // Must have at least one cron field (any field is sufficient)
-  const hasAnyField = obj.s !== undefined || obj.m !== undefined || obj.h !== undefined ||
-                     obj.D !== undefined || obj.M !== undefined || obj.dow !== undefined ||
-                     obj.Y !== undefined || obj.woy !== undefined || obj.tz !== undefined ||
-                     obj.eod !== undefined;
-  
+  const hasAnyField =
+    obj.s !== undefined ||
+    obj.m !== undefined ||
+    obj.h !== undefined ||
+    obj.D !== undefined ||
+    obj.M !== undefined ||
+    obj.dow !== undefined ||
+    obj.Y !== undefined ||
+    obj.woy !== undefined ||
+    obj.tz !== undefined ||
+    obj.eod !== undefined;
+
   if (!hasAnyField) return false;
 
   try {
@@ -849,27 +971,27 @@ export const WeekPatterns = {
  */
 export function fromJCronString(jcronString: string): Schedule {
   const originalString = jcronString.trim();
-  
+
   // Handle shortcuts first
   if (SHORTCUTS[originalString]) {
     return fromCronSyntax(SHORTCUTS[originalString]);
   }
-  
+
   // Split by spaces and identify extensions
   const parts = originalString.split(/\s+/);
-  
+
   let cronParts: string[] = [];
   let woy: string | null = null;
   let tz: string | null = null;
   let eodStr: string | null = null;
-  
+
   // Separate cron fields from JCRON extensions
   for (const part of parts) {
-    if (part.startsWith('WOY:')) {
+    if (part.startsWith("WOY:")) {
       woy = part.substring(4);
-    } else if (part.startsWith('TZ:')) {
+    } else if (part.startsWith("TZ:")) {
       tz = part.substring(3);
-    } else if (part.startsWith('EOD:')) {
+    } else if (part.startsWith("EOD:")) {
       eodStr = part.substring(4);
     } else if (/^[ES]\d+[WMD]$/.test(part)) {
       // Direct EOD modifiers like E1W, S2D, E3M etc.
@@ -878,41 +1000,107 @@ export function fromJCronString(jcronString: string): Schedule {
       cronParts.push(part);
     }
   }
-  
+
   // Validate cron part count
   if (cronParts.length < 5 || cronParts.length > 7) {
     throw new ParseError(
       `Invalid JCRON format: 5, 6, or 7 cron fields expected, but ${cronParts.length} found for '${originalString}'.`
     );
   }
-  
+
   // Add seconds if missing (5-field format)
   if (cronParts.length === 5) {
     cronParts.unshift("0");
   }
-  
+
   // Parse cron fields
-  let s, m, h, D, M, dow, Y = null;
-  
+  let s,
+    m,
+    h,
+    D,
+    M,
+    dow,
+    Y = null;
+
   if (cronParts.length === 6) {
     [s, m, h, D, M, dow] = cronParts;
   } else if (cronParts.length === 7) {
     [s, m, h, D, M, dow, Y] = cronParts;
   }
-  
+
   // Apply textual name conversion
   M = replaceTextualNames(M || "");
   dow = replaceTextualNames(dow || "");
-  
+
+  // Validate fields before creating Schedule
+  const validateField = (
+    value: string | undefined | null,
+    min: number,
+    max: number,
+    fieldName: string
+  ): void => {
+    if (!value || value === "*" || value === "?") return;
+
+    // Simple validation for single numeric values
+    const parts = value.split(",");
+    for (const part of parts) {
+      if (part.includes("#") || part.includes("L")) continue; // Skip special patterns
+      if (part.includes("/")) {
+        const [range, step] = part.split("/");
+        const stepNum = parseInt(step);
+        if (isNaN(stepNum) || stepNum <= 0) {
+          throw new ParseError(`Invalid step value in ${fieldName}: ${step}`);
+        }
+        if (range !== "*") validateField(range, min, max, fieldName);
+      } else if (part.includes("-")) {
+        const [start, end] = part.split("-");
+        const startNum = parseInt(start);
+        const endNum = parseInt(end);
+        if (
+          isNaN(startNum) ||
+          isNaN(endNum) ||
+          startNum < min ||
+          endNum > max ||
+          startNum > endNum
+        ) {
+          throw new ParseError(
+            `Invalid range in ${fieldName}: ${part} (valid range: ${min}-${max})`
+          );
+        }
+      } else if (part !== "*") {
+        const num = parseInt(part);
+        if (isNaN(num) || num < min || num > max) {
+          throw new ParseError(
+            `Invalid value in ${fieldName}: ${num} (valid range: ${min}-${max})`
+          );
+        }
+      }
+    }
+  };
+
+  // Validate each field
+  validateField(s, 0, 59, "seconds");
+  validateField(m, 0, 59, "minutes");
+  validateField(h, 0, 23, "hours");
+  validateField(D, 1, 31, "day of month");
+  validateField(M, 1, 12, "month");
+  validateField(dow, 0, 7, "day of week");
+  validateField(Y, 1970, 3000, "year");
+  validateField(woy, 1, 53, "week of year");
+
   // Parse EoD if present
   let eod: EndOfDuration | null = null;
   if (eodStr) {
     try {
       eod = parseEoD(eodStr);
     } catch (error) {
-      throw new ParseError(`Invalid EOD format '${eodStr}': ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new ParseError(
+        `Invalid EOD format '${eodStr}': ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   }
-  
+
   return new Schedule(s, m, h, D, M, dow, Y || null, woy, tz || null, eod);
 }

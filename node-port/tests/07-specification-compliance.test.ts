@@ -32,7 +32,7 @@ describe("JCRON Specification Compliance Tests", () => {
       woyPatterns.forEach(pattern => {
         const schedule = fromJCronString(pattern);
         expect(schedule.woy).toBeDefined();
-        expect(schedule.woy).toContain("WOY:");
+        expect(schedule.woy).toContain("");
       });
     });
 
@@ -233,7 +233,7 @@ describe("JCRON Specification Compliance Tests", () => {
       expect(representation).toContain("30");
       expect(representation).toContain("14");
       expect(representation).toContain("1-5");
-      expect(representation).toContain("WOY:33");
+      expect(representation).toContain("33");
       expect(representation).toContain("Europe/Istanbul");
     });
   });

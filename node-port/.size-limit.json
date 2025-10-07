@@ -1,0 +1,41 @@
+[
+  {
+    "name": "Full Bundle (ESM)",
+    "path": "dist/index.mjs",
+    "limit": "50 KB",
+    "gzip": true
+  },
+  {
+    "name": "Full Bundle (CJS)",
+    "path": "dist/index.cjs",
+    "limit": "50 KB",
+    "gzip": true
+  },
+  {
+    "name": "Browser Bundle (Minified)",
+    "path": "dist/jcron.umd.min.js",
+    "limit": "45 KB",
+    "gzip": true
+  },
+  {
+    "name": "Engine Only",
+    "path": "dist/engine.mjs",
+    "import": "{ Engine }",
+    "limit": "30 KB",
+    "gzip": true
+  },
+  {
+    "name": "Schedule Only",
+    "path": "dist/schedule.mjs",
+    "import": "{ Schedule }",
+    "limit": "25 KB",
+    "gzip": true
+  },
+  {
+    "name": "Humanize Only",
+    "path": "dist/humanize/index.mjs",
+    "limit": "20 KB",
+    "gzip": true
+  }
+]
+

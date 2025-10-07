@@ -38,8 +38,9 @@ export const itLocale: LocaleStrings = {
   fifth: "quinto",
   weekday: "giorno feriale",
   weekend: "fine settimana",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Domenica",
     "Lunedì",

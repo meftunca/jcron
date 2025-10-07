@@ -12,7 +12,7 @@ describe("JCRON Advanced Features Tests", () => {
     test("should handle WOY + Timezone + EOD combination", () => {
       const schedule = fromJCronString("0 0 9 * * * * WOY:33 TZ:Europe/Istanbul E1W");
       
-      expect(schedule.woy).toBe("WOY:33");
+      expect(schedule.woy).toBe("33");
       expect(schedule.tz).toBe("Europe/Istanbul");
       expect(schedule.eod).toBeDefined();
       expect(schedule.h).toBe("9");
@@ -21,7 +21,7 @@ describe("JCRON Advanced Features Tests", () => {
     test("should handle multiple weeks with timezone and EOD", () => {
       const schedule = fromJCronString("0 30 14 * * 1-5 * WOY:1,13,26,39,52 TZ:America/New_York E0W");
       
-      expect(schedule.woy).toBe("WOY:1,13,26,39,52");
+      expect(schedule.woy).toBe("1,13,26,39,52");
       expect(schedule.tz).toBe("America/New_York");
       expect(schedule.eod).toBeDefined();
       expect(schedule.m).toBe("30");
@@ -36,7 +36,7 @@ describe("JCRON Advanced Features Tests", () => {
       expect(schedule.m).toBe("*/15");
       expect(schedule.h).toBe("9-17");
       expect(schedule.dow).toBe("1-5");
-      expect(schedule.woy).toBe("WOY:*");
+      expect(schedule.woy).toBe("*");
       expect(schedule.tz).toBe("UTC");
     });
   });
@@ -168,7 +168,7 @@ describe("JCRON Advanced Features Tests", () => {
       expect(stringRepresentation).toContain("30");
       expect(stringRepresentation).toContain("14");
       expect(stringRepresentation).toContain("1-5");
-      expect(stringRepresentation).toContain("WOY:33");
+      expect(stringRepresentation).toContain("33");
       expect(stringRepresentation).toContain("TZ:Europe/Istanbul");
     });
 

@@ -11,22 +11,22 @@ describe("JCRON Week of Year (WOY) Tests", () => {
   describe("WOY Pattern Parsing", () => {
     test("should parse WOY:* (all weeks)", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:*");
-      expect(schedule.woy).toBe("WOY:*");
+      expect(schedule.woy).toBe("*");
     });
 
     test("should parse WOY:1 (specific week)", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:1");
-      expect(schedule.woy).toBe("WOY:1");
+      expect(schedule.woy).toBe("1");
     });
 
     test("should parse WOY:1,13,26,39,52 (multiple weeks)", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:1,13,26,39,52");
-      expect(schedule.woy).toBe("WOY:1,13,26,39,52");
+      expect(schedule.woy).toBe("1,13,26,39,52");
     });
 
     test("should parse WOY:1-4 (week ranges)", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:1-4");
-      expect(schedule.woy).toBe("WOY:1-4");
+      expect(schedule.woy).toBe("1-4");
     });
   });
 

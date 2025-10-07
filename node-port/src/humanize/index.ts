@@ -4,16 +4,16 @@
 import { Engine } from "../engine";
 import { Schedule, fromCronSyntax, fromJCronString } from "../schedule";
 import { Formatters } from "./formatters";
-import { enLocale } from "./locales/en";
-import { frLocale } from "./locales/fr";
-import { trLocale } from "./locales/tr";
-import { esLocale } from "./locales/es";
+import { czLocale } from "./locales/cz";
 import { deLocale } from "./locales/de";
+import { enLocale } from "./locales/en";
+import { esLocale } from "./locales/es";
+import { frLocale } from "./locales/fr";
+import { itLocale } from "./locales/it";
+import { nlLocale } from "./locales/nl";
 import { plLocale } from "./locales/pl";
 import { ptLocale } from "./locales/pt";
-import { itLocale } from "./locales/it";
-import { czLocale } from "./locales/cz";
-import { nlLocale } from "./locales/nl";
+import { trLocale } from "./locales/tr";
 import { ExpressionParser, ParsedExpression } from "./parser";
 import { HumanizeOptions, HumanizeResult, LocaleStrings } from "./types";
 
@@ -37,52 +37,57 @@ locales.set("nl", nlLocale);
 function detectLocale(): string {
   if (typeof navigator !== "undefined" && (navigator as any).language) {
     const browserLang = ((navigator as any).language as string).toLowerCase();
-    
+
     // Direct matches
     if (locales.has(browserLang)) {
       return browserLang;
     }
-    
+
     // Language code only (e.g., 'en-US' -> 'en')
-    const langCode = browserLang.split('-')[0];
+    const langCode = browserLang.split("-")[0];
     if (locales.has(langCode)) {
       return langCode;
     }
-    
+
     // Special mappings
     const langMap: Record<string, string> = {
-      'cs': 'cz', // Czech
-      'cs-cz': 'cz',
-      'pt-br': 'pt', // Brazilian Portuguese
-      'pt-pt': 'pt', // European Portuguese
-      'es-es': 'es', // European Spanish
-      'es-mx': 'es', // Mexican Spanish
-      'fr-fr': 'fr', // French
-      'fr-ca': 'fr', // Canadian French
-      'de-de': 'de', // German
-      'de-at': 'de', // Austrian German
-      'de-ch': 'de', // Swiss German
-      'it-it': 'it', // Italian
-      'nl-nl': 'nl', // Dutch
-      'nl-be': 'nl', // Belgian Dutch
-      'pl-pl': 'pl', // Polish
-      'tr-tr': 'tr', // Turkish
+      cs: "cz", // Czech
+      "cs-cz": "cz",
+      "pt-br": "pt", // Brazilian Portuguese
+      "pt-pt": "pt", // European Portuguese
+      "es-es": "es", // European Spanish
+      "es-mx": "es", // Mexican Spanish
+      "fr-fr": "fr", // French
+      "fr-ca": "fr", // Canadian French
+      "de-de": "de", // German
+      "de-at": "de", // Austrian German
+      "de-ch": "de", // Swiss German
+      "it-it": "it", // Italian
+      "nl-nl": "nl", // Dutch
+      "nl-be": "nl", // Belgian Dutch
+      "pl-pl": "pl", // Polish
+      "tr-tr": "tr", // Turkish
     };
-    
+
     if (langMap[browserLang] && locales.has(langMap[browserLang])) {
       return langMap[browserLang];
     }
   }
-  
+
   // Node.js environment
   if (typeof process !== "undefined" && process.env) {
-    const envLang = (process.env.LANG || process.env.LANGUAGE || process.env.LC_ALL || '').toLowerCase();
-    const langCode = envLang.split('_')[0].split('.')[0];
+    const envLang = (
+      process.env.LANG ||
+      process.env.LANGUAGE ||
+      process.env.LC_ALL ||
+      ""
+    ).toLowerCase();
+    const langCode = envLang.split("_")[0].split(".")[0];
     if (locales.has(langCode)) {
       return langCode;
     }
   }
-  
+
   return "en"; // Default fallback
 }
 
@@ -104,6 +109,7 @@ const defaultOptions: Required<HumanizeOptions> = {
   showRanges: true,
   showLists: true,
   showSteps: true,
+  useShorthand: true,
 };
 
 class HumanizerClass {
@@ -144,7 +150,11 @@ class HumanizerClass {
     if (locales.has(locale)) {
       defaultOptions.locale = locale;
     } else {
-      throw new Error(`Unsupported locale: ${locale}. Supported locales: ${this.getSupportedLocales().join(', ')}`);
+      throw new Error(
+        `Unsupported locale: ${locale}. Supported locales: ${this.getSupportedLocales().join(
+          ", "
+        )}`
+      );
     }
   }
 
@@ -159,24 +169,24 @@ class HumanizerClass {
     // Create cache key
     const optionsStr = JSON.stringify(options);
     const cacheKey = `${cronExpression}:${optionsStr}`;
-    
+
     // Check cache first
-    const cached = HumanizeCache.getTemplate(cacheKey, options.locale || 'en');
+    const cached = HumanizeCache.getTemplate(cacheKey, options.locale || "en");
     if (cached) {
       return cached;
     }
-    
+
     try {
       const schedule = fromJCronString(cronExpression);
       const result = this.fromSchedule(schedule, options);
-      
+
       // Cache the result
-      HumanizeCache.setTemplate(cacheKey, result, options.locale || 'en');
-      
+      HumanizeCache.setTemplate(cacheKey, result, options.locale || "en");
+
       return result;
     } catch (error) {
       const errorResult = "Invalid cron expression";
-      HumanizeCache.setTemplate(cacheKey, errorResult, options.locale || 'en');
+      HumanizeCache.setTemplate(cacheKey, errorResult, options.locale || "en");
       return errorResult;
     }
   }
@@ -200,36 +210,74 @@ class HumanizerClass {
         normalizedSchedule = schedule;
       } else {
         // Validate fields before creating Schedule
-        const validateField = (value: any, min: number, max: number, fieldName: string): string | null => {
+        const validateField = (
+          value: any,
+          min: number,
+          max: number,
+          fieldName: string
+        ): string | null => {
           if (value == null || value === "*") return null;
           const strValue = String(value);
-          
+
           // Skip validation for complex patterns
-          if (strValue.includes("/") || strValue.includes("-") || strValue.includes(",") || 
-              strValue.includes("L") || strValue.includes("#") || strValue.includes("W")) {
+          if (
+            strValue.includes("/") ||
+            strValue.includes("-") ||
+            strValue.includes(",") ||
+            strValue.includes("L") ||
+            strValue.includes("#") ||
+            strValue.includes("W")
+          ) {
             return strValue;
           }
-          
+
           const numValue = parseInt(strValue, 10);
           if (isNaN(numValue) || numValue < min || numValue > max) {
-            throw new Error(`Invalid ${fieldName}: ${value} (must be ${min}-${max})`);
+            throw new Error(
+              `Invalid ${fieldName}: ${value} (must be ${min}-${max})`
+            );
           }
           return strValue;
         };
-        
+
         // Validate all fields
         const validatedFields = {
-          seconds: validateField(schedule.s ?? schedule.seconds, 0, 59, "seconds"),
-          minutes: validateField(schedule.m ?? schedule.minutes, 0, 59, "minutes"),
+          seconds: validateField(
+            schedule.s ?? schedule.seconds,
+            0,
+            59,
+            "seconds"
+          ),
+          minutes: validateField(
+            schedule.m ?? schedule.minutes,
+            0,
+            59,
+            "minutes"
+          ),
           hours: validateField(schedule.h ?? schedule.hours, 0, 23, "hours"),
-          dayOfMonth: validateField(schedule.D ?? schedule.dayOfMonth, 1, 31, "day of month"),
+          dayOfMonth: validateField(
+            schedule.D ?? schedule.dayOfMonth,
+            1,
+            31,
+            "day of month"
+          ),
           month: validateField(schedule.M ?? schedule.month, 1, 12, "month"),
-          dayOfWeek: validateField(schedule.dow ?? schedule.dayOfWeek, 0, 7, "day of week"),
+          dayOfWeek: validateField(
+            schedule.dow ?? schedule.dayOfWeek,
+            0,
+            7,
+            "day of week"
+          ),
           year: validateField(schedule.Y ?? schedule.year, 1970, 3000, "year"),
-          weekOfYear: validateField(schedule.woy ?? schedule.weekOfYear, 1, 53, "week of year"),
-          timezone: schedule.tz ?? schedule.timezone ?? null
+          weekOfYear: validateField(
+            schedule.woy ?? schedule.weekOfYear,
+            1,
+            53,
+            "week of year"
+          ),
+          timezone: schedule.tz ?? schedule.timezone ?? null,
         };
-        
+
         // Try to create a proper Schedule from the validated object
         normalizedSchedule = new Schedule(
           validatedFields.seconds,
@@ -338,12 +386,14 @@ class HumanizerClass {
   }
 
   private static hasStepPattern(parsed: ParsedExpression): boolean {
-    return parsed.hasSteps || 
-           parsed.rawFields.minutes.includes("/") ||
-           parsed.rawFields.hours.includes("/") ||
-           parsed.rawFields.daysOfMonth.includes("/") ||
-           parsed.rawFields.months.includes("/") ||
-           parsed.rawFields.daysOfWeek.includes("/");
+    return (
+      parsed.hasSteps ||
+      parsed.rawFields.minutes.includes("/") ||
+      parsed.rawFields.hours.includes("/") ||
+      parsed.rawFields.daysOfMonth.includes("/") ||
+      parsed.rawFields.months.includes("/") ||
+      parsed.rawFields.daysOfWeek.includes("/")
+    );
   }
 
   private static buildStepDescription(
@@ -570,14 +620,22 @@ class HumanizerClass {
     }
 
     // Week of Year öncelikli
-    if (options.includeWeekOfYear && parsed.weekOfYear && parsed.weekOfYear[0] !== "*") {
+    if (
+      options.includeWeekOfYear &&
+      parsed.weekOfYear &&
+      parsed.weekOfYear[0] !== "*"
+    ) {
       const woyStr = Formatters.formatWeekOfYear(parsed.weekOfYear, locale);
       parts.push(woyStr);
     }
 
     // Day of week
     if (parsed.daysOfWeek[0] !== "*") {
-      const dowStr = Formatters.formatDayOfWeek(parsed.daysOfWeek, options, locale);
+      const dowStr = Formatters.formatDayOfWeek(
+        parsed.daysOfWeek,
+        options,
+        locale
+      );
       if (dowStr) parts.push(`${locale.on} ${dowStr}`);
     }
 
@@ -594,13 +652,17 @@ class HumanizerClass {
     }
 
     // Timezone
-    if (options.includeTimezone && parsed.timezone && parsed.timezone !== "UTC") {
+    if (
+      options.includeTimezone &&
+      parsed.timezone &&
+      parsed.timezone !== "UTC"
+    ) {
       parts.push(`${locale.in} ${parsed.timezone}`);
     }
 
     // End-of-Duration (EoD)
     let result = parts.filter(Boolean).join(", ");
-    
+
     // Add EoD at the end if present
     if (parsed.eod && parsed.eod !== "") {
       const eodStr = Formatters.formatEOD(parsed.eod, locale);
@@ -625,7 +687,10 @@ class HumanizerClass {
     }
 
     // Handle step patterns first for minutes and hours
-    if (parsed.rawFields.minutes.includes("/") && parsed.rawFields.minutes.startsWith("*")) {
+    if (
+      parsed.rawFields.minutes.includes("/") &&
+      parsed.rawFields.minutes.startsWith("*")
+    ) {
       const [, step] = parsed.rawFields.minutes.split("/");
       const stepNum = parseInt(step, 10);
       if (stepNum === 0) return "Invalid cron expression"; // Division by zero
@@ -633,7 +698,10 @@ class HumanizerClass {
       return `every ${step} minutes`;
     }
 
-    if (parsed.rawFields.hours.includes("/") && parsed.rawFields.hours.startsWith("*")) {
+    if (
+      parsed.rawFields.hours.includes("/") &&
+      parsed.rawFields.hours.startsWith("*")
+    ) {
       const [, step] = parsed.rawFields.hours.split("/");
       const stepNum = parseInt(step, 10);
       if (stepNum === 0) return "Invalid cron expression"; // Division by zero
@@ -646,16 +714,24 @@ class HumanizerClass {
     }
 
     // Check for "every minute" pattern (* * * * *)
-    if (parsed.minutes[0] === "*" && parsed.hours[0] === "*" && 
-        parsed.daysOfMonth[0] === "*" && parsed.daysOfWeek[0] === "*" && 
-        parsed.months[0] === "*") {
+    if (
+      parsed.minutes[0] === "*" &&
+      parsed.hours[0] === "*" &&
+      parsed.daysOfMonth[0] === "*" &&
+      parsed.daysOfWeek[0] === "*" &&
+      parsed.months[0] === "*"
+    ) {
       return "every minute";
     }
 
     // Check for "every hour" pattern (0 * * * *)
-    if (parsed.minutes[0] === "0" && parsed.hours[0] === "*" && 
-        parsed.daysOfMonth[0] === "*" && parsed.daysOfWeek[0] === "*" && 
-        parsed.months[0] === "*") {
+    if (
+      parsed.minutes[0] === "0" &&
+      parsed.hours[0] === "*" &&
+      parsed.daysOfMonth[0] === "*" &&
+      parsed.daysOfWeek[0] === "*" &&
+      parsed.months[0] === "*"
+    ) {
       return "every hour";
     }
 
@@ -667,46 +743,62 @@ class HumanizerClass {
       options,
       locale
     );
-    
+
     // If time formatting returned an error, return invalid expression
     if (timeStr && timeStr.startsWith("Invalid")) {
       return "Invalid cron expression";
     }
-    
+
     if (timeStr) {
       parts.push(`${locale.at} ${timeStr}`);
     }
 
     // Day of month
     if (parsed.daysOfMonth[0] !== "*") {
-      const domStr = Formatters.formatDayOfMonth(parsed.daysOfMonth, options, locale);
-      if (domStr && domStr.startsWith("Invalid")) return "Invalid cron expression";
+      const domStr = Formatters.formatDayOfMonth(
+        parsed.daysOfMonth,
+        options,
+        locale
+      );
+      if (domStr && domStr.startsWith("Invalid"))
+        return "Invalid cron expression";
       if (domStr) parts.push(`${locale.on} ${domStr}`);
     }
 
     // Day of week
     if (parsed.daysOfWeek[0] !== "*") {
-      const dowStr = Formatters.formatDayOfWeek(parsed.daysOfWeek, options, locale);
-      if (dowStr && dowStr.startsWith("Invalid")) return "Invalid cron expression";
+      const dowStr = Formatters.formatDayOfWeek(
+        parsed.daysOfWeek,
+        options,
+        locale
+      );
+      if (dowStr && dowStr.startsWith("Invalid"))
+        return "Invalid cron expression";
       if (dowStr) parts.push(`${locale.on} ${dowStr}`);
     }
 
     // Month
     if (parsed.months[0] !== "*") {
       const monthStr = Formatters.formatMonth(parsed.months, options, locale);
-      if (monthStr && monthStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (monthStr && monthStr.startsWith("Invalid"))
+        return "Invalid cron expression";
       if (monthStr) parts.push(`${locale.in} ${monthStr}`);
     }
 
     // Year
     if (options.includeYear && parsed.years && parsed.years[0] !== "*") {
       const yearStr = Formatters.formatYear(parsed.years, locale);
-      if (yearStr && yearStr.startsWith("Invalid")) return "Invalid cron expression";
+      if (yearStr && yearStr.startsWith("Invalid"))
+        return "Invalid cron expression";
       if (yearStr) parts.push(`${locale.in} ${yearStr}`);
     }
 
     // Timezone
-    if (options.includeTimezone && parsed.timezone && parsed.timezone !== "UTC") {
+    if (
+      options.includeTimezone &&
+      parsed.timezone &&
+      parsed.timezone !== "UTC"
+    ) {
       parts.push(`${locale.in} ${parsed.timezone}`);
     }
 
@@ -722,7 +814,7 @@ class HumanizerClass {
 
     // Join main parts without EoD first
     let result = parts.filter(Boolean).join(", ");
-    
+
     // Add EoD at the end if present - just return the description without adding it
     if (parsed.eod && parsed.eod !== "") {
       const eodStr = Formatters.formatEOD(parsed.eod, locale);
@@ -801,50 +893,281 @@ class HumanizerClass {
 
 // Fast lookup tables for optimized humanization
 const MONTH_NAMES_FAST = {
-  'en': ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
-  'tr': ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'],
-  'es': ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'],
-  'fr': ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'],
-  'de': ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'],
-  'pl': ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'],
-  'pt': ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'],
-  'it': ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'],
-  'cz': ['Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen', 'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec'],
-  'nl': ['Januari', 'Februari', 'Maart', 'April', 'Mei', 'Juni', 'Juli', 'Augustus', 'September', 'Oktober', 'November', 'December']
+  en: [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ],
+  tr: [
+    "Ocak",
+    "Şubat",
+    "Mart",
+    "Nisan",
+    "Mayıs",
+    "Haziran",
+    "Temmuz",
+    "Ağustos",
+    "Eylül",
+    "Ekim",
+    "Kasım",
+    "Aralık",
+  ],
+  es: [
+    "Enero",
+    "Febrero",
+    "Marzo",
+    "Abril",
+    "Mayo",
+    "Junio",
+    "Julio",
+    "Agosto",
+    "Septiembre",
+    "Octubre",
+    "Noviembre",
+    "Diciembre",
+  ],
+  fr: [
+    "Janvier",
+    "Février",
+    "Mars",
+    "Avril",
+    "Mai",
+    "Juin",
+    "Juillet",
+    "Août",
+    "Septembre",
+    "Octobre",
+    "Novembre",
+    "Décembre",
+  ],
+  de: [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ],
+  pl: [
+    "Styczeń",
+    "Luty",
+    "Marzec",
+    "Kwiecień",
+    "Maj",
+    "Czerwiec",
+    "Lipiec",
+    "Sierpień",
+    "Wrzesień",
+    "Październik",
+    "Listopad",
+    "Grudzień",
+  ],
+  pt: [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ],
+  it: [
+    "Gennaio",
+    "Febbraio",
+    "Marzo",
+    "Aprile",
+    "Maggio",
+    "Giugno",
+    "Luglio",
+    "Agosto",
+    "Settembre",
+    "Ottobre",
+    "Novembre",
+    "Dicembre",
+  ],
+  cz: [
+    "Leden",
+    "Únor",
+    "Březen",
+    "Duben",
+    "Květen",
+    "Červen",
+    "Červenec",
+    "Srpen",
+    "Září",
+    "Říjen",
+    "Listopad",
+    "Prosinec",
+  ],
+  nl: [
+    "Januari",
+    "Februari",
+    "Maart",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Augustus",
+    "September",
+    "Oktober",
+    "November",
+    "December",
+  ],
 };
 
 const DAY_NAMES_FAST = {
-  'en': ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-  'tr': ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'],
-  'es': ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'],
-  'fr': ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'],
-  'de': ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'],
-  'pl': ['Niedziela', 'Poniedziałek', 'Wtorek', 'Środa', 'Czwartek', 'Piątek', 'Sobota'],
-  'pt': ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'],
-  'it': ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'],
-  'cz': ['Neděle', 'Pondělí', 'Úterý', 'Středa', 'Čtvrtek', 'Pátek', 'Sobota'],
-  'nl': ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
+  en: [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ],
+  tr: [
+    "Pazar",
+    "Pazartesi",
+    "Salı",
+    "Çarşamba",
+    "Perşembe",
+    "Cuma",
+    "Cumartesi",
+  ],
+  es: [
+    "Domingo",
+    "Lunes",
+    "Martes",
+    "Miércoles",
+    "Jueves",
+    "Viernes",
+    "Sábado",
+  ],
+  fr: ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"],
+  de: [
+    "Sonntag",
+    "Montag",
+    "Dienstag",
+    "Mittwoch",
+    "Donnerstag",
+    "Freitag",
+    "Samstag",
+  ],
+  pl: [
+    "Niedziela",
+    "Poniedziałek",
+    "Wtorek",
+    "Środa",
+    "Czwartek",
+    "Piątek",
+    "Sobota",
+  ],
+  pt: ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"],
+  it: [
+    "Domenica",
+    "Lunedì",
+    "Martedì",
+    "Mercoledì",
+    "Giovedì",
+    "Venerdì",
+    "Sabato",
+  ],
+  cz: ["Neděle", "Pondělí", "Úterý", "Středa", "Čtvrtek", "Pátek", "Sobota"],
+  nl: [
+    "Zondag",
+    "Maandag",
+    "Dinsdag",
+    "Woensdag",
+    "Donderdag",
+    "Vrijdag",
+    "Zaterdag",
+  ],
 };
 
 const TEMPLATE_STRINGS_FAST = {
-  'en': {
-    every: 'every', at: 'at', on: 'on', minute: 'minute', minutes: 'minutes',
-    hour: 'hour', hours: 'hours', day: 'day', days: 'days', week: 'week',
-    weeks: 'weeks', month: 'month', months: 'months', year: 'year',
-    years: 'years', and: 'and', past: 'past', between: 'between', to: 'to'
+  en: {
+    every: "every",
+    at: "at",
+    on: "on",
+    minute: "minute",
+    minutes: "minutes",
+    hour: "hour",
+    hours: "hours",
+    day: "day",
+    days: "days",
+    week: "week",
+    weeks: "weeks",
+    month: "month",
+    months: "months",
+    year: "year",
+    years: "years",
+    and: "and",
+    past: "past",
+    between: "between",
+    to: "to",
   },
-  'tr': {
-    every: 'her', at: 'saat', on: '', minute: 'dakika', minutes: 'dakika',
-    hour: 'saat', hours: 'saat', day: 'gün', days: 'gün', week: 'hafta',
-    weeks: 'hafta', month: 'ay', months: 'ay', year: 'yıl',
-    years: 'yıl', and: 've', past: 'geçe', between: 'arasında', to: 'ile'
+  tr: {
+    every: "her",
+    at: "saat",
+    on: "",
+    minute: "dakika",
+    minutes: "dakika",
+    hour: "saat",
+    hours: "saat",
+    day: "gün",
+    days: "gün",
+    week: "hafta",
+    weeks: "hafta",
+    month: "ay",
+    months: "ay",
+    year: "yıl",
+    years: "yıl",
+    and: "ve",
+    past: "geçe",
+    between: "arasında",
+    to: "ile",
   },
-  'es': {
-    every: 'cada', at: 'a las', on: 'en', minute: 'minuto', minutes: 'minutos',
-    hour: 'hora', hours: 'horas', day: 'día', days: 'días', week: 'semana',
-    weeks: 'semanas', month: 'mes', months: 'meses', year: 'año',
-    years: 'años', and: 'y', past: 'pasado', between: 'entre', to: 'a'
-  }
+  es: {
+    every: "cada",
+    at: "a las",
+    on: "en",
+    minute: "minuto",
+    minutes: "minutos",
+    hour: "hora",
+    hours: "horas",
+    day: "día",
+    days: "días",
+    week: "semana",
+    weeks: "semanas",
+    month: "mes",
+    months: "meses",
+    year: "año",
+    years: "años",
+    and: "y",
+    past: "pasado",
+    between: "entre",
+    to: "a",
+  },
 };
 
 // Humanization cache for performance optimization
@@ -852,29 +1175,30 @@ class HumanizeCache {
   private static templates = new Map<string, string>();
   private static localeCache = new Map<string, Map<string, string>>();
   private static maxCacheSize = 500;
-  
-  static getTemplate(key: string, locale: string = 'en'): string | undefined {
+
+  static getTemplate(key: string, locale: string = "en"): string | undefined {
     const cacheKey = `${locale}:${key}`;
     return this.templates.get(cacheKey);
   }
-  
-  static setTemplate(key: string, value: string, locale: string = 'en'): void {
+
+  static setTemplate(key: string, value: string, locale: string = "en"): void {
     if (this.templates.size < this.maxCacheSize) {
       const cacheKey = `${locale}:${key}`;
       this.templates.set(cacheKey, value);
     }
   }
-  
+
   static getLocaleCache(locale: string): Map<string, string> | undefined {
     return this.localeCache.get(locale);
   }
-  
+
   static setLocaleCache(locale: string, cache: Map<string, string>): void {
-    if (this.localeCache.size < 20) { // Max 20 locales
+    if (this.localeCache.size < 20) {
+      // Max 20 locales
       this.localeCache.set(locale, cache);
     }
   }
-  
+
   static clear(): void {
     this.templates.clear();
     this.localeCache.clear();
@@ -894,168 +1218,191 @@ class HumanizePatterns {
 export class BatchHumanizer {
   private cache = new Map<string, string>();
   private options: HumanizeOptions;
-  
+
   constructor(options: Partial<HumanizeOptions> = {}) {
     this.options = { ...defaultOptions, ...options };
   }
-  
+
   humanize(id: string, schedule: Schedule): string {
     const cacheKey = `${id}_${this.generateCacheKey(schedule)}`;
-    
+
     if (this.cache.has(cacheKey)) {
       return this.cache.get(cacheKey)!;
     }
-    
+
     const result = this.humanizeOptimized(schedule);
     this.cache.set(cacheKey, result);
-    
+
     return result;
   }
-  
+
   humanizeMultiple(schedules: Map<string, Schedule>): Map<string, string> {
     const results = new Map<string, string>();
-    
+
     for (const [id, schedule] of schedules) {
       results.set(id, this.humanize(id, schedule));
     }
-    
+
     return results;
   }
-  
+
   private generateCacheKey(schedule: Schedule): string {
-    const optionsKey = `${this.options.use24HourTime ? '24' : '12'}${this.options.verbose ? 'v' : ''}${this.options.includeSeconds ? 's' : ''}`;
-    const eodKey = schedule.eod ? `_eod:${schedule.eod.toString()}` : '';
-    return `${schedule.s || '*'}_${schedule.m || '*'}_${schedule.h || '*'}_${schedule.D || '*'}_${schedule.M || '*'}_${schedule.dow || '*'}_${schedule.Y || '*'}_${optionsKey}${eodKey}`;
+    const optionsKey = `${this.options.use24HourTime ? "24" : "12"}${
+      this.options.verbose ? "v" : ""
+    }${this.options.includeSeconds ? "s" : ""}`;
+    const eodKey = schedule.eod ? `_eod:${schedule.eod.toString()}` : "";
+    return `${schedule.s || "*"}_${schedule.m || "*"}_${schedule.h || "*"}_${
+      schedule.D || "*"
+    }_${schedule.M || "*"}_${schedule.dow || "*"}_${
+      schedule.Y || "*"
+    }_${optionsKey}${eodKey}`;
   }
-  
+
   private humanizeOptimized(schedule: Schedule): string {
     const locale = this.options.locale;
-    const templates = TEMPLATE_STRINGS_FAST[locale as keyof typeof TEMPLATE_STRINGS_FAST] || TEMPLATE_STRINGS_FAST.en;
-    
+    const templates =
+      TEMPLATE_STRINGS_FAST[locale as keyof typeof TEMPLATE_STRINGS_FAST] ||
+      TEMPLATE_STRINGS_FAST.en;
+
     // Fast pattern detection
     const pattern = this.detectPatternOptimized(schedule);
-    
+
     switch (pattern) {
-      case 'daily':
+      case "daily":
         return this.buildDailyDescription(schedule, templates);
-      case 'weekly':
+      case "weekly":
         return this.buildWeeklyDescription(schedule, templates);
-      case 'monthly':
+      case "monthly":
         return this.buildMonthlyDescription(schedule, templates);
-      case 'yearly':
+      case "yearly":
         return this.buildYearlyDescription(schedule, templates);
       default:
         return HumanizerClass.fromSchedule(schedule, this.options);
     }
   }
-  
+
   private detectPatternOptimized(schedule: Schedule): string {
-    const isEveryDay = (!schedule.D || schedule.D === '*') && (!schedule.dow || schedule.dow === '*');
-    const isEveryWeek = schedule.dow && schedule.dow !== '*' && (!schedule.D || schedule.D === '*' || schedule.D === '?');
-    const isEveryMonth = schedule.D && schedule.D !== '*' && schedule.D !== '?' && (!schedule.dow || schedule.dow === '*' || schedule.dow === '?');
-    const isEveryYear = schedule.M && schedule.M !== '*';
-    
-    if (isEveryYear) return 'yearly';
-    if (isEveryMonth) return 'monthly';
-    if (isEveryWeek) return 'weekly';
-    if (isEveryDay) return 'daily';
-    
-    return 'custom';
+    const isEveryDay =
+      (!schedule.D || schedule.D === "*") &&
+      (!schedule.dow || schedule.dow === "*");
+    const isEveryWeek =
+      schedule.dow &&
+      schedule.dow !== "*" &&
+      (!schedule.D || schedule.D === "*" || schedule.D === "?");
+    const isEveryMonth =
+      schedule.D &&
+      schedule.D !== "*" &&
+      schedule.D !== "?" &&
+      (!schedule.dow || schedule.dow === "*" || schedule.dow === "?");
+    const isEveryYear = schedule.M && schedule.M !== "*";
+
+    if (isEveryYear) return "yearly";
+    if (isEveryMonth) return "monthly";
+    if (isEveryWeek) return "weekly";
+    if (isEveryDay) return "daily";
+
+    return "custom";
   }
-  
+
   private buildTimeString(schedule: Schedule, templates: any): string {
-    const hour = schedule.h || '0';
-    const minute = schedule.m || '0';
-    const second = schedule.s || '0';
-    
+    const hour = schedule.h || "0";
+    const minute = schedule.m || "0";
+    const second = schedule.s || "0";
+
     // Fast time formatting
-    const h = hour === '*' ? '00' : hour.padStart(2, '0');
-    const m = minute === '*' ? '00' : minute.padStart(2, '0');
-    
+    const h = hour === "*" ? "00" : hour.padStart(2, "0");
+    const m = minute === "*" ? "00" : minute.padStart(2, "0");
+
     if (this.options.use24HourTime) {
-      if (this.options.includeSeconds && second !== '*') {
-        const s = second.padStart(2, '0');
+      if (this.options.includeSeconds && second !== "*") {
+        const s = second.padStart(2, "0");
         return `${h}:${m}:${s}`;
       }
       return `${h}:${m}`;
     }
-    
+
     // 12-hour format with fast conversion
     const hourNum = parseInt(h, 10);
-    const period = hourNum >= 12 ? 'PM' : 'AM';
-    const displayHour = hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum;
-    
+    const period = hourNum >= 12 ? "PM" : "AM";
+    const displayHour =
+      hourNum === 0 ? 12 : hourNum > 12 ? hourNum - 12 : hourNum;
+
     return `${displayHour}:${m} ${period}`;
   }
-  
+
   private buildDailyDescription(schedule: Schedule, templates: any): string {
     const timeStr = this.buildTimeString(schedule, templates);
     let result = `${templates.every} ${templates.day} ${templates.at} ${timeStr}`;
-    
+
     // Add EoD if present
     if (schedule.eod) {
-      const locale = locales.get(this.options.locale || 'en') || enLocale;
+      const locale = locales.get(this.options.locale || "en") || enLocale;
       const eodStr = Formatters.formatEOD(schedule.eod, locale);
       if (eodStr) {
         result += `, ${eodStr}`;
       }
     }
-    
+
     return result;
   }
-  
+
   private buildWeeklyDescription(schedule: Schedule, templates: any): string {
     const timeStr = this.buildTimeString(schedule, templates);
     const dayStr = this.parseDayOfWeek(schedule.dow!);
     let result = `${templates.every} ${dayStr} ${templates.at} ${timeStr}`;
-    
+
     // Add EoD if present
     if (schedule.eod) {
-      const locale = locales.get(this.options.locale || 'en') || enLocale;
+      const locale = locales.get(this.options.locale || "en") || enLocale;
       const eodStr = Formatters.formatEOD(schedule.eod, locale);
       if (eodStr) {
         result += `, ${eodStr}`;
       }
     }
-    
+
     return result;
   }
-  
+
   private buildMonthlyDescription(schedule: Schedule, templates: any): string {
     const timeStr = this.buildTimeString(schedule, templates);
     const dayStr = this.parseDayOfMonth(schedule.D!, templates);
     let result = `${templates.every} ${templates.month} ${templates.on} ${dayStr} ${templates.at} ${timeStr}`;
-    
+
     // Add EoD if present
     if (schedule.eod) {
-      const locale = locales.get(this.options.locale || 'en') || enLocale;
+      const locale = locales.get(this.options.locale || "en") || enLocale;
       const eodStr = Formatters.formatEOD(schedule.eod, locale);
       if (eodStr) {
         result += `, ${eodStr}`;
       }
     }
-    
+
     return result;
   }
-  
+
   private buildYearlyDescription(schedule: Schedule, templates: any): string {
     const timeStr = this.buildTimeString(schedule, templates);
     const monthStr = this.parseMonth(schedule.M!);
-    const dayStr = schedule.D && schedule.D !== '*' ? this.parseDayOfMonth(schedule.D, templates) : '';
-    let result = `${templates.every} ${templates.year} ${templates.on} ${monthStr}${dayStr ? ' ' + dayStr : ''} ${templates.at} ${timeStr}`;
-    
+    const dayStr =
+      schedule.D && schedule.D !== "*"
+        ? this.parseDayOfMonth(schedule.D, templates)
+        : "";
+    let result = `${templates.every} ${templates.year} ${
+      templates.on
+    } ${monthStr}${dayStr ? " " + dayStr : ""} ${templates.at} ${timeStr}`;
+
     // Add EoD if present
     if (schedule.eod) {
-      const locale = locales.get(this.options.locale || 'en') || enLocale;
+      const locale = locales.get(this.options.locale || "en") || enLocale;
       const eodStr = Formatters.formatEOD(schedule.eod, locale);
       if (eodStr) {
         result += `, ${eodStr}`;
       }
     }
-    
+
     return result;
   }
-  
+
   private parseDayOfMonth(day: string, templates: any): string {
     if (HumanizePatterns.numbersRegex.test(day)) {
       const num = parseInt(day, 10);
@@ -1063,11 +1410,13 @@ export class BatchHumanizer {
     }
     return day;
   }
-  
+
   private parseMonth(month: string): string {
     const locale = this.options.locale;
-    const monthNames = MONTH_NAMES_FAST[locale as keyof typeof MONTH_NAMES_FAST] || MONTH_NAMES_FAST.en;
-    
+    const monthNames =
+      MONTH_NAMES_FAST[locale as keyof typeof MONTH_NAMES_FAST] ||
+      MONTH_NAMES_FAST.en;
+
     if (HumanizePatterns.numbersRegex.test(month)) {
       const num = parseInt(month, 10);
       if (num >= 1 && num <= 12) {
@@ -1076,11 +1425,13 @@ export class BatchHumanizer {
     }
     return month;
   }
-  
+
   private parseDayOfWeek(dow: string): string {
     const locale = this.options.locale;
-    const dayNames = DAY_NAMES_FAST[locale as keyof typeof DAY_NAMES_FAST] || DAY_NAMES_FAST.en;
-    
+    const dayNames =
+      DAY_NAMES_FAST[locale as keyof typeof DAY_NAMES_FAST] ||
+      DAY_NAMES_FAST.en;
+
     if (HumanizePatterns.numbersRegex.test(dow)) {
       const num = parseInt(dow, 10);
       if (num >= 0 && num <= 7) {
@@ -1091,15 +1442,15 @@ export class BatchHumanizer {
     }
     return dow;
   }
-  
+
   clear(): void {
     this.cache.clear();
   }
-  
+
   getStats(): { cacheSize: number; options: HumanizeOptions } {
     return {
       cacheSize: this.cache.size,
-      options: this.options
+      options: this.options,
     };
   }
 }
@@ -1108,35 +1459,66 @@ export class BatchHumanizer {
 export const toString = HumanizerClass.toString.bind(HumanizerClass);
 export const toHumanize = toString;
 export const toResult = HumanizerClass.toResult.bind(HumanizerClass);
-export const toHumanizeResult = toResult
+export const toHumanizeResult = toResult;
 export const fromSchedule = HumanizerClass.fromSchedule.bind(HumanizerClass);
-export const registerLocale = HumanizerClass.registerLocale.bind(HumanizerClass);
-export const getSupportedLocales = HumanizerClass.getSupportedLocales.bind(HumanizerClass);
-export const isLocaleSupported = HumanizerClass.isLocaleSupported.bind(HumanizerClass);
-export const getDetectedLocale = HumanizerClass.getDetectedLocale.bind(HumanizerClass);
-export const setDefaultLocale = HumanizerClass.setDefaultLocale.bind(HumanizerClass);
+export const registerLocale =
+  HumanizerClass.registerLocale.bind(HumanizerClass);
+export const getSupportedLocales =
+  HumanizerClass.getSupportedLocales.bind(HumanizerClass);
+export const isLocaleSupported =
+  HumanizerClass.isLocaleSupported.bind(HumanizerClass);
+export const getDetectedLocale =
+  HumanizerClass.getDetectedLocale.bind(HumanizerClass);
+export const setDefaultLocale =
+  HumanizerClass.setDefaultLocale.bind(HumanizerClass);
 
 // Export optimized humanization functions
-export function humanizeOptimized(schedule: Schedule, options: Partial<HumanizeOptions> = {}): string {
+export function humanizeOptimized(
+  schedule: Schedule,
+  options: Partial<HumanizeOptions> = {}
+): string {
   const opts = { ...defaultOptions, ...options };
   const batchHumanizer = new BatchHumanizer(opts);
-  return batchHumanizer.humanize('temp', schedule);
+  return batchHumanizer.humanize("temp", schedule);
 }
 
-export function createBatchHumanizer(options: Partial<HumanizeOptions> = {}): BatchHumanizer {
+export function createBatchHumanizer(
+  options: Partial<HumanizeOptions> = {}
+): BatchHumanizer {
   return new BatchHumanizer(options);
 }
 
 // Export optimized locale support
-export const SUPPORTED_LOCALES_OPTIMIZED = ['en', 'tr', 'es', 'fr', 'de', 'pl', 'pt', 'it', 'cz', 'nl'] as const;
-export type SupportedLocaleOptimized = typeof SUPPORTED_LOCALES_OPTIMIZED[number];
+export const SUPPORTED_LOCALES_OPTIMIZED = [
+  "en",
+  "tr",
+  "es",
+  "fr",
+  "de",
+  "pl",
+  "pt",
+  "it",
+  "cz",
+  "nl",
+] as const;
+export type SupportedLocaleOptimized =
+  (typeof SUPPORTED_LOCALES_OPTIMIZED)[number];
 
-export function isLocaleOptimizedSupported(locale: string): locale is SupportedLocaleOptimized {
-  return SUPPORTED_LOCALES_OPTIMIZED.includes(locale as SupportedLocaleOptimized);
+export function isLocaleOptimizedSupported(
+  locale: string
+): locale is SupportedLocaleOptimized {
+  return SUPPORTED_LOCALES_OPTIMIZED.includes(
+    locale as SupportedLocaleOptimized
+  );
 }
 
 // Export lookup tables for external use
-export { MONTH_NAMES_FAST, DAY_NAMES_FAST, TEMPLATE_STRINGS_FAST, HumanizePatterns };
+export {
+  DAY_NAMES_FAST,
+  HumanizePatterns,
+  MONTH_NAMES_FAST,
+  TEMPLATE_STRINGS_FAST,
+};
 
 // Export locale utilities
 export * from "./locales/index";

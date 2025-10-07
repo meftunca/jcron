@@ -38,8 +38,9 @@ export const czLocale: LocaleStrings = {
   fifth: "pátý",
   weekday: "pracovní den",
   weekend: "víkend",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Neděle",
     "Pondělí",

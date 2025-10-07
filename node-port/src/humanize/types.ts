@@ -55,6 +55,9 @@ export interface HumanizeOptions {
 
   /** Show step descriptions for interval patterns (default: true) */
   showSteps?: boolean;
+
+  /** Use shorthand for common patterns like "weekdays", "weekends" (default: true) */
+  useShorthand?: boolean;
 }
 
 export interface HumanizeResult {
@@ -137,6 +140,9 @@ export interface LocaleStrings {
   fifth: string;
   weekday: string;
   weekend: string;
+  weekdays: string;
+  weekends: string;
+  theMonth: string;
 
   // Days of week
   daysLong: string[];

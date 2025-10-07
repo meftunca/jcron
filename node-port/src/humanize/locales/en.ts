@@ -38,6 +38,9 @@ export const enLocale: LocaleStrings = {
   fifth: "fifth",
   weekday: "weekday",
   weekend: "weekend",
+  weekdays: "weekdays",
+  weekends: "weekends",
+  theMonth: "the month",
 
   // Days of week
   daysLong: [

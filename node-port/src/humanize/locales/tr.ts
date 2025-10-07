@@ -38,8 +38,9 @@ export const trLocale: LocaleStrings = {
   fifth: "beşinci",
   weekday: "hafta içi",
   weekend: "hafta sonu",
-
-  // Days of week
+  theMonth: "the month",
+  weekdays: "weekdays",
+  weekends: "weekends",  // Days of week
   daysLong: [
     "Pazar",
     "Pazartesi",

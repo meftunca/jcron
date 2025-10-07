@@ -38,7 +38,7 @@ export class ExpressionParser {
       return ["*"];
     }
 
-    const values: number[] = [];
+    const values: (number | string)[] = [];
     const parts = field.split(",");
 
     for (const part of parts) {
@@ -64,7 +64,13 @@ export class ExpressionParser {
           }
         } else if (range.includes("-")) {
           const [start, end] = range.split("-").map((n) => parseInt(n, 10));
-          if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+          if (
+            isNaN(start) ||
+            isNaN(end) ||
+            start < min ||
+            end > max ||
+            start > end
+          ) {
             throw new Error(`Invalid range: ${range}`);
           }
           for (let i = start; i <= end; i += stepNum) {
@@ -82,27 +88,40 @@ export class ExpressionParser {
       } else if (part.includes("-")) {
         // Range values (e.g., 1-5)
         const [start, end] = part.split("-").map((n) => parseInt(n, 10));
-        if (isNaN(start) || isNaN(end) || start < min || end > max || start > end) {
+        if (
+          isNaN(start) ||
+          isNaN(end) ||
+          start < min ||
+          end > max ||
+          start > end
+        ) {
           throw new Error(`Invalid range: ${part}`);
         }
         for (let i = start; i <= end; i++) {
           values.push(i);
         }
       } else if (part.includes("L")) {
-        // Last day patterns
-        return [part]; // Keep as string for special handling
+        // 🚀 IMPROVEMENT: Keep L patterns for later processing
+        values.push(part); // Keep as string for special handling
       } else if (part.includes("#")) {
-        // Nth occurrence patterns
+        // 🚀 IMPROVEMENT: Keep # patterns for later processing
         const [dayOfWeekStr, nthStr] = part.split("#");
         const dayOfWeek = parseInt(dayOfWeekStr, 10);
         const nth = parseInt(nthStr, 10);
-        
+
         // Validate # patterns
-        if (isNaN(dayOfWeek) || isNaN(nth) || dayOfWeek < 0 || dayOfWeek > 6 || nth < 1 || nth > 5) {
+        if (
+          isNaN(dayOfWeek) ||
+          isNaN(nth) ||
+          dayOfWeek < 0 ||
+          dayOfWeek > 6 ||
+          nth < 1 ||
+          nth > 5
+        ) {
           throw new Error(`Invalid # pattern: ${part}`);
         }
-        
-        return [part]; // Keep as string for special handling
+
+        values.push(part); // Keep as string for special handling
       } else {
         // Single value
         const num = parseInt(part, 10);
@@ -117,28 +136,70 @@ export class ExpressionParser {
       }
     }
 
-    return Array.from(new Set(values))
+    // Sort numeric values, keep string patterns (L, #) in original order
+    const numericValues = values.filter(
+      (v) => typeof v === "number"
+    ) as number[];
+    const stringValues = values.filter(
+      (v) => typeof v === "string"
+    ) as string[];
+
+    const sortedNumerics = Array.from(new Set(numericValues))
       .sort((a, b) => a - b)
       .map(String);
+
+    return [...sortedNumerics, ...stringValues];
   }
 
   static parseExpression(schedule: Schedule | any): ParsedExpression {
     // Ensure we have proper field values, handling null, undefined, and empty strings
     const getField = (primary: any, fallback: string): string => {
-      if (primary === null || primary === undefined || primary === '') {
+      if (primary === null || primary === undefined || primary === "") {
         return fallback;
       }
       return String(primary);
     };
 
-    const seconds = this.parseField(getField(schedule.s ?? schedule.seconds, "0"), 0, 59);
-    const minutes = this.parseField(getField(schedule.m ?? schedule.minutes, "*"), 0, 59);
-    const hours = this.parseField(getField(schedule.h ?? schedule.hours, "*"), 0, 23);
-    const daysOfMonth = this.parseField(getField(schedule.D ?? schedule.dayOfMonth, "*"), 1, 31);
-    const months = this.parseField(getField(schedule.M ?? schedule.month, "*"), 1, 12);
-    const daysOfWeek = this.parseField(getField(schedule.dow ?? schedule.dayOfWeek, "*"), 0, 6);
-    const years = this.parseField(getField(schedule.Y ?? schedule.year, "*"), 1970, 3000);
-    const weekOfYear = this.parseField(getField(schedule.woy ?? schedule.weekOfYear, "*"), 1, 53);
+    const seconds = this.parseField(
+      getField(schedule.s ?? schedule.seconds, "0"),
+      0,
+      59
+    );
+    const minutes = this.parseField(
+      getField(schedule.m ?? schedule.minutes, "*"),
+      0,
+      59
+    );
+    const hours = this.parseField(
+      getField(schedule.h ?? schedule.hours, "*"),
+      0,
+      23
+    );
+    const daysOfMonth = this.parseField(
+      getField(schedule.D ?? schedule.dayOfMonth, "*"),
+      1,
+      31
+    );
+    const months = this.parseField(
+      getField(schedule.M ?? schedule.month, "*"),
+      1,
+      12
+    );
+    const daysOfWeek = this.parseField(
+      getField(schedule.dow ?? schedule.dayOfWeek, "*"),
+      0,
+      6
+    );
+    const years = this.parseField(
+      getField(schedule.Y ?? schedule.year, "*"),
+      1970,
+      3000
+    );
+    const weekOfYear = this.parseField(
+      getField(schedule.woy ?? schedule.weekOfYear, "*"),
+      1,
+      53
+    );
 
     // Check for special characters
     const checkSpecialChars = (field: any): boolean => {
@@ -151,8 +212,9 @@ export class ExpressionParser {
       return Boolean(str && str.includes(pattern));
     };
 
-    const hasSpecialChars = checkSpecialChars(schedule.D ?? schedule.dayOfMonth) || 
-                           checkSpecialChars(schedule.dow ?? schedule.dayOfWeek);
+    const hasSpecialChars =
+      checkSpecialChars(schedule.D ?? schedule.dayOfMonth) ||
+      checkSpecialChars(schedule.dow ?? schedule.dayOfWeek);
 
     const hasRanges = [
       schedule.s ?? schedule.seconds,

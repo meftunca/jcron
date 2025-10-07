@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { fromJCronString, Engine, parseEoD } from "../src/index";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { Engine, fromJCronString, parseEoD } from "../src/index";
 
 describe("JCRON EOD (End of Duration) Tests", () => {
   let engine: Engine;
@@ -12,7 +12,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should parse E0W (end of current week)", () => {
       const schedule = fromJCronString("0 0 * * * * * EOD:E0W");
       expect(schedule.eod).toBeDefined();
-      expect(schedule.eod?.IsSOD).toBe(false);
+      expect(schedule.eod?.isSOD).toBe(false);
     });
 
     test("should parse E1W (end of next week)", () => {
@@ -23,7 +23,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should parse S0W (start of current week)", () => {
       const schedule = fromJCronString("0 0 * * * * * EOD:S0W");
       expect(schedule.eod).toBeDefined();
-      expect(schedule.eod?.IsSOD).toBe(true);
+      expect(schedule.eod?.isSOD).toBe(true);
     });
 
     test("should parse E0D (end of current day)", () => {
@@ -52,7 +52,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       const eod = parseEoD("E0W");
       const testDate = new Date("2024-08-14T10:00:00.000Z"); // Wednesday
       const endDate = eod.calculateEndDate(testDate);
-      
+
       // Should be end of Sunday (week end)
       expect(endDate.getUTCDay()).toBe(0); // Sunday
       expect(endDate.getUTCHours()).toBe(23);
@@ -64,7 +64,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       const eod = parseEoD("E1W");
       const testDate = new Date("2024-08-14T10:00:00.000Z"); // Wednesday
       const endDate = eod.calculateEndDate(testDate);
-      
+
       // Should be end of Sunday of next week
       expect(endDate.getUTCDay()).toBe(0); // Sunday
       expect(endDate > testDate).toBe(true);
@@ -76,7 +76,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       const eod = parseEoD("E0D");
       const testDate = new Date("2024-08-14T10:00:00.000Z");
       const endDate = eod.calculateEndDate(testDate);
-      
+
       // Should be end of same day
       expect(endDate.getUTCDate()).toBe(testDate.getUTCDate());
       expect(endDate.getUTCHours()).toBe(23);
@@ -88,7 +88,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       const eod = parseEoD("E1D");
       const testDate = new Date("2024-08-14T10:00:00.000Z");
       const endDate = eod.calculateEndDate(testDate);
-      
+
       // Should be end of next day
       expect(endDate.getUTCDate()).toBe(15);
       expect(endDate.getUTCHours()).toBe(23);
@@ -99,7 +99,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       const eod = parseEoD("E0M");
       const testDate = new Date("2024-08-14T10:00:00.000Z"); // August 14
       const endDate = eod.calculateEndDate(testDate);
-      
+
       // Should be end of August (31st)
       expect(endDate.getUTCMonth()).toBe(7); // August (0-indexed)
       expect(endDate.getUTCDate()).toBe(31);
@@ -110,26 +110,28 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should calculate S0W (start of current week) correctly", () => {
       const eod = parseEoD("S0W");
       const testDate = new Date("2024-08-14T10:00:00.000Z"); // Wednesday
-      const startDate = eod.calculateEndDate(testDate);
-      
-      // Should be start of Monday (week start)
-      expect(startDate.getUTCDay()).toBe(1); // Monday
-      expect(startDate.getUTCHours()).toBe(0);
-      expect(startDate.getUTCMinutes()).toBe(0);
-      expect(startDate.getUTCSeconds()).toBe(0);
+      const startDate = eod.calculateStartDate(testDate);
+
+      // Should be start of Monday (week start) in local timezone
+      // Note: EOD calculations use local timezone
+      const localDay = startDate.getDay();
+      expect(localDay).toBe(1); // Monday in local timezone
+      expect(startDate.getHours()).toBe(0);
+      expect(startDate.getMinutes()).toBe(0);
+      expect(startDate.getSeconds()).toBe(0);
     });
   });
 
   describe("EOD with WOY Integration", () => {
     test("should work with WOY:33 E0W pattern", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:33 E0W");
-      expect(schedule.woy).toBe("WOY:33");
+      expect(schedule.woy).toBe("33");
       expect(schedule.eod).toBeDefined();
     });
 
     test("should work with WOY:1,13,26,39 E1W pattern", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:1,13,26,39 E1W");
-      expect(schedule.woy).toBe("WOY:1,13,26,39");
+      expect(schedule.woy).toBe("1,13,26,39");
       expect(schedule.eod).toBeDefined();
     });
   });
@@ -142,8 +144,10 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     });
 
     test("should work with complex pattern WOY:33 TZ:Europe/Istanbul E1W", () => {
-      const schedule = fromJCronString("0 0 * * * * * WOY:33 TZ:Europe/Istanbul E1W");
-      expect(schedule.woy).toBe("WOY:33");
+      const schedule = fromJCronString(
+        "0 0 * * * * * WOY:33 TZ:Europe/Istanbul E1W"
+      );
+      expect(schedule.woy).toBe("33");
       expect(schedule.tz).toBe("Europe/Istanbul");
       expect(schedule.eod).toBeDefined();
     });
@@ -154,7 +158,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       // Week 33 of 2024 is around August 11-17
       const schedule = fromJCronString("0 0 * * * * * WOY:33 E0W");
       const testTime = new Date("2024-08-14T10:00:00.000Z"); // Wednesday of week 33
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(true);
     });
@@ -162,7 +166,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should return false when not in range for WOY pattern", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:33 E0W");
       const testTime = new Date("2024-07-15T10:00:00.000Z"); // Week 29, not 33
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(false);
     });
@@ -170,7 +174,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should return true for multiple week pattern when in range", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:6,19,32,45 E0W");
       const testTime = new Date("2024-08-05T10:00:00.000Z"); // Week 32
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(true);
     });
@@ -178,7 +182,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should return false for multiple week pattern when not in range", () => {
       const schedule = fromJCronString("0 0 * * * * * WOY:6,19,32,45 E0W");
       const testTime = new Date("2024-07-28T10:00:00.000Z"); // Week 31, not in list
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(false);
     });
@@ -189,7 +193,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
       // Dec 30, 2024 is in ISO Week 1 of 2025
       const schedule = fromJCronString("0 0 * * * * * WOY:1 E0W");
       const testTime = new Date("2024-12-30T10:00:00.000Z");
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(true);
     });
@@ -211,7 +215,7 @@ describe("JCRON EOD (End of Duration) Tests", () => {
     test("should return false for isRangeNow when no EOD specified", () => {
       const schedule = fromJCronString("0 0 * * * * *");
       const testTime = new Date("2024-08-14T10:00:00.000Z");
-      
+
       const isInRange = schedule.isRangeNow(testTime);
       expect(isInRange).toBe(false);
     });

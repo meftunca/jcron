@@ -14,13 +14,11 @@
 -- • 59K+ patterns/second throughput
 --
 -- Performance Optimizations:
--- ✓ Phase 1: Correctness fixes (volatility, masks, special syntax, timezone DST)
--- ✓ Phase 2: Bit search optimization, WOY jump (2.6x: 5.5K → 14.5K ops/sec)
--- ✓ Phase 3: Inline hot path, bitmask routing, precomputed patterns (7.3x: 5.5K → 60K ops/sec)
--- ✓ Phase 4.1: JIT compilation (minimal gain: +2%)
--- ✓ Phase 4.2: Binary search WOY validation (O(log N) instead of O(N))
---
--- Current Performance: 60K+ ops/sec (10.9x improvement from baseline)
+-- ✓ IMMUTABLE STRICT PARALLEL SAFE functions
+-- ✓ Regex minimization with helper functions  
+-- ✓ Fast path detection with position()
+-- ✓ Bitwise matching for cron fields
+-- ✓ Mathematical calculation instead of iteration
 --
 -- =====================================================
 
@@ -530,119 +528,18 @@ $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 -- 🎯 WOY (Week of Year) VALIDATION
 -- ============================================================================
 
--- Ultra-optimized WOY validation with Binary Search
+-- Ultra-optimized WOY validation
 CREATE OR REPLACE FUNCTION jcron.validate_woy(check_time TIMESTAMPTZ, week_numbers INTEGER[])
 RETURNS BOOLEAN AS $$
 DECLARE
     iso_week INTEGER;
-    arr_len INTEGER;
-    low INTEGER;
-    high INTEGER;
-    mid INTEGER;
-    mid_val INTEGER;
 BEGIN
     IF week_numbers IS NULL THEN
         RETURN TRUE;
     END IF;
     
     iso_week := EXTRACT(week FROM check_time)::INTEGER;
-    arr_len := array_length(week_numbers, 1);
-    
-    -- Fast path: single element
-    IF arr_len = 1 THEN
-        RETURN iso_week = week_numbers[1];
-    END IF;
-    
-    -- Fast path: small arrays (linear search faster than binary for tiny arrays)
-    IF arr_len <= 4 THEN
-        RETURN iso_week = ANY(week_numbers);
-    END IF;
-    
-    -- Binary search for larger arrays (assumes sorted)
-    low := 1;
-    high := arr_len;
-    
-    WHILE low <= high LOOP
-        mid := (low + high) / 2;
-        mid_val := week_numbers[mid];
-        
-        IF mid_val = iso_week THEN
-            RETURN TRUE;
-        ELSIF mid_val < iso_week THEN
-            low := mid + 1;
-        ELSE
-            high := mid - 1;
-        END IF;
-    END LOOP;
-    
-    RETURN FALSE;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
-
--- Binary search helper: Find next week in sorted array
-CREATE OR REPLACE FUNCTION jcron.find_next_week(week_numbers INTEGER[], current_week INTEGER)
-RETURNS INTEGER AS $$
-DECLARE
-    arr_len INTEGER;
-    low INTEGER;
-    high INTEGER;
-    mid INTEGER;
-    result INTEGER := NULL;
-BEGIN
-    IF week_numbers IS NULL THEN
-        RETURN NULL;
-    END IF;
-    
-    arr_len := array_length(week_numbers, 1);
-    
-    -- Fast path: single element
-    IF arr_len = 1 THEN
-        RETURN CASE WHEN week_numbers[1] > current_week THEN week_numbers[1] ELSE NULL END;
-    END IF;
-    
-    -- Fast path: small arrays
-    IF arr_len <= 4 THEN
-        SELECT MIN(w) INTO result FROM unnest(week_numbers) AS w WHERE w > current_week;
-        RETURN result;
-    END IF;
-    
-    -- Binary search to find insertion point (first element > current_week)
-    low := 1;
-    high := arr_len;
-    
-    -- If current_week >= last element, no next week in array
-    IF current_week >= week_numbers[arr_len] THEN
-        RETURN NULL;
-    END IF;
-    
-    -- If current_week < first element, return first
-    IF current_week < week_numbers[1] THEN
-        RETURN week_numbers[1];
-    END IF;
-    
-    -- Binary search
-    WHILE low < high LOOP
-        mid := (low + high) / 2;
-        
-        IF week_numbers[mid] <= current_week THEN
-            low := mid + 1;
-        ELSE
-            high := mid;
-        END IF;
-    END LOOP;
-    
-    RETURN week_numbers[low];
-END;
-$$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
-
--- Binary search helper: Find first week in sorted array
-CREATE OR REPLACE FUNCTION jcron.find_first_week(week_numbers INTEGER[])
-RETURNS INTEGER AS $$
-BEGIN
-    IF week_numbers IS NULL OR array_length(week_numbers, 1) = 0 THEN
-        RETURN NULL;
-    END IF;
-    RETURN week_numbers[1];
+    RETURN iso_week = ANY(week_numbers);
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
@@ -944,35 +841,6 @@ $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 -- =====================================================
 
 -- Traditional cron expression handler (HYPER-OPTIMIZED)
--- =====================================================
--- 🚀 PHASE 3: INLINE + FAST PATH + PRECOMPUTED PATTERNS
--- =====================================================
--- PHASE 3.1: Inline bitwise operations (eliminate function calls)
--- PHASE 3.2: Bitmask-based fast path (skip unnecessary loops)
--- PHASE 3.3: Precomputed pattern detection (O(1) for */N patterns)
--- PHASE 3.4: Zero allocation (reuse variables)
--- 
--- REAL OPTIMIZATIONS (algorithmic, not hardcoded strings):
--- ✅ Inline bit search: Eliminate 60+ function calls per calculation
--- ✅ Wildcard detection: mask = -1 check (works for ANY wildcard pattern)
--- ✅ Loop skipping: If day/month/dow all wildcards, skip 366-iteration loop
--- ✅ Pattern detection: Precomputed bitmask constants for */5, */10, */15, */2, */3, */6
--- ✅ Smart jumping: O(1) calculation for regular interval patterns (no loop)
--- ✅ Zero allocation: Reuse variables in tight loops
--- 
--- PRECOMPUTED CONSTANTS (minute field):
--- */5:  mask = 67645734912139265  (0,5,10,15,20,25,30,35,40,45,50,55)
--- */10: mask = 1108169199648001   (0,10,20,30,40,50)
--- */15: mask = 281492156579841    (0,15,30,45)
--- 
--- PRECOMPUTED CONSTANTS (hour field):
--- */2: mask = 5592405   (0,2,4,6,8,10,12,14,16,18,20,22)
--- */3: mask = 4793353   (0,3,6,9,12,15,18,21)
--- */6: mask = 266305    (0,6,12,18)
--- 
--- IMPACT: 10-15x for */N patterns, 7x for wildcards, stable for complex
--- =====================================================
-
 CREATE OR REPLACE FUNCTION jcron.next_cron_time(
     expression TEXT,
     from_time TIMESTAMPTZ DEFAULT NOW()
@@ -997,9 +865,6 @@ DECLARE
     result_ts TIMESTAMPTZ;
     check_ts TIMESTAMPTZ;
     attempts INT := 0;
-    
-    -- Inline bit search variables (zero allocation)
-    i INT;
 BEGIN
     -- Handle special L/# syntax first
     IF jcron.has_special_syntax(expression) THEN
@@ -1013,59 +878,7 @@ BEGIN
     month_mask := jcron.get_field_mask(expression, 5);
     dow_mask := jcron.get_field_mask(expression, 6);
     
-    -- ============================================
-    -- PHASE 3.2: GENERIC FAST PATH (bitmask-based)
-    -- Skip day loop for patterns with wildcard day/month/dow
-    -- This is algorithmic optimization, not hardcoded patterns
-    -- ============================================
-    IF day_mask = -1 AND month_mask = -1 AND dow_mask = -1 THEN
-        -- Only minute/hour matter, skip day loop entirely
-        check_ts := date_trunc('minute', from_time) + interval '1 minute';
-        curr_min := EXTRACT(minute FROM check_ts)::INT;
-        curr_hour := EXTRACT(hour FROM check_ts)::INT;
-        
-        -- Fast minute search
-        IF min_mask = -1 THEN
-            next_min := curr_min;
-        ELSE
-            next_min := jcron.next_bit(min_mask, curr_min - 1, 59);
-            IF next_min = -1 THEN
-                next_min := jcron.first_bit(min_mask, 0, 59);
-                curr_hour := curr_hour + 1;
-                IF curr_hour > 23 THEN
-                    curr_hour := 0;
-                    check_ts := check_ts + interval '1 day';
-                END IF;
-            END IF;
-        END IF;
-        
-        -- Fast hour search
-        IF hour_mask = -1 THEN
-            next_hour := curr_hour;
-        ELSE
-            next_hour := jcron.next_bit(hour_mask, curr_hour - 1, 23);
-            IF next_hour = -1 THEN
-                next_hour := jcron.first_bit(hour_mask, 0, 23);
-                next_min := jcron.first_bit(min_mask, 0, 59);
-                check_ts := check_ts + interval '1 day';
-            ELSIF next_hour != curr_hour THEN
-                next_min := jcron.first_bit(min_mask, 0, 59);
-            END IF;
-        END IF;
-        
-        -- Build result (no day loop needed!)
-        RETURN make_timestamptz(
-            EXTRACT(year FROM check_ts)::INT,
-            EXTRACT(month FROM check_ts)::INT,
-            EXTRACT(day FROM check_ts)::INT,
-            COALESCE(next_hour, curr_hour),
-            COALESCE(next_min, curr_min),
-            0,
-            'UTC'
-        );
-    END IF;
-    
-    -- Start from next minute (for complex patterns with day/dow/month constraints)
+    -- Start from next minute
     check_ts := date_trunc('minute', from_time) + interval '1 minute';
     
     curr_min := EXTRACT(minute FROM check_ts)::INT;
@@ -1075,69 +888,10 @@ BEGIN
     curr_year := EXTRACT(year FROM check_ts)::INT;
     curr_dow := EXTRACT(dow FROM check_ts)::INT;
     
-    -- ============================================
-    -- PHASE 3.3+3.4: INLINE with precomputed pattern detection
-    -- ============================================
-    next_min := -1;
-    
-    -- Fast path: wildcard (all minutes match)
-    IF min_mask = -1 THEN
-        next_min := LEAST(curr_min, 59);
-    -- Phase 3.3: Smart */5 pattern detection (precomputed constant)
-    ELSIF min_mask = 67645734912139265::BIGINT THEN
-        -- */5 pattern: 0,5,10,15,20,25,30,35,40,45,50,55
-        next_min := ((curr_min / 5) + 1) * 5;
-        IF next_min > 59 THEN
-            next_min := -1;
-        END IF;
-    -- Phase 3.3: Smart */10 pattern detection
-    ELSIF min_mask = 1108169199648001::BIGINT THEN
-        -- */10 pattern: 0,10,20,30,40,50
-        next_min := ((curr_min / 10) + 1) * 10;
-        IF next_min > 59 THEN
-            next_min := -1;
-        END IF;
-    -- Phase 3.3: Smart */15 pattern detection
-    ELSIF min_mask = 281492156579841::BIGINT THEN
-        -- */15 pattern: 0,15,30,45
-        next_min := ((curr_min / 15) + 1) * 15;
-        IF next_min > 59 THEN
-            next_min := -1;
-        END IF;
-    ELSE
-        -- Generic inline bit search loop
-        i := curr_min;
-        WHILE i <= 59 LOOP
-            IF (min_mask & (1::BIGINT << i)) != 0 THEN
-                next_min := i;
-                EXIT;
-            END IF;
-            i := i + 1;
-        END LOOP;
-    END IF;
-    
-    -- If no match found, wrap to next hour
+    -- Find next matching minute
+    next_min := jcron.next_bit(min_mask, curr_min - 1, 59);
     IF next_min = -1 THEN
-        -- INLINE: first_bit for minute with pattern optimization
-        IF min_mask = -1 THEN
-            next_min := 0;
-        ELSIF min_mask = 67645734912139265::BIGINT THEN
-            next_min := 0;  -- */5 pattern starts at 0
-        ELSIF min_mask = 1108169199648001::BIGINT THEN
-            next_min := 0;  -- */10 pattern starts at 0
-        ELSIF min_mask = 281492156579841::BIGINT THEN
-            next_min := 0;  -- */15 pattern starts at 0
-        ELSE
-            i := 0;
-            WHILE i <= 59 LOOP
-                IF (min_mask & (1::BIGINT << i)) != 0 THEN
-                    next_min := i;
-                    EXIT;
-                END IF;
-                i := i + 1;
-            END LOOP;
-        END IF;
-        
+        next_min := jcron.first_bit(min_mask, 0, 59);
         curr_hour := curr_hour + 1;
         IF curr_hour > 23 THEN
             curr_hour := 0;
@@ -1145,97 +899,14 @@ BEGIN
         END IF;
     END IF;
     
-    -- ============================================
-    -- PHASE 3.3+3.4: INLINE hour with pattern detection
-    -- ============================================
-    next_hour := -1;
-    
-    -- Fast path: wildcard (all hours match)
-    IF hour_mask = -1 THEN
-        next_hour := curr_hour;
-    -- Phase 3.3: Smart */2 hour pattern (0,2,4,6,8,10,12,14,16,18,20,22)
-    ELSIF hour_mask = 5592405::INT THEN
-        next_hour := ((curr_hour / 2) + 1) * 2;
-        IF next_hour > 23 THEN
-            next_hour := -1;
-        END IF;
-    -- Phase 3.3: Smart */3 hour pattern (0,3,6,9,12,15,18,21)
-    ELSIF hour_mask = 4793353::INT THEN
-        next_hour := ((curr_hour / 3) + 1) * 3;
-        IF next_hour > 23 THEN
-            next_hour := -1;
-        END IF;
-    -- Phase 3.3: Smart */6 hour pattern (0,6,12,18)
-    ELSIF hour_mask = 266305::INT THEN
-        next_hour := ((curr_hour / 6) + 1) * 6;
-        IF next_hour > 23 THEN
-            next_hour := -1;
-        END IF;
-    ELSE
-        -- Generic inline bit search loop
-        i := curr_hour;
-        WHILE i <= 23 LOOP
-            IF (hour_mask & (1::BIGINT << i)) != 0 THEN
-                next_hour := i;
-                EXIT;
-            END IF;
-            i := i + 1;
-        END LOOP;
-    END IF;
-    
-    -- If no match found, wrap to next day
+    -- Find next matching hour
+    next_hour := jcron.next_bit(hour_mask, curr_hour - 1, 23);
     IF next_hour = -1 THEN
-        -- INLINE: first_bit for hour with pattern optimization
-        IF hour_mask = -1 THEN
-            next_hour := 0;
-        ELSIF hour_mask = 5592405::INT OR hour_mask = 4793353::INT OR hour_mask = 266305::INT THEN
-            next_hour := 0;  -- All */N hour patterns start at 0
-        ELSE
-            i := 0;
-            WHILE i <= 23 LOOP
-                IF (hour_mask & (1::BIGINT << i)) != 0 THEN
-                    next_hour := i;
-                    EXIT;
-                END IF;
-                i := i + 1;
-            END LOOP;
-        END IF;
-        
-        -- Reset minute to first match with pattern optimization
-        IF min_mask = -1 THEN
-            next_min := 0;
-        ELSIF min_mask = 67645734912139265::BIGINT OR min_mask = 1108169199648001::BIGINT OR 
-              min_mask = 281492156579841::BIGINT THEN
-            next_min := 0;  -- All */N minute patterns start at 0
-        ELSE
-            i := 0;
-            WHILE i <= 59 LOOP
-                IF (min_mask & (1::BIGINT << i)) != 0 THEN
-                    next_min := i;
-                    EXIT;
-                END IF;
-                i := i + 1;
-            END LOOP;
-        END IF;
-        
+        next_hour := jcron.first_bit(hour_mask, 0, 23);
+        next_min := jcron.first_bit(min_mask, 0, 59);
         curr_day := curr_day + 1;
     ELSIF next_hour != curr_hour THEN
-        -- Hour changed, reset minute to first match with pattern optimization
-        IF min_mask = -1 THEN
-            next_min := 0;
-        ELSIF min_mask = 67645734912139265::BIGINT OR min_mask = 1108169199648001::BIGINT OR 
-              min_mask = 281492156579841::BIGINT THEN
-            next_min := 0;  -- All */N minute patterns start at 0
-        ELSE
-            i := 0;
-            WHILE i <= 59 LOOP
-                IF (min_mask & (1::BIGINT << i)) != 0 THEN
-                    next_min := i;
-                    EXIT;
-                END IF;
-                i := i + 1;
-            END LOOP;
-        END IF;
+        next_min := jcron.first_bit(min_mask, 0, 59);
     END IF;
     
     -- Build result timestamp
@@ -1248,24 +919,15 @@ BEGIN
         0
     );
     
-    -- ============================================
-    -- INLINE: Verify day, dow, and month constraints
-    -- (fast path for wildcards)
-    -- ============================================
+    -- Verify day, dow, and month constraints
     FOR attempts IN 1..366 LOOP
         curr_day := EXTRACT(day FROM result_ts)::INT;
         curr_dow := EXTRACT(dow FROM result_ts)::INT;
         curr_month := EXTRACT(month FROM result_ts)::INT;
         
-        -- Fast path: all wildcards (common case)
-        IF day_mask = -1 AND dow_mask = -1 AND month_mask = -1 THEN
-            RETURN result_ts;
-        END IF;
-        
-        -- Inline bitwise validation (no function call)
-        IF (day_mask = -1 OR (day_mask & (1::BIGINT << curr_day)) != 0) AND
-           (dow_mask = -1 OR (dow_mask & (1::BIGINT << curr_dow)) != 0) AND
-           (month_mask = -1 OR (month_mask & (1::BIGINT << curr_month)) != 0) THEN
+        IF (day_mask & (1::BIGINT << curr_day)) != 0 AND
+           (dow_mask & (1::BIGINT << curr_dow)) != 0 AND
+           (month_mask & (1::BIGINT << curr_month)) != 0 THEN
             RETURN result_ts;
         END IF;
         
@@ -1543,19 +1205,13 @@ BEGIN
     IF parsed.has_woy THEN
         DECLARE
             candidate_time TIMESTAMPTZ;
-            max_attempts INTEGER;
+            max_attempts INTEGER := 60;  -- Reduced from 100: direct jumps are more efficient
             attempt_count INTEGER := 0;
             found_match BOOLEAN := FALSE;
             target_week INTEGER;
             candidate_week INTEGER;
             input_week INTEGER;
             woy_base TIMESTAMPTZ;
-            -- Progressive search strategy: start small, expand if needed
-            -- Now using CRON-first approach, each attempt is a valid cron match
-            checkpoint_5y INTEGER := 100;     -- ~100 cron matches (catch common patterns)
-            checkpoint_26y INTEGER := 500;    -- ~500 cron matches (catch rare patterns)  
-            checkpoint_100y INTEGER := 2000;  -- ~2000 cron matches (catch ultra-rare)
-            final_limit INTEGER := 2000;      -- Max 2000 valid cron matches
         BEGIN
             -- Use appropriate base for WOY calculation
             woy_base := CASE 
@@ -1565,13 +1221,15 @@ BEGIN
             
             input_week := EXTRACT(week FROM woy_base)::INTEGER;
             
-            -- Phase 4.2: Binary search for next week (O(log N) instead of O(N))
-            target_week := jcron.find_next_week(parsed.woy_weeks, input_week);
+            -- Optimized: Direct jump to target week instead of iterating
+            SELECT MIN(w) INTO target_week 
+            FROM unnest(parsed.woy_weeks) AS w 
+            WHERE w > input_week;
             
             IF target_week IS NULL THEN
                 -- Jump to next year's first matching week
                 candidate_time := date_trunc('year', woy_base) + INTERVAL '1 year';
-                target_week := jcron.find_first_week(parsed.woy_weeks);
+                SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
                 
                 IF target_week IS NOT NULL THEN
                     candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
@@ -1583,52 +1241,48 @@ BEGIN
                 candidate_time := woy_base + ((target_week - input_week) * INTERVAL '7 days');
             END IF;
             
-            -- Progressive search: try 5 years first, then expand
-            max_attempts := checkpoint_5y;
-            
-            <<search_loop>>
-            WHILE attempt_count < final_limit AND NOT found_match LOOP
-                -- Expand search window if hit checkpoint
-                IF attempt_count = checkpoint_5y AND NOT found_match THEN
-                    max_attempts := checkpoint_26y;
-                    RAISE DEBUG 'WOY: No match in 5 years, expanding to 26 years for pattern: %', pattern;
-                ELSIF attempt_count = checkpoint_26y AND NOT found_match THEN
-                    max_attempts := checkpoint_100y;
-                    RAISE DEBUG 'WOY: No match in 26 years, expanding to 100 years for pattern: %', pattern;
-                ELSIF attempt_count = checkpoint_100y AND NOT found_match THEN
-                    max_attempts := final_limit;
-                    RAISE DEBUG 'WOY: No match in 100 years, pattern may be impossible: %', pattern;
-                END IF;
+            WHILE attempt_count < max_attempts AND NOT found_match LOOP
+                candidate_week := EXTRACT(week FROM candidate_time)::INTEGER;
                 
-                -- FIXED LOGIC: Get next cron match FIRST, then check WOY
-                -- This prevents wasting attempts on wrong months
-                IF parsed.has_timezone THEN
-                    local_result := jcron.next_cron_time(parsed.clean_cron, (candidate_time AT TIME ZONE parsed.timezone_name)::TIMESTAMPTZ);
-                    base_result := timezone(parsed.timezone_name, local_result::TIMESTAMP);
-                ELSE
-                    base_result := jcron.next_cron_time(parsed.clean_cron, candidate_time);
-                END IF;
-                
-                -- Check if result is in valid WOY and after our base time
-                candidate_week := EXTRACT(week FROM base_result)::INTEGER;
-                
-                IF candidate_week = ANY(parsed.woy_weeks) AND base_result > woy_base THEN
-                    found_match := TRUE;
+                IF candidate_week = ANY(parsed.woy_weeks) THEN
+                    IF parsed.has_timezone THEN
+                        local_result := jcron.next_cron_time(parsed.clean_cron, (candidate_time AT TIME ZONE parsed.timezone_name)::TIMESTAMPTZ);
+                        base_result := timezone(parsed.timezone_name, local_result::TIMESTAMP);
+                    ELSE
+                        base_result := jcron.next_cron_time(parsed.clean_cron, candidate_time);
+                    END IF;
+                    
+                    IF EXTRACT(week FROM base_result)::INTEGER = ANY(parsed.woy_weeks) AND
+                       base_result > woy_base THEN
+                        found_match := TRUE;
+                    END IF;
                 END IF;
                 
                 IF NOT found_match THEN
-                    -- Jump to next target week for next iteration
-                    -- Use the cron result as next candidate (more efficient than week jumping)
-                    candidate_time := base_result + INTERVAL '1 day';
+                    SELECT MIN(w) INTO target_week 
+                    FROM unnest(parsed.woy_weeks) AS w 
+                    WHERE w > candidate_week;
+                    
+                    IF target_week IS NULL THEN
+                        candidate_time := date_trunc('year', candidate_time) + INTERVAL '1 year';
+                        SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
+                        IF target_week IS NOT NULL THEN
+                            candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
+                        END IF;
+                    ELSE
+                        candidate_time := candidate_time + ((target_week - candidate_week) * INTERVAL '7 days');
+                    END IF;
                 END IF;
                 
                 attempt_count := attempt_count + 1;
+                
+                IF candidate_time > woy_base + INTERVAL '2 years' THEN
+                    EXIT;
+                END IF;
             END LOOP;
             
             IF NOT found_match THEN
-                -- Pattern is impossible: no match found after 2000 valid cron matches
-                -- This means day/month/WOY combination never occurs together
-                RAISE EXCEPTION 'WOY pattern is impossible (checked % valid cron matches): %. This day/month/WOY combination never occurs together. Pattern is mathematically impossible.', attempt_count, pattern;
+                RAISE EXCEPTION 'Could not find WOY match for pattern: %', pattern;
             END IF;
         END;
     END IF;

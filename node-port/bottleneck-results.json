@@ -1,37 +1,37 @@
 {
-  "timestamp": "2025-07-17T05:04:59.404Z",
-  "runtime": "Bun v1.2.18",
+  "timestamp": "2025-10-07T14:34:03.792Z",
+  "runtime": "Bun v1.2.23",
   "platform": "darwin arm64",
   "results": [
     {
       "category": "Humanization",
       "test": "Complex EoD parsing",
-      "original": 589198,
-      "optimized": 701597,
-      "improvement": 19.076609221348342,
-      "speedup": 1.1907660922134835
+      "original": 197144,
+      "optimized": 650255,
+      "improvement": 229.8375806517064,
+      "speedup": 3.298375806517064
     },
     {
       "category": "Humanization",
       "test": "Batch validation",
-      "original": 56,
-      "optimized": 9035214,
-      "improvement": 16134210.714285713,
-      "speedup": 161343.10714285713
+      "original": 7084421,
+      "optimized": 8686248,
+      "improvement": 22.61055631786987,
+      "speedup": 1.2261055631786988
     },
     {
       "category": "Humanization",
       "test": "Batch humanization",
-      "original": 102004,
-      "optimized": 2085933,
-      "improvement": 1944.952158738873,
-      "speedup": 20.44952158738873
+      "original": 170130,
+      "optimized": 1995974,
+      "improvement": 1073.2051960265678,
+      "speedup": 11.732051960265679
     }
   ],
   "summary": {
     "totalTests": 3,
     "improvedTests": 3,
-    "averageImprovement": 5378724.914351225,
-    "averageSpeedup": 53788.24914351224
+    "averageImprovement": 441.8844443320481,
+    "averageSpeedup": 5.418844443320481
   }
 }
