@@ -12,8 +12,6 @@ export const esLocale: LocaleStrings = {
   of: "de",
   and: "y",
   or: "o",
-  everyDay: "cada día",
-  // Frequency
   second: "segundo",
   seconds: "segundos",
   minute: "minuto",
@@ -39,8 +37,19 @@ export const esLocale: LocaleStrings = {
   weekday: "día de semana",
   weekend: "fin de semana",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Diario",
+  weekly: "Semanal",
+  monthly: "Mensual",
+  yearly: "Anual",
+  everyDay: "cada día",
+  everyMonth: "cada mes",
+  everyYear: "cada año",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Domingo",
     "Lunes",

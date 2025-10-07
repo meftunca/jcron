@@ -735,6 +735,105 @@ class HumanizerClass {
       return "every hour";
     }
 
+    // 🚀 IMPROVEMENT: Natural language shortcuts for common patterns
+    const isSpecificTime = parsed.hours[0] !== "*" && parsed.minutes[0] !== "*";
+    const isAllDaysOfMonth = parsed.daysOfMonth[0] === "*";
+    const isAllDaysOfWeek = parsed.daysOfWeek[0] === "*";
+    const isAllMonths = parsed.months[0] === "*";
+    const isSingleDayOfWeek =
+      parsed.daysOfWeek.length === 1 && parsed.daysOfWeek[0] !== "*";
+    const isSingleDayOfMonth =
+      parsed.daysOfMonth.length === 1 && parsed.daysOfMonth[0] !== "*";
+    const isSingleMonth =
+      parsed.months.length === 1 && parsed.months[0] !== "*";
+
+    // Pattern: "0 9 * * *" → "Daily at 9 AM"
+    if (isSpecificTime && isAllDaysOfMonth && isAllDaysOfWeek && isAllMonths) {
+      const timeStr = Formatters.formatTime(
+        parsed.hours,
+        parsed.minutes,
+        parsed.seconds,
+        options,
+        locale
+      );
+      return options.useShorthand !== false
+        ? `${locale.daily} ${locale.at} ${timeStr}`
+        : `${locale.at} ${timeStr}, ${locale.everyDay}`;
+    }
+
+    // Pattern: "0 0 * * 0" → "Weekly on Sunday"
+    if (
+      isSpecificTime &&
+      isAllDaysOfMonth &&
+      isSingleDayOfWeek &&
+      isAllMonths
+    ) {
+      const timeStr = Formatters.formatTime(
+        parsed.hours,
+        parsed.minutes,
+        parsed.seconds,
+        options,
+        locale
+      );
+      const dowStr = Formatters.formatDayOfWeek(
+        parsed.daysOfWeek,
+        options,
+        locale
+      );
+      return options.useShorthand !== false
+        ? `${locale.weekly} ${locale.on} ${dowStr}`
+        : `${locale.at} ${timeStr}, ${locale.on} ${dowStr}`;
+    }
+
+    // Pattern: "0 0 1 * *" → "Monthly on the 1st"
+    if (
+      isSpecificTime &&
+      isSingleDayOfMonth &&
+      isAllDaysOfWeek &&
+      isAllMonths
+    ) {
+      const timeStr = Formatters.formatTime(
+        parsed.hours,
+        parsed.minutes,
+        parsed.seconds,
+        options,
+        locale
+      );
+      const domStr = Formatters.formatDayOfMonth(
+        parsed.daysOfMonth,
+        options,
+        locale
+      );
+      return options.useShorthand !== false
+        ? `${locale.monthly} ${locale.on} ${domStr}`
+        : `${locale.at} ${timeStr}, ${locale.on} ${domStr}, ${locale.everyMonth}`;
+    }
+
+    // Pattern: "0 0 1 1 *" → "Yearly on January 1st"
+    if (
+      isSpecificTime &&
+      isSingleDayOfMonth &&
+      isAllDaysOfWeek &&
+      isSingleMonth
+    ) {
+      const timeStr = Formatters.formatTime(
+        parsed.hours,
+        parsed.minutes,
+        parsed.seconds,
+        options,
+        locale
+      );
+      const domStr = Formatters.formatDayOfMonth(
+        parsed.daysOfMonth,
+        options,
+        locale
+      );
+      const monthStr = Formatters.formatMonth(parsed.months, options, locale);
+      return options.useShorthand !== false
+        ? `${locale.yearly} ${locale.on} ${monthStr} ${domStr}`
+        : `${locale.at} ${timeStr}, ${locale.on} ${domStr}, ${locale.in} ${monthStr}, ${locale.everyYear}`;
+    }
+
     // Zaman bileşeni
     const timeStr = Formatters.formatTime(
       parsed.hours,

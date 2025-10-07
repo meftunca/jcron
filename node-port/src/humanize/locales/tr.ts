@@ -12,8 +12,6 @@ export const trLocale: LocaleStrings = {
   of: "nin",
   and: "ve",
   or: "veya",
-  everyDay: "her gün",
-  // Frequency
   second: "saniye",
   seconds: "saniye",
   minute: "dakika",
@@ -38,9 +36,20 @@ export const trLocale: LocaleStrings = {
   fifth: "beşinci",
   weekday: "hafta içi",
   weekend: "hafta sonu",
-  theMonth: "the month",
-  weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekdays: "hafta içi",
+  weekends: "hafta sonu",
+  theMonth: "ay",
+
+  // Natural language shortcuts
+  daily: "Günlük",
+  weekly: "Haftalık",
+  monthly: "Aylık",
+  yearly: "Yıllık",
+  everyDay: "her gün",
+  everyMonth: "her ay",
+  everyYear: "her yıl",
+
+  // Days of week
   daysLong: [
     "Pazar",
     "Pazartesi",

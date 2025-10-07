@@ -144,6 +144,15 @@ export interface LocaleStrings {
   weekends: string;
   theMonth: string;
 
+  // Natural language shortcuts
+  daily: string;
+  weekly: string;
+  monthly: string;
+  yearly: string;
+  everyDay: string;
+  everyMonth: string;
+  everyYear: string;
+
   // Days of week
   daysLong: string[];
   daysShort: string[];
@@ -180,8 +189,4 @@ export interface LocaleStrings {
   // EOD (End of Duration)
   endOfDuration: string;
   untilTheEndOf: string;
-
-  // Eklenen: Doğal step ve every day ifadeleri için örnek stringler
-  // (Kullanımda string olarak yazıldığı için, interface'e eklemeye gerek yok)
-  everyDay: string;
 }

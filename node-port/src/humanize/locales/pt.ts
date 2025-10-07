@@ -12,8 +12,6 @@ export const ptLocale: LocaleStrings = {
   of: "de",
   and: "e",
   or: "ou",
-  everyDay: "todos os dias",
-  // Frequency
   second: "segundo",
   seconds: "segundos",
   minute: "minuto",
@@ -39,8 +37,19 @@ export const ptLocale: LocaleStrings = {
   weekday: "dia útil",
   weekend: "fim de semana",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Diário",
+  weekly: "Semanal",
+  monthly: "Mensal",
+  yearly: "Anual",
+  everyDay: "todo dia",
+  everyMonth: "todo mês",
+  everyYear: "todo ano",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Domingo",
     "Segunda-feira",

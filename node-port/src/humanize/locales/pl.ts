@@ -12,8 +12,6 @@ export const plLocale: LocaleStrings = {
   of: "z",
   and: "i",
   or: "lub",
-  everyDay: "codziennie",
-  // Frequency
   second: "sekunda",
   seconds: "sekund",
   minute: "minuta",
@@ -39,8 +37,19 @@ export const plLocale: LocaleStrings = {
   weekday: "dzień roboczy",
   weekend: "weekend",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Codziennie",
+  weekly: "Cotygodniowo",
+  monthly: "Comiesięcznie",
+  yearly: "Corocznie",
+  everyDay: "codziennie",
+  everyMonth: "co miesiąc",
+  everyYear: "co rok",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Niedziela",
     "Poniedziałek",

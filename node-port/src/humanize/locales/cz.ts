@@ -12,8 +12,6 @@ export const czLocale: LocaleStrings = {
   of: "z",
   and: "a",
   or: "nebo",
-  everyDay: "každý den",
-  // Frequency
   second: "sekunda",
   seconds: "sekund",
   minute: "minuta",
@@ -39,8 +37,19 @@ export const czLocale: LocaleStrings = {
   weekday: "pracovní den",
   weekend: "víkend",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Denně",
+  weekly: "Týdně",
+  monthly: "Měsíčně",
+  yearly: "Ročně",
+  everyDay: "každý den",
+  everyMonth: "každý měsíc",
+  everyYear: "každý rok",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Neděle",
     "Pondělí",

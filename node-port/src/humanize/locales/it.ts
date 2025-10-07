@@ -12,8 +12,6 @@ export const itLocale: LocaleStrings = {
   of: "di",
   and: "e",
   or: "o",
-  everyDay: "ogni giorno",
-  // Frequency
   second: "secondo",
   seconds: "secondi",
   minute: "minuto",
@@ -39,8 +37,19 @@ export const itLocale: LocaleStrings = {
   weekday: "giorno feriale",
   weekend: "fine settimana",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Giornaliero",
+  weekly: "Settimanale",
+  monthly: "Mensile",
+  yearly: "Annuale",
+  everyDay: "ogni giorno",
+  everyMonth: "ogni mese",
+  everyYear: "ogni anno",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Domenica",
     "Lunedì",

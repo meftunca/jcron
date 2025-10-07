@@ -12,7 +12,7 @@ export const enLocale: LocaleStrings = {
   of: "of",
   and: "and",
   or: "or",
-  everyDay: "every day",
+
   // Frequency
   second: "second",
   seconds: "seconds",
@@ -41,6 +41,15 @@ export const enLocale: LocaleStrings = {
   weekdays: "weekdays",
   weekends: "weekends",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Daily",
+  weekly: "Weekly",
+  monthly: "Monthly",
+  yearly: "Yearly",
+  everyDay: "every day",
+  everyMonth: "every month",
+  everyYear: "every year",
 
   // Days of week
   daysLong: [

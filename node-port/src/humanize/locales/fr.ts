@@ -12,8 +12,6 @@ export const frLocale: LocaleStrings = {
   of: "de",
   and: "et",
   or: "ou",
-  everyDay: "chaque jour",
-  // Frequency
   second: "seconde",
   seconds: "secondes",
   minute: "minute",
@@ -39,8 +37,19 @@ export const frLocale: LocaleStrings = {
   weekday: "jour de semaine",
   weekend: "week-end",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Quotidien",
+  weekly: "Hebdomadaire",
+  monthly: "Mensuel",
+  yearly: "Annuel",
+  everyDay: "chaque jour",
+  everyMonth: "chaque mois",
+  everyYear: "chaque année",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Dimanche",
     "Lundi",

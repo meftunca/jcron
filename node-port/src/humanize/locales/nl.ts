@@ -12,7 +12,6 @@ export const nlLocale: LocaleStrings = {
   of: "van",
   and: "en",
   or: "of",
-  everyDay: "elke dag",
 
   // Frequency
   second: "seconde",
@@ -40,8 +39,19 @@ export const nlLocale: LocaleStrings = {
   weekday: "werkdag",
   weekend: "weekend",
   theMonth: "the month",
+
+  // Natural language shortcuts
+  daily: "Dagelijks",
+  weekly: "Wekelijks",
+  monthly: "Maandelijks",
+  yearly: "Jaarlijks",
+  everyDay: "elke dag",
+  everyMonth: "elke maand",
+  everyYear: "elk jaar",
   weekdays: "weekdays",
-  weekends: "weekends",  // Days of week
+  weekends: "weekends",
+
+  // Days of week
   daysLong: [
     "Zondag",
     "Maandag",

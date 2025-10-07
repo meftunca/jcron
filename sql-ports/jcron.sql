@@ -1251,8 +1251,9 @@ BEGIN
     -- ============================================
     -- INLINE: Verify day, dow, and month constraints
     -- (fast path for wildcards)
+    -- Max 1461 days = 4 years (handles leap year edge cases like Feb 29)
     -- ============================================
-    FOR attempts IN 1..366 LOOP
+    FOR attempts IN 1..1461 LOOP
         curr_day := EXTRACT(day FROM result_ts)::INT;
         curr_dow := EXTRACT(dow FROM result_ts)::INT;
         curr_month := EXTRACT(month FROM result_ts)::INT;
