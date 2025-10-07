@@ -51,8 +51,8 @@ FROM generate_series(1, 10000);
 
 **Strategy**:
 ```sql
--- Create materialized cache table
-CREATE TABLE jcron.pattern_cache (
+-- Create UNLOGGED cache table (no WAL overhead, ~10x faster writes)
+CREATE UNLOGGED TABLE jcron.pattern_cache (
     pattern_hash BIGINT PRIMARY KEY,
     pattern TEXT NOT NULL,
     sec_mask BIGINT,
@@ -63,13 +63,139 @@ CREATE TABLE jcron.pattern_cache (
     dow_mask BIGINT,
     has_special BOOLEAN,
     parsed_data JSONB,
+    hit_count BIGINT DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT NOW()
-);
+) WITH (fillfactor = 90);  -- Optimize for read-heavy workload
 
+-- Hash index for O(1) lookup (perfect for cache)
 CREATE INDEX idx_pattern_cache_hash ON jcron.pattern_cache USING HASH (pattern_hash);
 
--- Cache-aware wrapper
+-- Optional: LRU eviction based on hit_count
+CREATE INDEX idx_pattern_cache_lru ON jcron.pattern_cache (hit_count, created_at);
+
+-- Cache-aware wrapper with LRU tracking
 CREATE OR REPLACE FUNCTION jcron.next_time_cached(
+    pattern TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    p_hash BIGINT;
+    cached RECORD;
+    result TIMESTAMPTZ;
+BEGIN
+    p_hash := hashtext(pattern);
+    
+    -- Try cache lookup (UNLOGGED = very fast read)
+    SELECT * INTO cached FROM jcron.pattern_cache WHERE pattern_hash = p_hash;
+    
+    IF FOUND THEN
+        -- Update hit count asynchronously (fire and forget)
+        UPDATE jcron.pattern_cache 
+        SET hit_count = hit_count + 1 
+        WHERE pattern_hash = p_hash;
+        
+        -- Use cached masks directly (skip parsing entirely)
+        RETURN jcron.next_time_from_masks(
+            cached.min_mask, cached.hour_mask, cached.day_mask,
+            cached.month_mask, cached.dow_mask, from_time
+        );
+    ELSE
+        -- Cache miss: parse pattern
+        result := jcron.next_time(pattern, from_time);
+        
+        -- Cache the parsed data (INSERT is fast on UNLOGGED)
+        INSERT INTO jcron.pattern_cache (
+            pattern_hash, pattern, 
+            min_mask, hour_mask, day_mask, month_mask, dow_mask,
+            hit_count
+        )
+        SELECT 
+            p_hash, pattern,
+            jcron.get_field_mask(pattern, 2),
+            jcron.get_field_mask(pattern, 3),
+            jcron.get_field_mask(pattern, 4),
+            jcron.get_field_mask(pattern, 5),
+            jcron.get_field_mask(pattern, 6),
+            1
+        ON CONFLICT (pattern_hash) DO NOTHING;
+        
+        RETURN result;
+    END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Cache maintenance: LRU eviction (run periodically)
+CREATE OR REPLACE FUNCTION jcron.cache_evict_lru(max_entries INT DEFAULT 10000)
+RETURNS INT AS $$
+DECLARE
+    evicted INT;
+BEGIN
+    WITH to_delete AS (
+        SELECT pattern_hash
+        FROM jcron.pattern_cache
+        ORDER BY hit_count ASC, created_at ASC
+        OFFSET max_entries
+    )
+    DELETE FROM jcron.pattern_cache
+    WHERE pattern_hash IN (SELECT pattern_hash FROM to_delete);
+    
+    GET DIAGNOSTICS evicted = ROW_COUNT;
+    RETURN evicted;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+**UNLOGGED Table Benefits**:
+- ✅ No WAL overhead (~10x faster writes)
+- ✅ No disk I/O for cache writes (stays in memory)
+- ✅ No replication overhead
+- ✅ No fsync() calls
+- ✅ Perfect for ephemeral cache data
+
+**Trade-offs**:
+- ⚠️ Data lost on crash (acceptable for cache)
+- ⚠️ Not replicated to standby servers (acceptable)
+- ✅ Auto-rebuilds on server restart (warm-up needed)
+
+**Mitigation Strategy**:
+```sql
+-- Auto-rebuild cache on startup
+CREATE OR REPLACE FUNCTION jcron.warmup_cache()
+RETURNS void AS $$
+BEGIN
+    -- Pre-populate common patterns
+    PERFORM jcron.next_time_cached('0 */5 * * * *', NOW());
+    PERFORM jcron.next_time_cached('0 0 9 * * 1-5', NOW());
+    PERFORM jcron.next_time_cached('0 0 * * * *', NOW());
+    -- ... more common patterns
+END;
+$$ LANGUAGE plpgsql;
+
+-- Call on database startup
+SELECT jcron.warmup_cache();
+```
+
+**Expected Impact**: 5-10x faster for repeated patterns (was 3-5x)  
+**Implementation Time**: 4-6 hours  
+**Risk**: Very Low - cache invalidation is simple, data loss is acceptable
+
+**Alternative: Hybrid Cache Strategy** (Even Faster!)
+```sql
+-- Level 1: Session-level cache (fastest, per-connection)
+CREATE TEMP TABLE IF NOT EXISTS session_pattern_cache (
+    pattern_hash BIGINT PRIMARY KEY,
+    min_mask BIGINT,
+    hour_mask BIGINT,
+    day_mask BIGINT,
+    month_mask BIGINT,
+    dow_mask BIGINT
+) ON COMMIT PRESERVE ROWS;
+
+-- Level 2: Global UNLOGGED cache (shared across connections)
+-- (as defined above)
+
+-- Smart lookup: Session → Global → Parse
+CREATE OR REPLACE FUNCTION jcron.next_time_hybrid_cache(
     pattern TEXT,
     from_time TIMESTAMPTZ DEFAULT NOW()
 ) RETURNS TIMESTAMPTZ AS $$
@@ -79,25 +205,40 @@ DECLARE
 BEGIN
     p_hash := hashtext(pattern);
     
-    SELECT * INTO cached FROM jcron.pattern_cache WHERE pattern_hash = p_hash;
-    
+    -- Try session cache first (fastest)
+    SELECT * INTO cached FROM session_pattern_cache WHERE pattern_hash = p_hash;
     IF FOUND THEN
-        -- Use cached masks directly (skip parsing)
         RETURN jcron.next_time_from_masks(
             cached.min_mask, cached.hour_mask, cached.day_mask,
             cached.month_mask, cached.dow_mask, from_time
         );
-    ELSE
-        -- Parse and cache
-        -- ... implementation
     END IF;
+    
+    -- Try global cache (fast)
+    SELECT * INTO cached FROM jcron.pattern_cache WHERE pattern_hash = p_hash;
+    IF FOUND THEN
+        -- Promote to session cache
+        INSERT INTO session_pattern_cache 
+        SELECT pattern_hash, min_mask, hour_mask, day_mask, month_mask, dow_mask
+        FROM jcron.pattern_cache WHERE pattern_hash = p_hash
+        ON CONFLICT (pattern_hash) DO NOTHING;
+        
+        RETURN jcron.next_time_from_masks(
+            cached.min_mask, cached.hour_mask, cached.day_mask,
+            cached.month_mask, cached.dow_mask, from_time
+        );
+    END IF;
+    
+    -- Cache miss: parse and populate both caches
+    -- ... (as before)
 END;
 $$ LANGUAGE plpgsql STABLE;
 ```
 
-**Expected Impact**: 3-5x faster for repeated patterns  
-**Implementation Time**: 4-6 hours  
-**Risk**: Low - cache invalidation is simple
+**Hybrid Cache Performance**:
+- Session cache hit: **50-100x faster** (pure memory, no table lock)
+- Global cache hit: 5-10x faster (UNLOGGED table)
+- Cache miss: Same as current implementation
 
 ---
 
