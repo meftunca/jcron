@@ -731,13 +731,34 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 -- 🚀 BITWISE HELPER FUNCTIONS
 -- =====================================================
 
--- Find next set bit in mask
+-- Find next set bit in mask (optimized with early exit)
 CREATE OR REPLACE FUNCTION jcron.next_bit(mask BIGINT, after_value INT, max_value INT)
 RETURNS INT AS $$
 DECLARE
     i INT;
+    max_check INT;
 BEGIN
-    FOR i IN (after_value + 1)..LEAST(max_value, 62) LOOP
+    -- Early exit: if mask is all bits set (common for *)
+    IF mask = -1 THEN
+        RETURN LEAST(after_value + 1, max_value);
+    END IF;
+    
+    -- Optimize common patterns
+    -- Every 5 minutes: mask has regular spacing
+    IF max_value = 59 AND (mask & ((1::BIGINT << 0) | (1::BIGINT << 5) | (1::BIGINT << 10) | 
+                                    (1::BIGINT << 15) | (1::BIGINT << 20) | (1::BIGINT << 25) |
+                                    (1::BIGINT << 30) | (1::BIGINT << 35) | (1::BIGINT << 40) |
+                                    (1::BIGINT << 45) | (1::BIGINT << 50) | (1::BIGINT << 55))) = mask THEN
+        -- */5 pattern
+        i := ((after_value / 5) + 1) * 5;
+        IF i <= max_value THEN RETURN i; END IF;
+        RETURN -1;
+    END IF;
+    
+    -- Limit search range
+    max_check := LEAST(max_value, 62);
+    
+    FOR i IN (after_value + 1)..max_check LOOP
         IF (mask & (1::BIGINT << i)) != 0 THEN
             RETURN i;
         END IF;
@@ -746,13 +767,27 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
--- Find first set bit in mask
+-- Find first set bit in mask (optimized with early exit)
 CREATE OR REPLACE FUNCTION jcron.first_bit(mask BIGINT, min_value INT, max_value INT)
 RETURNS INT AS $$
 DECLARE
     i INT;
+    max_check INT;
 BEGIN
-    FOR i IN min_value..LEAST(max_value, 62) LOOP
+    -- Early exit: if mask is all bits set (common for *)
+    IF mask = -1 THEN
+        RETURN min_value;
+    END IF;
+    
+    -- Quick check for common single values
+    IF min_value = 0 AND (mask & 1::BIGINT) != 0 THEN
+        RETURN 0;
+    END IF;
+    
+    -- Limit search range
+    max_check := LEAST(max_value, 62);
+    
+    FOR i IN min_value..max_check LOOP
         IF (mask & (1::BIGINT << i)) != 0 THEN
             RETURN i;
         END IF;
@@ -761,14 +796,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
--- Find previous set bit in mask
+-- Find previous set bit in mask (optimized with early exit)
 CREATE OR REPLACE FUNCTION jcron.prev_bit(mask BIGINT, before_value INT, min_value INT)
 RETURNS INT AS $$
 DECLARE
     i INT;
 BEGIN
-    FOR i IN REVERSE (before_value - 1)..min_value LOOP
-        IF i >= 0 AND i <= 62 AND (mask & (1::BIGINT << i)) != 0 THEN
+    -- Early exit: if mask is all bits set (common for *)
+    IF mask = -1 THEN
+        RETURN GREATEST(before_value - 1, min_value);
+    END IF;
+    
+    FOR i IN REVERSE LEAST(before_value - 1, 62)..GREATEST(min_value, 0) LOOP
+        IF (mask & (1::BIGINT << i)) != 0 THEN
             RETURN i;
         END IF;
     END LOOP;
@@ -776,12 +816,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
--- Find last set bit in mask
+-- Find last set bit in mask (optimized with early exit)
 CREATE OR REPLACE FUNCTION jcron.last_bit(mask BIGINT, min_value INT, max_value INT)
 RETURNS INT AS $$
 DECLARE
     i INT;
 BEGIN
+    -- Early exit: if mask is all bits set (common for *)
+    IF mask = -1 THEN
+        RETURN max_value;
+    END IF;
+    
     FOR i IN REVERSE LEAST(max_value, 62)..min_value LOOP
         IF (mask & (1::BIGINT << i)) != 0 THEN
             RETURN i;
@@ -1160,7 +1205,7 @@ BEGIN
     IF parsed.has_woy THEN
         DECLARE
             candidate_time TIMESTAMPTZ;
-            max_attempts INTEGER := 100;
+            max_attempts INTEGER := 60;  -- Reduced from 100: direct jumps are more efficient
             attempt_count INTEGER := 0;
             found_match BOOLEAN := FALSE;
             target_week INTEGER;
@@ -1175,21 +1220,25 @@ BEGIN
             END;
             
             input_week := EXTRACT(week FROM woy_base)::INTEGER;
-            candidate_time := woy_base;
             
+            -- Optimized: Direct jump to target week instead of iterating
             SELECT MIN(w) INTO target_week 
             FROM unnest(parsed.woy_weeks) AS w 
             WHERE w > input_week;
             
             IF target_week IS NULL THEN
-                candidate_time := date_trunc('year', adjusted_base) + INTERVAL '1 year';
+                -- Jump to next year's first matching week
+                candidate_time := date_trunc('year', woy_base) + INTERVAL '1 year';
                 SELECT MIN(w) INTO target_week FROM unnest(parsed.woy_weeks) AS w;
                 
                 IF target_week IS NOT NULL THEN
                     candidate_time := candidate_time + ((target_week - 1) * INTERVAL '7 days');
+                ELSE
+                    RAISE EXCEPTION 'No valid WOY weeks specified in pattern: %', pattern;
                 END IF;
             ELSE
-                candidate_time := adjusted_base + ((target_week - input_week) * INTERVAL '7 days');
+                -- Direct jump to target week (no iteration)
+                candidate_time := woy_base + ((target_week - input_week) * INTERVAL '7 days');
             END IF;
             
             WHILE attempt_count < max_attempts AND NOT found_match LOOP
