@@ -1543,7 +1543,7 @@ BEGIN
     IF parsed.has_woy THEN
         DECLARE
             candidate_time TIMESTAMPTZ;
-            max_attempts INTEGER := 60;  -- Reduced from 100: direct jumps are more efficient
+            max_attempts INTEGER := 520;  -- ~10 years of weekly search (52 weeks * 10)
             attempt_count INTEGER := 0;
             found_match BOOLEAN := FALSE;
             target_week INTEGER;
