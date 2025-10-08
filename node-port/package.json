@@ -1,6 +1,6 @@
 {
   "name": "@devloops/jcron",
-  "version": "1.3.27",
+  "version": "1.4.3",
   "description": "A high-performance, type-safe job scheduler for Node.js and React Native, inspired by Go's jcron.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -58,6 +58,9 @@
     "jest": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "lint": "tsc --noEmit --project tsconfig.build.json",
     "prepublishOnly": "npm run build",
+    "publish:check": "node scripts/publish.cjs --dry-run",
+    "publish:npm": "node scripts/publish.cjs",
+    "release": "node scripts/publish.cjs --yes",
     "size": "size-limit",
     "analyze": "size-limit --why"
   },

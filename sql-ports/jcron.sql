@@ -363,6 +363,8 @@ DECLARE
     pos_start INTEGER;
     pos_end INTEGER;
     woy_content TEXT;
+    week_array INTEGER[];
+    week_num INTEGER;
 BEGIN
     pos_start := position('WOY' IN expr);
     IF pos_start = 0 THEN
@@ -385,7 +387,16 @@ BEGIN
         RETURN NULL;
     END IF;
     
-    RETURN string_to_array(woy_content, ',')::INTEGER[];
+    week_array := string_to_array(woy_content, ',')::INTEGER[];
+    
+    -- Validate: WOY must be between 1-53 (ISO 8601 allows 52 or 53 weeks)
+    FOREACH week_num IN ARRAY week_array LOOP
+        IF week_num < 1 OR week_num > 53 THEN
+            RAISE EXCEPTION 'Invalid WOY value: %. Week numbers must be between 1-53 (ISO 8601)', week_num;
+        END IF;
+    END LOOP;
+    
+    RETURN week_array;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 

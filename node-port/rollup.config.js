@@ -36,33 +36,46 @@ const commonPlugins = [
   }),
 ];
 
-export default [
-  // ESM Build (Modern, tree-shakeable)
-  {
-    input: "src/index.ts",
-    output: {
-      file: pkg.module || "dist/index.mjs",
-      format: "esm",
-      sourcemap: true,
-      exports: "named",
+// Helper function to create build config for a module
+function createModuleBuild(inputFile, outputName) {
+  return [
+    // ESM
+    {
+      input: inputFile,
+      output: {
+        file: `dist/${outputName}.mjs`,
+        format: "esm",
+        sourcemap: true,
+        exports: "named",
+      },
+      external,
+      plugins: commonPlugins,
     },
-    external,
-    plugins: commonPlugins,
-  },
+    // CJS
+    {
+      input: inputFile,
+      output: {
+        file: `dist/${outputName}.cjs`,
+        format: "cjs",
+        sourcemap: true,
+        exports: "named",
+        interop: "auto",
+      },
+      external,
+      plugins: commonPlugins,
+    },
+  ];
+}
 
-  // CommonJS Build (Node.js compatibility)
-  {
-    input: "src/index.ts",
-    output: {
-      file: pkg.main || "dist/index.cjs",
-      format: "cjs",
-      sourcemap: true,
-      exports: "named",
-      interop: "auto",
-    },
-    external,
-    plugins: commonPlugins,
-  },
+export default [
+  // Main index builds
+  ...createModuleBuild("src/index.ts", "index"),
+
+  // Subpath exports
+  ...createModuleBuild("src/engine.ts", "engine"),
+  ...createModuleBuild("src/schedule.ts", "schedule"),
+  ...createModuleBuild("src/runner.ts", "runner"),
+  ...createModuleBuild("src/humanize/index.ts", "humanize/index"),
 
   // Browser Build (UMD, for script tags)
   {

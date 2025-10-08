@@ -21,25 +21,28 @@ Complete API documentation for `@devloops/jcron`.
 Calculate the next run time for a schedule.
 
 **Signature:**
+
 ```typescript
-function getNext(schedule: Schedule | string, from?: Date): Date
+function getNext(schedule: Schedule | string, from?: Date): Date;
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object or cron string
 - `from` (optional): Start date for calculation (default: `new Date()`)
 
 **Returns:** `Date` - The next scheduled run time
 
 **Example:**
+
 ```typescript
-import { getNext } from '@devloops/jcron';
+import { getNext } from "@devloops/jcron";
 
 // From current time
-const next = getNext('0 9 * * *');
+const next = getNext("0 9 * * *");
 
 // From specific date
-const nextFromDate = getNext('0 9 * * *', new Date('2024-12-25'));
+const nextFromDate = getNext("0 9 * * *", new Date("2024-12-25"));
 
 // With Schedule object
 const schedule = new Schedule({ h: "9", m: "0" });
@@ -47,6 +50,7 @@ const nextRun = getNext(schedule);
 ```
 
 **Throws:**
+
 - `ScheduleError`: If schedule is invalid
 - `TimeoutError`: If no valid run time found within 10,000 attempts
 
@@ -57,25 +61,29 @@ const nextRun = getNext(schedule);
 Calculate the previous run time for a schedule.
 
 **Signature:**
+
 ```typescript
-function getPrev(schedule: Schedule | string, from?: Date): Date
+function getPrev(schedule: Schedule | string, from?: Date): Date;
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object or cron string
 - `from` (optional): Start date for calculation (default: `new Date()`)
 
 **Returns:** `Date` - The previous scheduled run time
 
 **Example:**
-```typescript
-import { getPrev } from '@devloops/jcron';
 
-const prev = getPrev('0 9 * * *');
-const prevFromDate = getPrev('0 9 * * *', new Date('2024-12-25'));
+```typescript
+import { getPrev } from "@devloops/jcron";
+
+const prev = getPrev("0 9 * * *");
+const prevFromDate = getPrev("0 9 * * *", new Date("2024-12-25"));
 ```
 
 **Throws:**
+
 - `ScheduleError`: If schedule is invalid
 - `TimeoutError`: If no valid run time found within 10,000 attempts
 
@@ -86,22 +94,25 @@ const prevFromDate = getPrev('0 9 * * *', new Date('2024-12-25'));
 Check if a date matches a schedule.
 
 **Signature:**
+
 ```typescript
-function isMatch(schedule: Schedule | string, date: Date): boolean
+function isMatch(schedule: Schedule | string, date: Date): boolean;
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object or cron string
 - `date`: Date to check
 
 **Returns:** `boolean` - `true` if the date matches the schedule
 
 **Example:**
-```typescript
-import { isMatch } from '@devloops/jcron';
 
-const matches = isMatch('0 9 * * *', new Date('2024-12-25 09:00:00')); // true
-const noMatch = isMatch('0 9 * * *', new Date('2024-12-25 10:00:00')); // false
+```typescript
+import { isMatch } from "@devloops/jcron";
+
+const matches = isMatch("0 9 * * *", new Date("2024-12-25 09:00:00")); // true
+const noMatch = isMatch("0 9 * * *", new Date("2024-12-25 10:00:00")); // false
 ```
 
 ---
@@ -111,23 +122,29 @@ const noMatch = isMatch('0 9 * * *', new Date('2024-12-25 10:00:00')); // false
 Convert a schedule to a human-readable string.
 
 **Signature:**
+
 ```typescript
-function toString(schedule: Schedule | string, options?: HumanizeOptions): string
+function toString(
+  schedule: Schedule | string,
+  options?: HumanizeOptions
+): string;
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object or cron string
 - `options` (optional): Humanization options (see [HumanizeOptions](#humanizeoptions))
 
 **Returns:** `string` - Human-readable description
 
 **Example:**
-```typescript
-import { toString } from '@devloops/jcron';
 
-toString('0 9 * * *');                        // "Daily at 9:00 AM"
-toString('0 9 * * *', { locale: 'tr' });      // "Günlük saat 9:00"
-toString('0 9 * * *', { use24HourTime: true }); // "Daily at 09:00"
+```typescript
+import { toString } from "@devloops/jcron";
+
+toString("0 9 * * *"); // "Daily at 9:00 AM"
+toString("0 9 * * *", { locale: "tr" }); // "Günlük saat 9:00"
+toString("0 9 * * *", { use24HourTime: true }); // "Daily at 09:00"
 ```
 
 ---
@@ -143,24 +160,28 @@ Alias for `toString()`.
 Parse a standard cron string into a Schedule object.
 
 **Signature:**
+
 ```typescript
-function fromCronSyntax(cronString: string): Schedule
+function fromCronSyntax(cronString: string): Schedule;
 ```
 
 **Parameters:**
+
 - `cronString`: Standard cron string (5-7 fields)
 
 **Returns:** `Schedule` - Parsed schedule object
 
 **Example:**
-```typescript
-import { fromCronSyntax } from '@devloops/jcron';
 
-const schedule = fromCronSyntax('0 9 * * 1-5');
+```typescript
+import { fromCronSyntax } from "@devloops/jcron";
+
+const schedule = fromCronSyntax("0 9 * * 1-5");
 // Schedule { m: "0", h: "9", D: "*", M: "*", dow: "1-5", ... }
 ```
 
 **Throws:**
+
 - `ParseError`: If cron string is invalid
 
 ---
@@ -170,30 +191,33 @@ const schedule = fromCronSyntax('0 9 * * 1-5');
 Parse a JCRON string into a Schedule object.
 
 **Signature:**
+
 ```typescript
-function fromJCronString(jcronString: string): Schedule
+function fromJCronString(jcronString: string): Schedule;
 ```
 
 **Parameters:**
+
 - `jcronString`: JCRON string with optional extensions
 
 **Returns:** `Schedule` - Parsed schedule object
 
 **Example:**
+
 ```typescript
-import { fromJCronString } from '@devloops/jcron';
+import { fromJCronString } from "@devloops/jcron";
 
 // Standard cron
-const schedule1 = fromJCronString('0 9 * * *');
+const schedule1 = fromJCronString("0 9 * * *");
 
 // With timezone
-const schedule2 = fromJCronString('0 9 * * * * TZ:America/New_York');
+const schedule2 = fromJCronString("0 9 * * * * TZ:America/New_York");
 
 // With EOD
-const schedule3 = fromJCronString('0 9 * * * * * E1D');
+const schedule3 = fromJCronString("0 9 * * * * * E1D");
 
 // With WOY
-const schedule4 = fromJCronString('0 9 * * * WOY:33');
+const schedule4 = fromJCronString("0 9 * * * WOY:33");
 ```
 
 ---
@@ -209,11 +233,13 @@ new Runner(options?: RunnerOptions)
 ```
 
 **Parameters:**
+
 - `options` (optional): Runner configuration options
 
 **Example:**
+
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 ```
@@ -225,26 +251,29 @@ const runner = new Runner();
 Add a function-based cron job.
 
 **Signature:**
+
 ```typescript
 addFuncCron(cronString: string, callback: () => void | Promise<void>): string
 ```
 
 **Parameters:**
+
 - `cronString`: Cron expression
 - `callback`: Function to execute
 
 **Returns:** `string` - Unique job ID
 
 **Example:**
+
 ```typescript
 const runner = new Runner();
 
-const jobId = runner.addFuncCron('0 9 * * *', () => {
-  console.log('Daily task');
+const jobId = runner.addFuncCron("0 9 * * *", () => {
+  console.log("Daily task");
 });
 
 // With async callback
-runner.addFuncCron('*/15 * * * *', async () => {
+runner.addFuncCron("*/15 * * * *", async () => {
   await syncData();
 });
 ```
@@ -256,28 +285,31 @@ runner.addFuncCron('*/15 * * * *', async () => {
 Add a Schedule-based cron job.
 
 **Signature:**
+
 ```typescript
 addScheduleCron(schedule: Schedule, callback: () => void | Promise<void>): string
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object
 - `callback`: Function to execute
 
 **Returns:** `string` - Unique job ID
 
 **Example:**
+
 ```typescript
 const runner = new Runner();
 
 const schedule = new Schedule({
   h: "9",
   m: "0",
-  tz: "America/New_York"
+  tz: "America/New_York",
 });
 
 runner.addScheduleCron(schedule, () => {
-  console.log('NYC morning task');
+  console.log("NYC morning task");
 });
 ```
 
@@ -288,11 +320,13 @@ runner.addScheduleCron(schedule, () => {
 Start the runner.
 
 **Signature:**
+
 ```typescript
 start(): void
 ```
 
 **Example:**
+
 ```typescript
 runner.start();
 ```
@@ -304,11 +338,13 @@ runner.start();
 Stop the runner.
 
 **Signature:**
+
 ```typescript
 stop(): void
 ```
 
 **Example:**
+
 ```typescript
 runner.stop();
 ```
@@ -320,18 +356,21 @@ runner.stop();
 Remove a job by ID.
 
 **Signature:**
+
 ```typescript
 remove(jobId: string): boolean
 ```
 
 **Parameters:**
+
 - `jobId`: Job ID returned by `addFuncCron()` or `addScheduleCron()`
 
 **Returns:** `boolean` - `true` if job was removed
 
 **Example:**
+
 ```typescript
-const jobId = runner.addFuncCron('0 9 * * *', callback);
+const jobId = runner.addFuncCron("0 9 * * *", callback);
 runner.remove(jobId); // true
 ```
 
@@ -342,14 +381,17 @@ runner.remove(jobId); // true
 Set a custom logger.
 
 **Signature:**
+
 ```typescript
 setLogger(logger: Logger): void
 ```
 
 **Parameters:**
+
 - `logger`: Logger object with `error`, `warn`, `info`, `debug` methods
 
 **Example:**
+
 ```typescript
 runner.setLogger({
   error: (msg, data) => console.error(msg, data),
@@ -372,23 +414,25 @@ new Schedule(options: ScheduleOptions)
 ```
 
 **Parameters:**
+
 - `options`: Schedule configuration
 
 **Example:**
+
 ```typescript
-import { Schedule } from '@devloops/jcron';
+import { Schedule } from "@devloops/jcron";
 
 const schedule = new Schedule({
-  s: "0",           // Seconds (0-59)
-  m: "0",           // Minutes (0-59)
-  h: "9",           // Hours (0-23)
-  D: "*",           // Day of month (1-31, L)
-  M: "*",           // Month (1-12, JAN-DEC)
-  dow: "1-5",       // Day of week (0-7, SUN-SAT, #, L)
-  Y: "*",           // Year (1970-3000)
-  woy: "*",         // Week of year (1-53)
-  tz: "UTC",        // Timezone (IANA)
-  eod: null         // End of duration (E1D, S1W, etc.)
+  s: "0", // Seconds (0-59)
+  m: "0", // Minutes (0-59)
+  h: "9", // Hours (0-23)
+  D: "*", // Day of month (1-31, L)
+  M: "*", // Month (1-12, JAN-DEC)
+  dow: "1-5", // Day of week (0-7, SUN-SAT, #, L)
+  Y: "*", // Year (1970-3000)
+  woy: "*", // Week of year (1-53)
+  tz: "UTC", // Timezone (IANA)
+  eod: null, // End of duration (E1D, S1W, etc.)
 });
 ```
 
@@ -473,12 +517,13 @@ The `Engine` class handles schedule calculations.
 ### Constructor
 
 ```typescript
-new Engine()
+new Engine();
 ```
 
 **Example:**
+
 ```typescript
-import { Engine } from '@devloops/jcron';
+import { Engine } from "@devloops/jcron";
 
 const engine = new Engine();
 ```
@@ -490,17 +535,20 @@ const engine = new Engine();
 Calculate the next run time.
 
 **Signature:**
+
 ```typescript
 next(schedule: Schedule, from: Date): Date
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object
 - `from`: Start date
 
 **Returns:** `Date` - Next run time
 
 **Example:**
+
 ```typescript
 const engine = new Engine();
 const schedule = new Schedule({ h: "9", m: "0" });
@@ -514,6 +562,7 @@ const next = engine.next(schedule, new Date());
 Calculate the previous run time.
 
 **Signature:**
+
 ```typescript
 prev(schedule: Schedule, from: Date): Date
 ```
@@ -525,6 +574,7 @@ prev(schedule: Schedule, from: Date): Date
 Check if a date matches a schedule.
 
 **Signature:**
+
 ```typescript
 isMatch(schedule: Schedule, date: Date): boolean
 ```
@@ -538,11 +588,16 @@ isMatch(schedule: Schedule, date: Date): boolean
 Convert a schedule to human-readable text.
 
 **Signature:**
+
 ```typescript
-function toHumanize(schedule: Schedule | string, options?: HumanizeOptions): string
+function toHumanize(
+  schedule: Schedule | string,
+  options?: HumanizeOptions
+): string;
 ```
 
 **Parameters:**
+
 - `schedule`: Schedule object or cron string
 - `options` (optional): Humanization options
 
@@ -605,33 +660,34 @@ interface HumanizeOptions {
 ```
 
 **Example:**
+
 ```typescript
-import { toHumanize } from '@devloops/jcron';
+import { toHumanize } from "@devloops/jcron";
 
 // Basic usage
-toHumanize('0 9 * * *');
+toHumanize("0 9 * * *");
 // "Daily at 9:00 AM"
 
 // Turkish locale
-toHumanize('0 9 * * *', { locale: 'tr' });
+toHumanize("0 9 * * *", { locale: "tr" });
 // "Günlük saat 9:00"
 
 // 24-hour format
-toHumanize('0 9 * * *', { use24HourTime: true });
+toHumanize("0 9 * * *", { use24HourTime: true });
 // "Daily at 09:00"
 
 // Verbose mode
-toHumanize('0 9 * * *', { verbose: true });
+toHumanize("0 9 * * *", { verbose: true });
 // "at 9:00 AM, every day, every month, every year"
 
 // Custom formatting
-toHumanize('0 9 * * 1-5', {
-  locale: 'en',
+toHumanize("0 9 * * 1-5", {
+  locale: "en",
   use24HourTime: false,
-  dayFormat: 'short',
-  monthFormat: 'short',
-  caseStyle: 'title',
-  useShorthand: true
+  dayFormat: "short",
+  monthFormat: "short",
+  caseStyle: "title",
+  useShorthand: true,
 });
 // "At 9:00 AM, On Weekdays"
 ```
@@ -640,18 +696,18 @@ toHumanize('0 9 * * 1-5', {
 
 ### Supported Locales
 
-| Code | Language | Example Output |
-|------|----------|----------------|
-| `en` | English | "Daily at 9:00 AM" |
-| `tr` | Turkish | "Günlük saat 9:00" |
-| `es` | Spanish | "Diario a las 9:00" |
-| `fr` | French | "Quotidien à 9:00" |
-| `de` | German | "Täglich um 9:00" |
-| `pl` | Polish | "Codziennie o 9:00" |
-| `pt` | Portuguese | "Diário às 9:00" |
-| `it` | Italian | "Giornaliero alle 9:00" |
-| `cz` | Czech | "Denně v 9:00" |
-| `nl` | Dutch | "Dagelijks om 9:00" |
+| Code | Language   | Example Output          |
+| ---- | ---------- | ----------------------- |
+| `en` | English    | "Daily at 9:00 AM"      |
+| `tr` | Turkish    | "Günlük saat 9:00"      |
+| `es` | Spanish    | "Diario a las 9:00"     |
+| `fr` | French     | "Quotidien à 9:00"      |
+| `de` | German     | "Täglich um 9:00"       |
+| `pl` | Polish     | "Codziennie o 9:00"     |
+| `pt` | Portuguese | "Diário às 9:00"        |
+| `it` | Italian    | "Giornaliero alle 9:00" |
+| `cz` | Czech      | "Denně v 9:00"          |
+| `nl` | Dutch      | "Dagelijks om 9:00"     |
 
 ---
 
@@ -661,15 +717,15 @@ toHumanize('0 9 * * 1-5', {
 
 ```typescript
 interface ScheduleOptions {
-  s?: string | number;      // Seconds
-  m?: string | number;      // Minutes
-  h?: string | number;      // Hours
-  D?: string | number;      // Day of month
-  M?: string | number;      // Month
-  dow?: string | number;    // Day of week
-  Y?: string | number;      // Year
-  woy?: string | number;    // Week of year
-  tz?: string;              // Timezone
+  s?: string | number; // Seconds
+  m?: string | number; // Minutes
+  h?: string | number; // Hours
+  D?: string | number; // Day of month
+  M?: string | number; // Month
+  dow?: string | number; // Day of week
+  Y?: string | number; // Year
+  woy?: string | number; // Week of year
+  tz?: string; // Timezone
   eod?: EndOfDuration | string | null; // End of duration
 }
 ```
@@ -680,7 +736,7 @@ interface ScheduleOptions {
 
 ```typescript
 interface RunnerOptions {
-  logger?: Logger;          // Custom logger
+  logger?: Logger; // Custom logger
 }
 ```
 
@@ -709,10 +765,10 @@ Thrown when a schedule is invalid.
 
 ```typescript
 try {
-  const schedule = fromCronSyntax('invalid');
+  const schedule = fromCronSyntax("invalid");
 } catch (error) {
   if (error instanceof ScheduleError) {
-    console.error('Invalid schedule:', error.message);
+    console.error("Invalid schedule:", error.message);
   }
 }
 ```
@@ -723,10 +779,10 @@ Thrown when parsing fails.
 
 ```typescript
 try {
-  const schedule = fromJCronString('99 99 * * *');
+  const schedule = fromJCronString("99 99 * * *");
 } catch (error) {
   if (error instanceof ParseError) {
-    console.error('Parse error:', error.message);
+    console.error("Parse error:", error.message);
   }
 }
 ```
@@ -737,10 +793,10 @@ Thrown when no valid run time is found within the limit.
 
 ```typescript
 try {
-  const next = getNext('0 0 30 2 *'); // February 30th (invalid)
+  const next = getNext("0 0 30 2 *"); // February 30th (invalid)
 } catch (error) {
   if (error instanceof TimeoutError) {
-    console.error('Could not find valid run time');
+    console.error("Could not find valid run time");
   }
 }
 ```
@@ -754,13 +810,13 @@ try {
 ```typescript
 // Define custom shortcuts
 const SHORTCUTS = {
-  '@quarterly': '0 0 1 */3 *',
-  '@weekdays': '0 9 * * 1-5',
-  '@weekends': '0 10 * * 0,6'
+  "@quarterly": "0 0 1 */3 *",
+  "@weekdays": "0 9 * * 1-5",
+  "@weekends": "0 10 * * 0,6",
 };
 
 // Use in code
-runner.addFuncCron(SHORTCUTS['@weekdays'], callback);
+runner.addFuncCron(SHORTCUTS["@weekdays"], callback);
 ```
 
 ---
@@ -771,9 +827,9 @@ runner.addFuncCron(SHORTCUTS['@weekdays'], callback);
 const runner = new Runner();
 
 const jobs = [
-  { cron: '0 9 * * *', task: dailyTask },
-  { cron: '0 */6 * * *', task: sixHourlyTask },
-  { cron: '*/15 * * * *', task: frequentTask }
+  { cron: "0 9 * * *", task: dailyTask },
+  { cron: "0 */6 * * *", task: sixHourlyTask },
+  { cron: "*/15 * * * *", task: frequentTask },
 ];
 
 jobs.forEach(({ cron, task }) => {
@@ -805,11 +861,11 @@ function removeDynamicJob(name: string) {
 }
 
 // Add jobs dynamically
-addDynamicJob('morning', '0 9 * * *', morningTask);
-addDynamicJob('evening', '0 18 * * *', eveningTask);
+addDynamicJob("morning", "0 9 * * *", morningTask);
+addDynamicJob("evening", "0 18 * * *", eveningTask);
 
 // Remove later
-removeDynamicJob('morning');
+removeDynamicJob("morning");
 ```
 
 ---
@@ -826,4 +882,3 @@ removeDynamicJob('morning');
 
 **Last Updated:** 2025-10-07  
 **Version:** 1.3.27
-

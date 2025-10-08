@@ -42,7 +42,7 @@ JCRON is a **next-generation** cron scheduler that combines the **power of Go's 
 
 - ✅ **Classic Cron Syntax**: Full support for Unix/Linux cron patterns
 - ✅ **Shortcuts**: `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@minutely`
-- ✅ **Advanced Patterns**: 
+- ✅ **Advanced Patterns**:
   - `L` (last day/weekday of month)
   - `#` (nth weekday of month, e.g., `1#2` = 2nd Monday)
   - `W` (nearest weekday)
@@ -91,15 +91,15 @@ bun add @devloops/jcron
 
 ### Platform Support
 
-| Platform | Support | Entry Point |
-|----------|---------|-------------|
-| Node.js (CJS) | ✅ Full | `dist/index.cjs` |
-| Node.js (ESM) | ✅ Full | `dist/index.mjs` |
-| React Native | ✅ Full | `dist/index.mjs` |
+| Platform      | Support | Entry Point         |
+| ------------- | ------- | ------------------- |
+| Node.js (CJS) | ✅ Full | `dist/index.cjs`    |
+| Node.js (ESM) | ✅ Full | `dist/index.mjs`    |
+| React Native  | ✅ Full | `dist/index.mjs`    |
 | Browser (UMD) | ✅ Full | `dist/jcron.umd.js` |
-| Browser (ESM) | ✅ Full | `dist/index.mjs` |
-| Bun | ✅ Full | `dist/index.mjs` |
-| Deno | ✅ Full | `dist/index.mjs` |
+| Browser (ESM) | ✅ Full | `dist/index.mjs`    |
+| Bun           | ✅ Full | `dist/index.mjs`    |
+| Deno          | ✅ Full | `dist/index.mjs`    |
 
 ---
 
@@ -108,13 +108,13 @@ bun add @devloops/jcron
 ### Basic Usage
 
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
 // Run every day at 9 AM
-runner.addFuncCron('0 9 * * *', () => {
-    console.log('Daily morning task executed!');
+runner.addFuncCron("0 9 * * *", () => {
+  console.log("Daily morning task executed!");
 });
 
 runner.start();
@@ -123,28 +123,28 @@ runner.start();
 ### Calculate Next Run Time
 
 ```typescript
-import { getNext, toString } from '@devloops/jcron';
+import { getNext, toString } from "@devloops/jcron";
 
-const nextRun = getNext('0 9 * * *');
-console.log('Next execution:', nextRun);
+const nextRun = getNext("0 9 * * *");
+console.log("Next execution:", nextRun);
 
-const humanReadable = toString('0 9 * * *');
-console.log('Description:', humanReadable); // "Daily at 9:00 AM"
+const humanReadable = toString("0 9 * * *");
+console.log("Description:", humanReadable); // "Daily at 9:00 AM"
 ```
 
 ### Timezone-Aware Scheduling
 
 ```typescript
-import { Schedule, getNext } from '@devloops/jcron';
+import { Schedule, getNext } from "@devloops/jcron";
 
 const schedule = new Schedule({
-    h: "9",
-    m: "0", 
-    tz: "America/New_York"
+  h: "9",
+  m: "0",
+  tz: "America/New_York",
 });
 
 const nextRun = getNext(schedule);
-console.log('Next run in NYC timezone:', nextRun);
+console.log("Next run in NYC timezone:", nextRun);
 ```
 
 ---
@@ -171,23 +171,23 @@ console.log('Next run in NYC timezone:', nextRun);
 ### 1. Classic Cron Patterns
 
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
 // Every 15 minutes
-runner.addFuncCron('*/15 * * * *', () => {
-  console.log('Runs every 15 minutes');
+runner.addFuncCron("*/15 * * * *", () => {
+  console.log("Runs every 15 minutes");
 });
 
 // Every weekday at 9 AM
-runner.addFuncCron('0 9 * * 1-5', () => {
-  console.log('Weekday morning task');
+runner.addFuncCron("0 9 * * 1-5", () => {
+  console.log("Weekday morning task");
 });
 
 // First Monday of every month at midnight
-runner.addFuncCron('0 0 * * 1#1', () => {
-  console.log('First Monday task');
+runner.addFuncCron("0 0 * * 1#1", () => {
+  console.log("First Monday task");
 });
 
 runner.start();
@@ -196,23 +196,23 @@ runner.start();
 ### 2. Advanced Patterns
 
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
 // Multiple nth weekdays: 1st Monday and 3rd Friday
-runner.addFuncCron('0 0 * * 1#1,5#3', () => {
-  console.log('Bi-monthly specific weekdays');
+runner.addFuncCron("0 0 * * 1#1,5#3", () => {
+  console.log("Bi-monthly specific weekdays");
 });
 
 // Last day of the month
-runner.addFuncCron('0 0 L * *', () => {
-  console.log('Last day of month');
+runner.addFuncCron("0 0 L * *", () => {
+  console.log("Last day of month");
 });
 
 // Last Friday of the month
-runner.addFuncCron('0 0 * * 5L', () => {
-  console.log('Last Friday');
+runner.addFuncCron("0 0 * * 5L", () => {
+  console.log("Last Friday");
 });
 
 runner.start();
@@ -221,7 +221,7 @@ runner.start();
 ### 3. End of Duration (EOD)
 
 ```typescript
-import { Schedule, Runner } from '@devloops/jcron';
+import { Schedule, Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
@@ -229,11 +229,11 @@ const runner = new Runner();
 const schedule = new Schedule({
   h: "9",
   m: "0",
-  eod: "E1D" // End of 1 Day
+  eod: "E1D", // End of 1 Day
 });
 
 runner.addScheduleCron(schedule, () => {
-  console.log('Daily task with EOD');
+  console.log("Daily task with EOD");
 });
 
 runner.start();
@@ -242,28 +242,28 @@ runner.start();
 ### 4. Human-Readable Descriptions
 
 ```typescript
-import { toHumanize } from '@devloops/jcron';
+import { toHumanize } from "@devloops/jcron";
 
 // Natural language descriptions
-console.log(toHumanize('0 9 * * *'));        // "Daily at 9:00 AM"
-console.log(toHumanize('0 0 * * 0'));        // "Weekly on Sunday"
-console.log(toHumanize('0 0 1 * *'));        // "Monthly on 1st"
-console.log(toHumanize('0 0 1 1 *'));        // "Yearly on January 1st"
-console.log(toHumanize('0 0 * * 1-5'));      // "at midnight, on weekdays"
-console.log(toHumanize('0 0 * * 6,0'));      // "at midnight, on weekends"
-console.log(toHumanize('0 0 * * 1#2'));      // "at midnight, on 2nd Monday of the month"
-console.log(toHumanize('*/15 9-17 * * 1-5')); // Smart time range formatting
+console.log(toHumanize("0 9 * * *")); // "Daily at 9:00 AM"
+console.log(toHumanize("0 0 * * 0")); // "Weekly on Sunday"
+console.log(toHumanize("0 0 1 * *")); // "Monthly on 1st"
+console.log(toHumanize("0 0 1 1 *")); // "Yearly on January 1st"
+console.log(toHumanize("0 0 * * 1-5")); // "at midnight, on weekdays"
+console.log(toHumanize("0 0 * * 6,0")); // "at midnight, on weekends"
+console.log(toHumanize("0 0 * * 1#2")); // "at midnight, on 2nd Monday of the month"
+console.log(toHumanize("*/15 9-17 * * 1-5")); // Smart time range formatting
 
 // Multi-language support
-console.log(toHumanize('0 9 * * *', { locale: 'tr' })); // "Günlük saat 9:00"
-console.log(toHumanize('0 9 * * *', { locale: 'de' })); // "Täglich um 9:00"
-console.log(toHumanize('0 9 * * *', { locale: 'fr' })); // "Quotidien à 9:00"
+console.log(toHumanize("0 9 * * *", { locale: "tr" })); // "Günlük saat 9:00"
+console.log(toHumanize("0 9 * * *", { locale: "de" })); // "Täglich um 9:00"
+console.log(toHumanize("0 9 * * *", { locale: "fr" })); // "Quotidien à 9:00"
 ```
 
 ### 5. Week of Year Scheduling
 
 ```typescript
-import { Schedule, Runner } from '@devloops/jcron';
+import { Schedule, Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
@@ -271,11 +271,11 @@ const runner = new Runner();
 const schedule = new Schedule({
   h: "9",
   m: "0",
-  woy: "33"
+  woy: "33",
 });
 
 runner.addScheduleCron(schedule, () => {
-  console.log('Week 33 task');
+  console.log("Week 33 task");
 });
 
 runner.start();
@@ -284,20 +284,20 @@ runner.start();
 ### 6. React Native Usage
 
 ```typescript
-import { Runner } from '@devloops/jcron';
-import { useEffect } from 'react';
+import { Runner } from "@devloops/jcron";
+import { useEffect } from "react";
 
 function useScheduler() {
   useEffect(() => {
     const runner = new Runner();
 
     // Background sync every 15 minutes
-    runner.addFuncCron('*/15 * * * *', async () => {
+    runner.addFuncCron("*/15 * * * *", async () => {
       await syncDataWithServer();
     });
 
     // Daily cleanup at midnight
-    runner.addFuncCron('0 0 * * *', async () => {
+    runner.addFuncCron("0 0 * * *", async () => {
       await cleanupOldCache();
     });
 
@@ -313,16 +313,16 @@ function useScheduler() {
 ### 7. Error Handling & Logging
 
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
 // With error handling
-runner.addFuncCron('0 9 * * *', async () => {
+runner.addFuncCron("0 9 * * *", async () => {
   try {
     await riskyOperation();
   } catch (error) {
-    console.error('Task failed:', error);
+    console.error("Task failed:", error);
     // Implement retry logic or alerting
   }
 });
@@ -349,10 +349,10 @@ runner.start();
 Calculate the next run time for a schedule.
 
 ```typescript
-import { getNext } from '@devloops/jcron';
+import { getNext } from "@devloops/jcron";
 
-const next = getNext('0 9 * * *');
-const nextFromDate = getNext('0 9 * * *', new Date('2024-12-25'));
+const next = getNext("0 9 * * *");
+const nextFromDate = getNext("0 9 * * *", new Date("2024-12-25"));
 ```
 
 #### `getPrev(schedule: Schedule | string, from?: Date): Date`
@@ -360,9 +360,9 @@ const nextFromDate = getNext('0 9 * * *', new Date('2024-12-25'));
 Calculate the previous run time for a schedule.
 
 ```typescript
-import { getPrev } from '@devloops/jcron';
+import { getPrev } from "@devloops/jcron";
 
-const prev = getPrev('0 9 * * *');
+const prev = getPrev("0 9 * * *");
 ```
 
 #### `isMatch(schedule: Schedule | string, date: Date): boolean`
@@ -370,9 +370,9 @@ const prev = getPrev('0 9 * * *');
 Check if a date matches a schedule.
 
 ```typescript
-import { isMatch } from '@devloops/jcron';
+import { isMatch } from "@devloops/jcron";
 
-const matches = isMatch('0 9 * * *', new Date('2024-12-25 09:00:00'));
+const matches = isMatch("0 9 * * *", new Date("2024-12-25 09:00:00"));
 ```
 
 #### `toString(schedule: Schedule | string, options?: HumanizeOptions): string`
@@ -380,12 +380,12 @@ const matches = isMatch('0 9 * * *', new Date('2024-12-25 09:00:00'));
 Convert a schedule to a human-readable string.
 
 ```typescript
-import { toString } from '@devloops/jcron';
+import { toString } from "@devloops/jcron";
 
-const description = toString('0 9 * * *');
+const description = toString("0 9 * * *");
 // "Daily at 9:00 AM"
 
-const turkish = toString('0 9 * * *', { locale: 'tr' });
+const turkish = toString("0 9 * * *", { locale: "tr" });
 // "Günlük saat 9:00"
 ```
 
@@ -394,13 +394,13 @@ const turkish = toString('0 9 * * *', { locale: 'tr' });
 The `Runner` class manages scheduled tasks.
 
 ```typescript
-import { Runner } from '@devloops/jcron';
+import { Runner } from "@devloops/jcron";
 
 const runner = new Runner();
 
 // Add a function-based cron job
-const jobId = runner.addFuncCron('0 9 * * *', () => {
-  console.log('Task executed');
+const jobId = runner.addFuncCron("0 9 * * *", () => {
+  console.log("Task executed");
 });
 
 // Add a Schedule-based cron job
@@ -419,19 +419,19 @@ runner.remove(jobId);
 Create schedules using the `Schedule` class.
 
 ```typescript
-import { Schedule } from '@devloops/jcron';
+import { Schedule } from "@devloops/jcron";
 
 const schedule = new Schedule({
-  s: "0",           // Seconds (0-59)
-  m: "0",           // Minutes (0-59)
-  h: "9",           // Hours (0-23)
-  D: "*",           // Day of month (1-31, L for last)
-  M: "*",           // Month (1-12 or JAN-DEC)
-  dow: "1-5",       // Day of week (0-7 or SUN-SAT, # for nth, L for last)
-  Y: "*",           // Year (1970-3000)
-  woy: "*",         // Week of year (1-53)
-  tz: "UTC",        // Timezone (IANA timezone)
-  eod: null         // End of duration (e.g., "E1D")
+  s: "0", // Seconds (0-59)
+  m: "0", // Minutes (0-59)
+  h: "9", // Hours (0-23)
+  D: "*", // Day of month (1-31, L for last)
+  M: "*", // Month (1-12 or JAN-DEC)
+  dow: "1-5", // Day of week (0-7 or SUN-SAT, # for nth, L for last)
+  Y: "*", // Year (1970-3000)
+  woy: "*", // Week of year (1-53)
+  tz: "UTC", // Timezone (IANA timezone)
+  eod: null, // End of duration (e.g., "E1D")
 });
 ```
 
@@ -441,17 +441,17 @@ Customize human-readable output.
 
 ```typescript
 interface HumanizeOptions {
-  locale?: string;              // Language code (default: 'en')
-  use24HourTime?: boolean;      // Use 24-hour format (default: false)
+  locale?: string; // Language code (default: 'en')
+  use24HourTime?: boolean; // Use 24-hour format (default: false)
   dayFormat?: "long" | "short" | "narrow";
   monthFormat?: "long" | "short" | "narrow" | "numeric";
   caseStyle?: "lower" | "upper" | "title";
-  verbose?: boolean;            // Include verbose descriptions
-  includeTimezone?: boolean;    // Include timezone info
-  includeYear?: boolean;        // Include year info
-  includeWeekOfYear?: boolean;  // Include week of year
-  includeSeconds?: boolean;     // Include seconds in time
-  useShorthand?: boolean;       // Use "weekdays"/"weekends" (default: true)
+  verbose?: boolean; // Include verbose descriptions
+  includeTimezone?: boolean; // Include timezone info
+  includeYear?: boolean; // Include year info
+  includeWeekOfYear?: boolean; // Include week of year
+  includeSeconds?: boolean; // Include seconds in time
+  useShorthand?: boolean; // Use "weekdays"/"weekends" (default: true)
 }
 ```
 
@@ -461,14 +461,14 @@ interface HumanizeOptions {
 
 JCRON delivers exceptional performance through mathematical scheduling and smart caching:
 
-| Operation | Performance | Notes |
-|-----------|-------------|-------|
-| **Simple patterns** | ~0.002ms | Basic cron patterns |
-| **Complex patterns** | ~0.008ms | Advanced patterns with nthWeekDay |
-| **Timezone conversion** | 1.68x overhead | With caching (was 41x without) |
-| **Humanization** | ~0.5ms | With locale caching |
-| **Memory usage** | < 50KB | Per Runner instance |
-| **CPU idle** | ~0% | Mathematical scheduling, not polling |
+| Operation               | Performance    | Notes                                |
+| ----------------------- | -------------- | ------------------------------------ |
+| **Simple patterns**     | ~0.002ms       | Basic cron patterns                  |
+| **Complex patterns**    | ~0.008ms       | Advanced patterns with nthWeekDay    |
+| **Timezone conversion** | 1.68x overhead | With caching (was 41x without)       |
+| **Humanization**        | ~0.5ms         | With locale caching                  |
+| **Memory usage**        | < 50KB         | Per Runner instance                  |
+| **CPU idle**            | ~0%            | Mathematical scheduling, not polling |
 
 ### Optimization Highlights
 
@@ -485,18 +485,18 @@ For detailed benchmarks, see [HUMANIZE_FINAL_REPORT.md](./HUMANIZE_FINAL_REPORT.
 
 JCRON supports humanization in 10+ languages:
 
-| Code | Language | Example |
-|------|----------|---------|
-| `en` | English | "Daily at 9:00 AM" |
-| `tr` | Turkish | "Günlük saat 9:00" |
-| `es` | Spanish | "Diario a las 9:00" |
-| `fr` | French | "Quotidien à 9:00" |
-| `de` | German | "Täglich um 9:00" |
-| `pl` | Polish | "Codziennie o 9:00" |
-| `pt` | Portuguese | "Diário às 9:00" |
-| `it` | Italian | "Giornaliero alle 9:00" |
-| `cz` | Czech | "Denně v 9:00" |
-| `nl` | Dutch | "Dagelijks om 9:00" |
+| Code | Language   | Example                 |
+| ---- | ---------- | ----------------------- |
+| `en` | English    | "Daily at 9:00 AM"      |
+| `tr` | Turkish    | "Günlük saat 9:00"      |
+| `es` | Spanish    | "Diario a las 9:00"     |
+| `fr` | French     | "Quotidien à 9:00"      |
+| `de` | German     | "Täglich um 9:00"       |
+| `pl` | Polish     | "Codziennie o 9:00"     |
+| `pt` | Portuguese | "Diário às 9:00"        |
+| `it` | Italian    | "Giornaliero alle 9:00" |
+| `cz` | Czech      | "Denně v 9:00"          |
+| `nl` | Dutch      | "Dagelijks om 9:00"     |
 
 ---
 
@@ -532,12 +532,12 @@ npm run build && npm test
 
 JCRON is optimized for minimal bundle size:
 
-| Format | Size (Gzipped) | Use Case |
-|--------|----------------|----------|
-| **ESM** | ~45 KB | Modern bundlers |
-| **CJS** | ~46 KB | Node.js |
-| **UMD** | ~48 KB | Browsers |
-| **UMD Min** | ~22 KB | CDN usage |
+| Format      | Size (Gzipped) | Use Case        |
+| ----------- | -------------- | --------------- |
+| **ESM**     | ~45 KB         | Modern bundlers |
+| **CJS**     | ~46 KB         | Node.js         |
+| **UMD**     | ~48 KB         | Browsers        |
+| **UMD Min** | ~22 KB         | CDN usage       |
 
 Tree-shaking enabled for all formats.
 
