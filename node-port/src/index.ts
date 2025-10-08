@@ -237,22 +237,36 @@ function validateScheduleFields(schedule: Schedule): boolean {
       return true;
     }
 
-    if (fieldType === "dayOfWeek" && value.includes("#")) {
-      // '#' for nth occurrence: "1#2" (second Monday)
-      const parts = value.split("#");
-      if (parts.length === 2) {
-        const day = parseInt(parts[0]);
-        const occurrence = parseInt(parts[1]);
-        return day >= 0 && day <= 7 && occurrence >= 1 && occurrence <= 5;
-      }
-    }
-
-    if (fieldType === "dayOfWeek" && value.includes("L")) {
-      // 'L' for last occurrence: "5L" (last Friday)
-      const day = value.replace("L", "");
-      if (day) {
-        const dayNum = parseInt(day);
-        return dayNum >= 0 && dayNum <= 7;
+    if (fieldType === "dayOfWeek" && (value.includes("#") || value.includes("L"))) {
+      // Handle multiple patterns: "1#1,3L,5L" or "1#2,2#4"
+      const patterns = value.split(",");
+      for (const pattern of patterns) {
+        const trimmed = pattern.trim();
+        
+        // Validate '#' pattern: "1#2" (second Monday)
+        if (trimmed.includes("#")) {
+          const parts = trimmed.split("#");
+          if (parts.length !== 2) return false;
+          const day = parseInt(parts[0]);
+          const occurrence = parseInt(parts[1]);
+          if (isNaN(day) || isNaN(occurrence)) return false;
+          if (day < 0 || day > 7) return false; // Day must be 0-7
+          if (occurrence < 1 || occurrence > 5) return false; // Occurrence must be 1-5
+          continue;
+        }
+        
+        // Validate 'L' pattern: "5L" (last Friday)
+        if (trimmed.includes("L")) {
+          const dayStr = trimmed.replace("L", "");
+          if (!dayStr) return false; // "L" alone is not valid for dayOfWeek
+          const dayNum = parseInt(dayStr);
+          if (isNaN(dayNum) || dayNum < 0 || dayNum > 7) return false;
+          continue;
+        }
+        
+        // If neither # nor L, validate as normal day number
+        const dayNum = parseInt(trimmed);
+        if (isNaN(dayNum) || dayNum < 0 || dayNum > 7) return false;
       }
       return true;
     }

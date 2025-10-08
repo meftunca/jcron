@@ -5,6 +5,25 @@ All notable changes to the JCRON-node project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2025-10-08
+
+### Fixed
+
+- **Critical Fix**: Multiple `L` and `#` patterns in `dayOfWeek` now properly validated
+  - Fixed `isValid()` incorrectly rejecting valid patterns like `"3L,5L,6L"` (multiple last weekdays)
+  - Fixed `isValid()` incorrectly rejecting patterns like `"1#1,3L"` (combination of nth and last)
+  - Improved regex pattern in `validation.ts` to support comma-separated `#` and `L` patterns
+  - Enhanced validation logic in `index.ts` to properly handle multiple special patterns
+  - Now correctly rejects invalid patterns like `"4#6"` (occurrence must be 1-5)
+  - Now correctly rejects invalid patterns like `"1#0"` (occurrence must be >= 1)
+  - Now correctly rejects invalid patterns like `"8#1"` (day must be 0-7)
+
+### Improved
+
+- Better error detection for invalid `nthWeekDay` patterns
+- More robust validation for edge cases in dayOfWeek field
+- Clearer validation rules: `#N` where N is 1-5 (max 5 weeks in a month)
+
 ## [1.4.3] - 2025-10-08
 
 ### Fixed
