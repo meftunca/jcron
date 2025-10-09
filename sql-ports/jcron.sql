@@ -158,8 +158,8 @@ BEGIN
         RETURN FALSE;
     END IF;
     
-    -- Check only day and dow fields for L or #
-    RETURN day_field ~ '[L#]' OR dow_field ~ '[L#]';
+    -- Check only day and dow fields for L, #, or W (dayOfnthWeek syntax)
+    RETURN day_field ~ '[L#W]' OR dow_field ~ '[L#W]';
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
@@ -264,14 +264,14 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- Parse EOD patterns (E1D, E1W, E1M) - Optimized with substring
 CREATE OR REPLACE FUNCTION jcron.parse_eod(expression TEXT)
-RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER) AS $$
+RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER, hours INTEGER) AS $$
 DECLARE
     pos INTEGER;
     num_str TEXT;
 BEGIN
     -- Fast path: check if E exists at all
     IF position('E' IN expression) = 0 THEN
-        weeks := 0; months := 0; days := 0;
+        weeks := 0; months := 0; days := 0; hours := 0;
         RETURN NEXT;
         RETURN;
     END IF;
@@ -303,20 +303,29 @@ BEGIN
         days := COALESCE(num_str::INTEGER, 0);
     END IF;
     
+    -- Parse hours (E<num>H) ⭐ NEW
+    pos := position('EH' IN expression);
+    IF pos > 0 THEN
+        hours := 1;
+    ELSE
+        num_str := substring(expression FROM 'E(\d+)H');
+        hours := COALESCE(num_str::INTEGER, 0);
+    END IF;
+    
     RETURN NEXT;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT;
 
--- Parse SOD patterns (S1D, S1W, S1M) - Optimized with substring
+-- Parse SOD patterns (S1D, S1W, S1M, S1H) - Optimized with substring
 CREATE OR REPLACE FUNCTION jcron.parse_sod(expression TEXT)
-RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER) AS $$
+RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER, hours INTEGER) AS $$
 DECLARE
     pos INTEGER;
     num_str TEXT;
 BEGIN
     -- Fast path: check if S exists at all
     IF position('S' IN expression) = 0 THEN
-        weeks := 0; months := 0; days := 0;
+        weeks := 0; months := 0; days := 0; hours := 0;
         RETURN NEXT;
         RETURN;
     END IF;
@@ -346,6 +355,15 @@ BEGIN
     ELSE
         num_str := substring(expression FROM 'S(\d+)D');
         days := COALESCE(num_str::INTEGER, 0);
+    END IF;
+    
+    -- Parse hours (S<num>H) ⭐ NEW
+    pos := position('SH' IN expression);
+    IF pos > 0 THEN
+        hours := 1;
+    ELSE
+        num_str := substring(expression FROM 'S(\d+)H');
+        hours := COALESCE(num_str::INTEGER, 0);
     END IF;
     
     RETURN NEXT;
@@ -657,37 +675,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE STRICT PARALLEL SAFE;
 
--- Helper: Get week start date
-CREATE OR REPLACE FUNCTION jcron.get_week_start_date(target_year INTEGER, target_week INTEGER)
-RETURNS DATE AS $$
-DECLARE
-    jan4_date DATE;
-    jan4_dow INTEGER;
-    week1_start DATE;
-BEGIN
-    jan4_date := make_date(target_year, 1, 4);
-    jan4_dow := EXTRACT(dow FROM jan4_date)::INTEGER;
-    
-    IF jan4_dow = 0 THEN jan4_dow := 7; END IF;
-    week1_start := jan4_date - (jan4_dow - 1) * INTERVAL '1 day';
-    
-    RETURN (week1_start + (target_week - 1) * INTERVAL '7 days')::DATE;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
 -- ============================================================================
 -- 🚀 TIME CALCULATION FUNCTIONS
 -- ============================================================================
 
 -- Parse E/S modifiers
 CREATE OR REPLACE FUNCTION jcron.parse_modifier(modifier TEXT)
-RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER, type CHAR) AS $$
+RETURNS TABLE(weeks INTEGER, months INTEGER, days INTEGER, hours INTEGER, type CHAR) AS $$
 DECLARE
     number_part TEXT;
     period_part TEXT;
 BEGIN
     IF modifier IS NULL THEN
-        weeks := 0; months := 0; days := 0; type := 'N';
+        weeks := 0; months := 0; days := 0; hours := 0; type := 'N';
         RETURN NEXT;
         RETURN;
     END IF;
@@ -700,12 +700,13 @@ BEGIN
         number_part := '1';
     END IF;
     
-    weeks := 0; months := 0; days := 0;
+    weeks := 0; months := 0; days := 0; hours := 0;
     
     CASE period_part
         WHEN 'W' THEN weeks := number_part::INTEGER;
         WHEN 'M' THEN months := number_part::INTEGER;
         WHEN 'D' THEN days := number_part::INTEGER;
+        WHEN 'H' THEN hours := number_part::INTEGER;
     END CASE;
     
     RETURN NEXT;
@@ -717,7 +718,8 @@ CREATE OR REPLACE FUNCTION jcron.calc_end_time(
     from_time TIMESTAMPTZ,
     weeks INTEGER DEFAULT 0,
     months INTEGER DEFAULT 0,
-    days INTEGER DEFAULT 0
+    days INTEGER DEFAULT 0,
+    hours INTEGER DEFAULT 0
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     target_time TIMESTAMPTZ := from_time;
@@ -731,6 +733,9 @@ BEGIN
     ELSIF days > 0 THEN
         target_time := target_time + (days * interval '1 day');
         target_time := date_trunc('day', target_time) + interval '23 hours 59 minutes 59 seconds';
+    ELSIF hours > 0 THEN
+        target_time := target_time + (hours * interval '1 hour');
+        target_time := date_trunc('hour', target_time) + interval '59 minutes 59 seconds';
     END IF;
     
     RETURN target_time;
@@ -742,7 +747,8 @@ CREATE OR REPLACE FUNCTION jcron.calc_start_time(
     from_time TIMESTAMPTZ,
     weeks INTEGER DEFAULT 0,
     months INTEGER DEFAULT 0,
-    days INTEGER DEFAULT 0
+    days INTEGER DEFAULT 0,
+    hours INTEGER DEFAULT 0
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     target_time TIMESTAMPTZ := from_time;
@@ -756,31 +762,12 @@ BEGIN
     ELSIF days > 0 THEN
         target_time := target_time + (days * interval '1 day');
         target_time := date_trunc('day', target_time);
+    ELSIF hours > 0 THEN
+        target_time := target_time + (hours * interval '1 hour');
+        target_time := date_trunc('hour', target_time);
     END IF;
     
     RETURN target_time;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE;
-
--- Helper functions for week calculations
-CREATE OR REPLACE FUNCTION jcron.get_week_start(year_val INTEGER, week_num INTEGER)
-RETURNS DATE AS $$
-DECLARE
-    jan1 DATE;
-    jan1_dow INTEGER;
-    week_start DATE;
-BEGIN
-    jan1 := make_date(year_val, 1, 1);
-    jan1_dow := EXTRACT(isodow FROM jan1);
-    
-    IF jan1_dow <= 4 THEN
-        week_start := jan1 - (jan1_dow - 1) * interval '1 day';
-    ELSE
-        week_start := jan1 + (8 - jan1_dow) * interval '1 day';
-    END IF;
-    
-    week_start := week_start + (week_num - 1) * interval '1 week';
-    RETURN week_start::DATE;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
@@ -807,6 +794,74 @@ BEGIN
     END IF;
     
     RETURN make_date(year_val, month_val, target_day);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Get weekday of Nth week in month (for W syntax)
+-- Week-based calculation starting from day 1 of month
+-- Each week spans 7 days: Week N covers days (N-1)*7+1 to N*7
+-- But week 1 is special: days 1 to (first Sunday), max 6 days
+-- Week 2+ are standard 7-day weeks after first Sunday
+-- Example: July 2025 starts on Tuesday (dow=2):
+--   Week 1: 1-6 (Tue-Sun, 6 days, Monday missing)
+--   Week 2: 7-13 (Mon-Sun, 7 days, Monday = 7)
+--   Week 3: 14-20 (Mon-Sun, 7 days, Monday = 14)
+--   Week 4: 21-27 (Mon-Sun, 7 days, Monday = 21)
+CREATE OR REPLACE FUNCTION jcron.get_weekday_of_week(
+    year_val INTEGER,
+    month_val INTEGER,
+    weekday_num INTEGER,
+    week_num INTEGER
+) RETURNS DATE AS $$
+DECLARE
+    first_day DATE;
+    first_dow INTEGER;
+    days_to_first_sunday INTEGER;
+    week_start_day INTEGER;
+    week_end_day INTEGER;
+    target_day INTEGER;
+    target_weekday INTEGER;
+    days_in_month INTEGER;
+BEGIN
+    first_day := make_date(year_val, month_val, 1);
+    first_dow := EXTRACT(dow FROM first_day)::INTEGER;
+    days_in_month := EXTRACT(days FROM (first_day + interval '1 month - 1 day'))::INTEGER;
+    
+    -- Calculate day number of first Sunday (end of week 1)
+    IF first_dow = 0 THEN
+        -- Month starts on Sunday, week 1 is Sun-Sat (days 1-6)
+        days_to_first_sunday := 6;
+    ELSE
+        -- Day number of first Sunday = 1 + offset_to_sunday
+        -- offset = (7 - first_dow), so day = 1 + (7 - first_dow) = 8 - first_dow
+        -- Example: Tue(dow=2) → day 8-2 = 6 ✅
+        days_to_first_sunday := 8 - first_dow;
+    END IF;
+    
+    -- Calculate week boundaries
+    IF week_num = 1 THEN
+        week_start_day := 1;
+        week_end_day := LEAST(days_to_first_sunday, days_in_month);
+    ELSE
+        week_start_day := days_to_first_sunday + 1 + (week_num - 2) * 7;
+        week_end_day := LEAST(week_start_day + 6, days_in_month);
+    END IF;
+    
+    -- Check if week exists in this month
+    IF week_start_day > days_in_month THEN
+        RETURN NULL;
+    END IF;
+    
+    -- Find the target weekday in that week
+    FOR target_day IN week_start_day..week_end_day LOOP
+        target_weekday := EXTRACT(dow FROM make_date(year_val, month_val, target_day))::INTEGER;
+        IF target_weekday = weekday_num THEN
+            RETURN make_date(year_val, month_val, target_day);
+        END IF;
+    END LOOP;
+    
+    -- Weekday not found in this week
+    RETURN NULL;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
@@ -1310,6 +1365,16 @@ DECLARE
     hour_val INTEGER;
     min_val INTEGER;
     sec_val INTEGER;
+    
+    -- For multiple syntax handling
+    dow_values TEXT[];
+    dow_val TEXT;
+    dow_parts TEXT[];  -- Reusable for parsing # and W syntax
+    temp_date DATE;
+    earliest_time TIMESTAMPTZ;
+    candidate_time TIMESTAMPTZ;
+    tz_name TEXT;
+    base_time TIMESTAMPTZ;
 BEGIN
     parts := string_to_array(trim(expression), ' ');
     
@@ -1328,6 +1393,10 @@ BEGIN
     month_part := parts[5];
     dow_part := parts[6];
     
+    -- Extract timezone if specified (for date calculations)
+    tz_name := jcron.extract_timezone(expression);
+    
+    -- Always use from_time for month/year extraction (it's already in correct TZ)
     month_val := EXTRACT(month FROM from_time)::INTEGER;
     year_val := EXTRACT(year FROM from_time)::INTEGER;
     
@@ -1335,6 +1404,75 @@ BEGIN
     min_val := CASE WHEN min_part = '*' THEN 0 ELSE min_part::INTEGER END;
     hour_val := CASE WHEN hour_part = '*' THEN 0 ELSE hour_part::INTEGER END;
     
+    -- Check if DOW field has multiple values (comma-separated)
+    IF dow_part ~ ',' AND dow_part ~ '[L#W]' THEN
+        -- Multiple special syntax in DOW field (e.g., "3#1,1L,4#4")
+        dow_values := string_to_array(dow_part, ',');
+        earliest_time := NULL;
+        
+        -- Process each DOW value and find the earliest match AFTER from_time
+        FOREACH dow_val IN ARRAY dow_values LOOP
+            target_date := NULL;
+            
+            -- Handle L syntax
+            IF dow_val ~ 'L$' THEN
+                weekday_num := substring(dow_val from '^(\d+)')::INTEGER;
+                target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
+            -- Handle # syntax
+            ELSIF dow_val ~ '#' THEN
+                dow_parts := string_to_array(dow_val, '#');
+                weekday_num := dow_parts[1]::INTEGER;
+                nth_occurrence := dow_parts[2]::INTEGER;
+                target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+            -- Handle W syntax
+            ELSIF dow_val ~ 'W' THEN
+                dow_parts := string_to_array(dow_val, 'W');
+                weekday_num := dow_parts[1]::INTEGER;
+                nth_occurrence := dow_parts[2]::INTEGER;
+                
+                IF weekday_num < 0 OR weekday_num > 6 THEN
+                    RAISE EXCEPTION 'Invalid weekday: %. Must be 0-6', weekday_num;
+                END IF;
+                IF nth_occurrence < 1 OR nth_occurrence > 5 THEN
+                    RAISE EXCEPTION 'Invalid week: %. Must be 1-5', nth_occurrence;
+                END IF;
+                
+                target_date := jcron.get_weekday_of_week(year_val, month_val, weekday_num, nth_occurrence);
+            END IF;
+            
+            -- If valid date found, create timestamp
+            IF target_date IS NOT NULL THEN
+                candidate_time := target_date::TIMESTAMPTZ + 
+                    make_interval(hours => hour_val, mins => min_val, secs => sec_val);
+                
+                -- Consider times AFTER OR EQUAL to from_time (for month boundary cases)
+                IF candidate_time >= from_time THEN
+                    IF earliest_time IS NULL OR candidate_time < earliest_time THEN
+                        earliest_time := candidate_time;
+                    END IF;
+                END IF;
+            END IF;
+        END LOOP;
+        
+        -- If no valid time found in current month, try next month
+        IF earliest_time IS NULL THEN
+            -- Move to next month
+            IF month_val = 12 THEN
+                month_val := 1;
+                year_val := year_val + 1;
+            ELSE
+                month_val := month_val + 1;
+            END IF;
+            
+            -- Recursively call with first day of next month
+            RETURN jcron.handle_special_syntax(expression, 
+                make_timestamptz(year_val, month_val, 1, 0, 0, 0));
+        END IF;
+        
+        RETURN earliest_time;
+    END IF;
+    
+    -- Single special syntax (original logic)
     -- Handle L syntax in day field
     IF day_part ~ 'L$' THEN
         IF day_part = 'L' THEN
@@ -1344,26 +1482,39 @@ BEGIN
     ELSIF dow_part ~ 'L$' THEN
         weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
         target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
-    -- Handle # syntax in DOW field
+    -- Handle # syntax in DOW field (e.g., 1#2 = 2nd Monday)
     ELSIF dow_part ~ '#' THEN
-        DECLARE
-            dow_parts TEXT[];
-        BEGIN
-            dow_parts := string_to_array(dow_part, '#');
-            weekday_num := dow_parts[1]::INTEGER;
-            nth_occurrence := dow_parts[2]::INTEGER;
-            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
-        END;
+        dow_parts := string_to_array(dow_part, '#');
+        weekday_num := dow_parts[1]::INTEGER;
+        nth_occurrence := dow_parts[2]::INTEGER;
+        target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+    -- Handle W syntax in DOW field (e.g., 1W4 = Monday of 4th week)
+    ELSIF dow_part ~ 'W' THEN
+        dow_parts := string_to_array(dow_part, 'W');
+        weekday_num := dow_parts[1]::INTEGER;
+        nth_occurrence := dow_parts[2]::INTEGER;
+        
+        -- Validate: weekday 0-6, week 1-5
+        IF weekday_num < 0 OR weekday_num > 6 THEN
+            RAISE EXCEPTION 'Invalid weekday in dayOfnthWeek: %. Must be 0-6 (0=Sunday)', weekday_num;
+        END IF;
+        IF nth_occurrence < 1 OR nth_occurrence > 5 THEN
+            RAISE EXCEPTION 'Invalid week in dayOfnthWeek: %. Must be 1-5', nth_occurrence;
+        END IF;
+        
+        -- Use get_weekday_of_week for W syntax (week-based, not occurrence-based)
+        target_date := jcron.get_weekday_of_week(year_val, month_val, weekday_num, nth_occurrence);
     ELSE
         RAISE EXCEPTION 'No special syntax found in expression: %', expression;
     END IF;
     
-    IF target_date IS NULL THEN
-        RAISE EXCEPTION 'Could not calculate valid date for expression: %', expression;
+    -- If target_date is NULL, skip to loop to find next valid month
+    IF target_date IS NOT NULL THEN
+        result_time := target_date::TIMESTAMPTZ + 
+            make_interval(hours => hour_val, mins => min_val, secs => sec_val);
+    ELSE
+        result_time := from_time - interval '1 second'; -- Force loop to continue
     END IF;
-    
-    result_time := target_date::TIMESTAMPTZ + 
-        make_interval(hours => hour_val, mins => min_val, secs => sec_val);
     
     -- Ensure future
     WHILE result_time <= from_time LOOP
@@ -1381,14 +1532,15 @@ BEGIN
             weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
             target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
         ELSIF dow_part ~ '#' THEN
-            DECLARE
-                dow_parts TEXT[];
-            BEGIN
-                dow_parts := string_to_array(dow_part, '#');
-                weekday_num := dow_parts[1]::INTEGER;
-                nth_occurrence := dow_parts[2]::INTEGER;
-                target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
-            END;
+            dow_parts := string_to_array(dow_part, '#');
+            weekday_num := dow_parts[1]::INTEGER;
+            nth_occurrence := dow_parts[2]::INTEGER;
+            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+        ELSIF dow_part ~ 'W' THEN
+            dow_parts := string_to_array(dow_part, 'W');
+            weekday_num := dow_parts[1]::INTEGER;
+            nth_occurrence := dow_parts[2]::INTEGER;
+            target_date := jcron.get_weekday_of_week(year_val, month_val, weekday_num, nth_occurrence);
         END IF;
         
         IF target_date IS NULL THEN
@@ -1425,6 +1577,7 @@ DECLARE
     hour_val INTEGER;
     min_val INTEGER;
     sec_val INTEGER;
+    dow_parts TEXT[];  -- Reusable for parsing # and W syntax
 BEGIN
     parts := string_to_array(trim(expression), ' ');
     
@@ -1459,26 +1612,39 @@ BEGIN
     ELSIF dow_part ~ 'L$' THEN
         weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
         target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
-    -- Handle # syntax in DOW field
+    -- Handle # syntax in DOW field (e.g., 1#2 = 2nd Monday)
     ELSIF dow_part ~ '#' THEN
-        DECLARE
-            dow_parts TEXT[];
-        BEGIN
-            dow_parts := string_to_array(dow_part, '#');
-            weekday_num := dow_parts[1]::INTEGER;
-            nth_occurrence := dow_parts[2]::INTEGER;
-            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
-        END;
+        dow_parts := string_to_array(dow_part, '#');
+        weekday_num := dow_parts[1]::INTEGER;
+        nth_occurrence := dow_parts[2]::INTEGER;
+        target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+    -- Handle W syntax in DOW field (e.g., 1W4 = Monday of 4th week)
+    ELSIF dow_part ~ 'W' THEN
+        dow_parts := string_to_array(dow_part, 'W');
+        weekday_num := dow_parts[1]::INTEGER;
+        nth_occurrence := dow_parts[2]::INTEGER;
+        
+        -- Validate: weekday 0-6, week 1-5
+        IF weekday_num < 0 OR weekday_num > 6 THEN
+            RAISE EXCEPTION 'Invalid weekday in dayOfnthWeek: %. Must be 0-6 (0=Sunday)', weekday_num;
+        END IF;
+        IF nth_occurrence < 1 OR nth_occurrence > 5 THEN
+            RAISE EXCEPTION 'Invalid week in dayOfnthWeek: %. Must be 1-5', nth_occurrence;
+        END IF;
+        
+        -- Use get_weekday_of_week for W syntax (week-based, not occurrence-based)
+        target_date := jcron.get_weekday_of_week(year_val, month_val, weekday_num, nth_occurrence);
     ELSE
         RAISE EXCEPTION 'No special syntax found in expression: %', expression;
     END IF;
     
-    IF target_date IS NULL THEN
-        RAISE EXCEPTION 'Could not calculate valid date for expression: %', expression;
+    -- If target_date is NULL, skip to loop to find previous valid month
+    IF target_date IS NOT NULL THEN
+        result_time := target_date::TIMESTAMPTZ + 
+            make_interval(hours => hour_val, mins => min_val, secs => sec_val);
+    ELSE
+        result_time := from_time + interval '1 second'; -- Force loop to continue
     END IF;
-    
-    result_time := target_date::TIMESTAMPTZ + 
-        make_interval(hours => hour_val, mins => min_val, secs => sec_val);
     
     -- Ensure past (going backward)
     WHILE result_time >= from_time LOOP
@@ -1496,14 +1662,15 @@ BEGIN
             weekday_num := substring(dow_part from '^(\d+)')::INTEGER;
             target_date := jcron.get_last_weekday(year_val, month_val, weekday_num);
         ELSIF dow_part ~ '#' THEN
-            DECLARE
-                dow_parts TEXT[];
-            BEGIN
-                dow_parts := string_to_array(dow_part, '#');
-                weekday_num := dow_parts[1]::INTEGER;
-                nth_occurrence := dow_parts[2]::INTEGER;
-                target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
-            END;
+            dow_parts := string_to_array(dow_part, '#');
+            weekday_num := dow_parts[1]::INTEGER;
+            nth_occurrence := dow_parts[2]::INTEGER;
+            target_date := jcron.get_nth_weekday(year_val, month_val, weekday_num, nth_occurrence);
+        ELSIF dow_part ~ 'W' THEN
+            dow_parts := string_to_array(dow_part, 'W');
+            weekday_num := dow_parts[1]::INTEGER;
+            nth_occurrence := dow_parts[2]::INTEGER;
+            target_date := jcron.get_weekday_of_week(year_val, month_val, weekday_num, nth_occurrence);
         END IF;
         
         IF target_date IS NULL THEN
@@ -1522,8 +1689,8 @@ $$ LANGUAGE plpgsql IMMUTABLE;
 -- 🎯 MAIN API FUNCTIONS
 -- =====================================================
 
--- Core next_time function
-CREATE OR REPLACE FUNCTION jcron.next_time(
+-- Internal single-pattern next_time function
+CREATE OR REPLACE FUNCTION jcron.next_time_single(
     pattern TEXT,
     from_time TIMESTAMPTZ DEFAULT NOW(),
     get_endof BOOLEAN DEFAULT TRUE,
@@ -1536,7 +1703,20 @@ DECLARE
     modifier_data RECORD;
     local_base TIMESTAMP;
     local_result TIMESTAMP;
+    eod_parsed RECORD;
+    sod_parsed RECORD;
 BEGIN
+    -- Handle special E/S-only syntax (E2H, S3H, etc.)
+    IF pattern ~ '^E\d*[WMDH]$' THEN
+        SELECT * INTO eod_parsed FROM jcron.parse_eod(pattern);
+        RETURN jcron.calc_end_time(from_time, eod_parsed.weeks, eod_parsed.months, eod_parsed.days, eod_parsed.hours);
+    END IF;
+    
+    IF pattern ~ '^S\d*[WMDH]$' THEN
+        SELECT * INTO sod_parsed FROM jcron.parse_sod(pattern);
+        RETURN jcron.calc_start_time(from_time, sod_parsed.weeks, sod_parsed.months, sod_parsed.days, sod_parsed.hours);
+    END IF;
+    
     SELECT * INTO parsed FROM jcron.parse_clean_pattern(pattern);
     
     -- Convert to local time if timezone specified
@@ -1651,7 +1831,7 @@ BEGIN
     IF (parsed.has_end AND get_endof) OR (get_endof AND NOT parsed.has_start) THEN
         IF parsed.end_modifier IS NOT NULL THEN
             SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.end_modifier);
-            final_result := jcron.calc_end_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days);
+            final_result := jcron.calc_end_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
         END IF;
     END IF;
     
@@ -1659,11 +1839,56 @@ BEGIN
     IF (parsed.has_start AND get_startof) OR (get_startof AND NOT parsed.has_end) THEN
         IF parsed.start_modifier IS NOT NULL THEN
             SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.start_modifier);
-            final_result := jcron.calc_start_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days);
+            final_result := jcron.calc_start_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
         END IF;
     END IF;
     
     RETURN final_result;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Multi-pattern next_time function with "|" operator support
+-- Supports multiple patterns separated by "|" (e.g., 'pattern1 | pattern2 | pattern3')
+-- Returns the earliest (minimum) result from all patterns
+CREATE OR REPLACE FUNCTION jcron.next_time(
+    pattern TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW(),
+    get_endof BOOLEAN DEFAULT TRUE,
+    get_startof BOOLEAN DEFAULT FALSE
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    patterns TEXT[];
+    single_pattern TEXT;
+    candidates TIMESTAMPTZ[];
+    result TIMESTAMPTZ;
+BEGIN
+    -- Check if pattern contains "|" for multi-pattern support
+    IF pattern ~ '\|' THEN
+        -- Split by "|" and process each pattern
+        patterns := string_to_array(pattern, '|');
+        
+        -- Calculate next_time for each pattern
+        FOREACH single_pattern IN ARRAY patterns LOOP
+            -- Trim whitespace and skip empty patterns
+            single_pattern := trim(single_pattern);
+            IF single_pattern != '' THEN
+                candidates := array_append(
+                    candidates,
+                    jcron.next_time_single(single_pattern, from_time, get_endof, get_startof)
+                );
+            END IF;
+        END LOOP;
+        
+        -- Return the earliest (minimum) non-NULL result
+        SELECT MIN(c) INTO result 
+        FROM unnest(candidates) AS c 
+        WHERE c IS NOT NULL;
+        
+        RETURN result;
+    ELSE
+        -- Single pattern, use direct implementation
+        RETURN jcron.next_time_single(pattern, from_time, get_endof, get_startof);
+    END IF;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
@@ -1711,7 +1936,83 @@ END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
 -- =====================================================
--- ⏪ PREVIOUS TIME FUNCTIONS
+-- ⏪ PREVIOUS TIME FUNCTIONS (with end/start support)
+-- =====================================================
+
+-- Previous end time (get_endof=TRUE, get_startof=FALSE)
+CREATE OR REPLACE FUNCTION jcron.prev_end(pattern TEXT)
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN jcron.prev_time(pattern, NOW(), TRUE, FALSE);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION jcron.prev_end_from(pattern TEXT, from_time TIMESTAMPTZ)
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN jcron.prev_time(pattern, from_time, TRUE, FALSE);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- Previous start time (get_endof=FALSE, get_startof=TRUE)
+CREATE OR REPLACE FUNCTION jcron.prev_start(pattern TEXT)
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN jcron.prev_time(pattern, NOW(), FALSE, TRUE);
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+CREATE OR REPLACE FUNCTION jcron.prev_start_from(pattern TEXT, from_time TIMESTAMPTZ)
+RETURNS TIMESTAMPTZ AS $$
+BEGIN
+    RETURN jcron.prev_time(pattern, from_time, FALSE, TRUE);
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
+-- =====================================================
+-- ⏱️ DURATION CALCULATION
+-- =====================================================
+
+-- Get duration between start and end times
+-- Works with patterns that have E/S modifiers (e.g., '0 0 9 * * * E1D' or 'E1D S1W')
+-- If pattern has both start and end modifiers, returns difference
+-- If only end modifier, returns duration from base time to end
+-- If no modifiers, returns NULL (use for period-based patterns only)
+CREATE OR REPLACE FUNCTION jcron.get_duration(
+    pattern TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW()
+) RETURNS INTERVAL AS $$
+DECLARE
+    start_time TIMESTAMPTZ;
+    end_time TIMESTAMPTZ;
+    parsed RECORD;
+BEGIN
+    -- Parse pattern to check for modifiers
+    SELECT * INTO parsed FROM jcron.parse_clean_pattern(pattern);
+    
+    -- If no start/end modifiers, return NULL (not applicable)
+    IF NOT parsed.has_start AND NOT parsed.has_end THEN
+        RETURN NULL;
+    END IF;
+    
+    -- Get start time (with startof=TRUE)
+    start_time := jcron.next_time(pattern, from_time, FALSE, TRUE);
+    
+    -- Get end time (with endof=TRUE)
+    end_time := jcron.next_time(pattern, from_time, TRUE, FALSE);
+    
+    -- If no end time, return NULL
+    IF end_time IS NULL THEN
+        RETURN NULL;
+    END IF;
+    
+    -- Return duration
+    RETURN end_time - start_time;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- =====================================================
+-- ⏪ PREVIOUS TIME - Core Implementation
 -- =====================================================
 
 -- Previous cron time handler
@@ -1838,7 +2139,8 @@ CREATE OR REPLACE FUNCTION jcron.calc_prev_end_time(
     from_time TIMESTAMPTZ,
     weeks INTEGER DEFAULT 0,
     months INTEGER DEFAULT 0,
-    days INTEGER DEFAULT 0
+    days INTEGER DEFAULT 0,
+    hours INTEGER DEFAULT 0
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     target_time TIMESTAMPTZ := from_time;
@@ -1852,6 +2154,9 @@ BEGIN
     ELSIF days > 0 THEN
         target_time := target_time - (days * interval '1 day');
         target_time := date_trunc('day', target_time) + interval '23 hours 59 minutes 59 seconds';
+    ELSIF hours > 0 THEN
+        target_time := target_time - (hours * interval '1 hour');
+        target_time := date_trunc('hour', target_time) + interval '59 minutes 59 seconds';
     END IF;
     
     RETURN target_time;
@@ -1863,7 +2168,8 @@ CREATE OR REPLACE FUNCTION jcron.calc_prev_start_time(
     from_time TIMESTAMPTZ,
     weeks INTEGER DEFAULT 0,
     months INTEGER DEFAULT 0,
-    days INTEGER DEFAULT 0
+    days INTEGER DEFAULT 0,
+    hours INTEGER DEFAULT 0
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
     target_time TIMESTAMPTZ := from_time;
@@ -1877,16 +2183,21 @@ BEGIN
     ELSIF days > 0 THEN
         target_time := target_time - (days * interval '1 day');
         target_time := date_trunc('day', target_time);
+    ELSIF hours > 0 THEN
+        target_time := target_time - (hours * interval '1 hour');
+        target_time := date_trunc('hour', target_time);
     END IF;
     
     RETURN target_time;
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
--- Main previous time function
-CREATE OR REPLACE FUNCTION jcron.prev_time(
+-- Internal single-pattern previous time function
+CREATE OR REPLACE FUNCTION jcron.prev_time_single(
     expression TEXT,
     from_time TIMESTAMPTZ DEFAULT NOW(),
+    get_endof BOOLEAN DEFAULT TRUE,
+    get_startof BOOLEAN DEFAULT FALSE,
     timezone TEXT DEFAULT NULL
 ) RETURNS TIMESTAMPTZ AS $$
 DECLARE
@@ -1895,35 +2206,109 @@ DECLARE
     result_tz TIMESTAMPTZ;
     eod_parsed RECORD;
     sod_parsed RECORD;
+    base_result TIMESTAMPTZ;
+    final_result TIMESTAMPTZ;
+    parsed RECORD;
+    modifier_data RECORD;
 BEGIN
-    IF expression ~ '^E\d*[WMD]' THEN
+    -- Handle special E/S syntax with endof/startof logic (now includes H for hours)
+    IF expression ~ '^E\d*[WMDH]' THEN
         SELECT * INTO eod_parsed FROM jcron.parse_eod(expression);
         IF timezone IS NOT NULL THEN
             local_base := from_time AT TIME ZONE timezone;
-            local_result := jcron.calc_prev_end_time(local_base::TIMESTAMPTZ, eod_parsed.weeks, eod_parsed.months, eod_parsed.days);
+            local_result := jcron.calc_prev_end_time(local_base::TIMESTAMPTZ, eod_parsed.weeks, eod_parsed.months, eod_parsed.days, eod_parsed.hours);
             RETURN timezone(timezone, local_result::TIMESTAMP);
         ELSE
-            RETURN jcron.calc_prev_end_time(from_time, eod_parsed.weeks, eod_parsed.months, eod_parsed.days);
+            RETURN jcron.calc_prev_end_time(from_time, eod_parsed.weeks, eod_parsed.months, eod_parsed.days, eod_parsed.hours);
         END IF;
     END IF;
     
-    IF expression ~ '^S\d*[WMD]' THEN
+    IF expression ~ '^S\d*[WMDH]' THEN
         SELECT * INTO sod_parsed FROM jcron.parse_sod(expression);
         IF timezone IS NOT NULL THEN
             local_base := from_time AT TIME ZONE timezone;
-            local_result := jcron.calc_prev_start_time(local_base::TIMESTAMPTZ, sod_parsed.weeks, sod_parsed.months, sod_parsed.days);
+            local_result := jcron.calc_prev_start_time(local_base::TIMESTAMPTZ, sod_parsed.weeks, sod_parsed.months, sod_parsed.days, sod_parsed.hours);
             RETURN timezone(timezone, local_result::TIMESTAMP);
         ELSE
-            RETURN jcron.calc_prev_start_time(from_time, sod_parsed.weeks, sod_parsed.months, sod_parsed.days);
+            RETURN jcron.calc_prev_start_time(from_time, sod_parsed.weeks, sod_parsed.months, sod_parsed.days, sod_parsed.hours);
         END IF;
     END IF;
     
+    -- Handle regular cron patterns with modifier support
+    SELECT * INTO parsed FROM jcron.parse_clean_pattern(expression);
+    
     IF timezone IS NOT NULL THEN
         local_base := from_time AT TIME ZONE timezone;
-        local_result := jcron.prev_cron_time(expression, local_base::TIMESTAMPTZ);
-        RETURN timezone(timezone, local_result::TIMESTAMP);
+        local_result := jcron.prev_cron_time(parsed.clean_cron, local_base::TIMESTAMPTZ);
+        base_result := timezone(timezone, local_result::TIMESTAMP);
     ELSE
-        RETURN jcron.prev_cron_time(expression, from_time);
+        base_result := jcron.prev_cron_time(parsed.clean_cron, from_time);
+    END IF;
+    
+    final_result := base_result;
+    
+    -- Apply End modifier
+    IF (parsed.has_end AND get_endof) OR (get_endof AND NOT parsed.has_start) THEN
+        IF parsed.end_modifier IS NOT NULL THEN
+            SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.end_modifier);
+            final_result := jcron.calc_prev_end_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
+        END IF;
+    END IF;
+    
+    -- Apply Start modifier
+    IF (parsed.has_start AND get_startof) OR (get_startof AND NOT parsed.has_end) THEN
+        IF parsed.start_modifier IS NOT NULL THEN
+            SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.start_modifier);
+            final_result := jcron.calc_prev_start_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
+        END IF;
+    END IF;
+    
+    RETURN final_result;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+-- Multi-pattern prev_time function with "|" operator support
+-- Supports multiple patterns separated by "|" (e.g., 'pattern1 | pattern2 | pattern3')
+-- Returns the latest (maximum) result from all patterns
+CREATE OR REPLACE FUNCTION jcron.prev_time(
+    expression TEXT,
+    from_time TIMESTAMPTZ DEFAULT NOW(),
+    get_endof BOOLEAN DEFAULT TRUE,
+    get_startof BOOLEAN DEFAULT FALSE,
+    timezone TEXT DEFAULT NULL
+) RETURNS TIMESTAMPTZ AS $$
+DECLARE
+    patterns TEXT[];
+    single_pattern TEXT;
+    candidates TIMESTAMPTZ[];
+    result TIMESTAMPTZ;
+BEGIN
+    -- Check if pattern contains "|" for multi-pattern support
+    IF expression ~ '\|' THEN
+        -- Split by "|" and process each pattern
+        patterns := string_to_array(expression, '|');
+        
+        -- Calculate prev_time for each pattern
+        FOREACH single_pattern IN ARRAY patterns LOOP
+            -- Trim whitespace and skip empty patterns
+            single_pattern := trim(single_pattern);
+            IF single_pattern != '' THEN
+                candidates := array_append(
+                    candidates,
+                    jcron.prev_time_single(single_pattern, from_time, get_endof, get_startof, timezone)
+                );
+            END IF;
+        END LOOP;
+        
+        -- Return the latest (maximum) non-NULL result
+        SELECT MAX(c) INTO result 
+        FROM unnest(candidates) AS c 
+        WHERE c IS NOT NULL;
+        
+        RETURN result;
+    ELSE
+        -- Single pattern, use direct implementation
+        RETURN jcron.prev_time_single(expression, from_time, get_endof, get_startof, timezone);
     END IF;
 END;
 $$ LANGUAGE plpgsql STABLE;

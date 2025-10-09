@@ -153,7 +153,141 @@ SELECT jcron.next_time('0 0 10 * * 2#4', NOW());
 - First number: day of week (0=Sunday, 6=Saturday)
 - Second number: occurrence (1-5)
 
+### `W` (Week) - Day of Nth Week ⭐ NEW
+
+Ayın N'inci haftasının belirli günü. **Week-based** hesaplama yapar.
+
+```sql
+-- 4. haftanın pazartesi (1W4)
+SELECT jcron.next_time('0 0 9 * * 1W4', NOW());
+
+-- 2. haftanın cumartesi (6W2)
+SELECT jcron.next_time('0 0 14 * * 6W2', NOW());
+
+-- 1. haftanın pazar (0W1)
+SELECT jcron.next_time('0 0 10 * * 0W1', NOW());
+
+-- 3. haftanın cuma (5W3)
+SELECT jcron.next_time('0 30 17 * * 5W3', NOW());
+```
+
+**Syntax:** `{0-6}W{1-5}`
+- First number: day of week (0=Sunday, 6=Saturday)
+- Second number: week number (1-5)
+
+**Week Definition:**
+- Week 1 starts on day 1 of the month
+- Week 1 ends on the first Sunday
+- Subsequent weeks are standard 7-day periods
+
+**Important Difference: `W` vs `#`**
+
+`W` (week-based) and `#` (occurrence-based) are **NOT equivalent**:
+
+| Pattern | Meaning | July 2025 Example |
+|---------|---------|-------------------|
+| `1W1` | Monday of week 1 | NULL (week 1 has no Monday) |
+| `1W2` | Monday of week 2 | July 7 (= `1#1`) |
+| `1W4` | Monday of week 4 | July 21 (= `1#3`) |
+| `1#1` | 1st Monday | July 7 |
+| `1#3` | 3rd Monday | July 21 |
+
+**Why the difference?**
+- July 2025 starts on Tuesday (DOW=2)
+- Week 1 = days 1-6 (Tue-Sun), **no Monday**
+- Week 2 = days 7-13 (has the **1st Monday**)
+- Week 4 = days 21-27 (has the **3rd Monday**)
+
+**Examples:**
+- `1W4` = Monday of 4th week (week-based)
+- `6W2` = Saturday of 2nd week (week-based)
+- `0W1` = Sunday of 1st week (always exists, as week 1 ends on Sunday)
+- `5W3` = Friday of 3rd week (week-based)
+- `1#3` = 3rd Monday (occurrence-based) - different from `1W3`!
+
 ## Advanced Syntax
+
+### Multi-Pattern Support with `|` (Pipe Operator)
+
+**NEW FEATURE**: Multiple cron patterns can be combined using the `|` (pipe) operator. 
+- For `next_time`: Returns the **earliest** (minimum) match among all patterns
+- For `prev_time`: Returns the **latest** (maximum) match among all patterns
+
+#### Basic Multi-Pattern Examples
+
+```sql
+-- Weekdays 9am OR Weekends 11am
+SELECT jcron.next_time('0 0 9 * * 1-5 * | 0 0 11 * * 0,6 *', NOW());
+
+-- First day OR Last day of month
+SELECT jcron.next_time('0 0 12 1 * * * | 0 0 12 L * * *', NOW());
+
+-- Monday, Wednesday, OR Friday at different times
+SELECT jcron.next_time('0 0 8 * * 1 * | 0 0 12 * * 3 * | 0 0 18 * * 5 *', NOW());
+```
+
+#### Complex Multi-Pattern Use Cases
+
+```sql
+-- Business hours: Morning shift OR Evening shift OR Weekend
+SELECT jcron.next_time(
+    '0 0 9 * * 1-5 * | 0 0 18 * * 1-5 * | 0 0 12 * * 0,6 *',
+    NOW()
+);
+
+-- Important days: Start, Mid, End of month
+SELECT jcron.next_time(
+    '0 0 12 1 * * * | 0 0 12 15 * * * | 0 0 12 L * * *',
+    NOW()
+);
+
+-- Combined special syntax: # and L patterns
+SELECT jcron.next_time(
+    '0 0 0 * * 1#3 * | 0 0 0 * * 5L *',
+    NOW()
+);
+
+-- Load balancing: Stagger executions across multiple time slots
+SELECT jcron.next_time(
+    '0 0 2 * * * * | 0 0 5 * * * * | 0 0 8 * * * * | 0 0 11 * * * *',
+    NOW()
+);
+```
+
+#### Multi-Pattern with Modifiers
+
+```sql
+-- End of month OR End of quarter
+SELECT jcron.next_time(
+    '0 0 0 L * * * EOD:E1D | 0 0 0 L 3,6,9,12 * *',
+    NOW()
+);
+
+-- Multiple patterns with multi-syntax (comma-separated values)
+SELECT jcron.next_time(
+    '0 0 0 * * 1#1,1L * | 0 0 0 * * 5#3 *',
+    NOW()
+);
+```
+
+#### Performance Considerations
+
+- **Overhead**: Each pattern is evaluated independently, so N patterns = N calculations + MIN/MAX operation
+- **Single pattern**: ~34,000 ops/sec
+- **Two patterns**: ~14,600 ops/sec (2.3x overhead)
+- **Three patterns**: ~10,000 ops/sec (3.4x overhead)
+- **Recommendation**: Use 2-4 patterns for optimal balance between flexibility and performance
+
+#### Whitespace Handling
+
+Spaces around the pipe operator are automatically trimmed:
+
+```sql
+-- These are equivalent:
+'0 0 9 * * 1 *|0 0 17 * * 5 *'
+'0 0 9 * * 1 * | 0 0 17 * * 5 *'
+'0 0 9 * * 1 *  |  0 0 17 * * 5 *'
+```
 
 ### Week of Year (WOY) Patterns
 
@@ -310,6 +444,15 @@ SELECT jcron.next_time('0 0 17 * 3,6,9,12 5L', NOW());
 
 -- İş saatleri içinde her 30 dakika
 SELECT jcron.next_time('0 0,30 9-17 * * 1-5', NOW());
+
+-- 4. haftanın pazartesi (week-based)
+SELECT jcron.next_time('0 0 9 * * 1W4', NOW());
+
+-- 3. pazartesi (occurrence-based) - dikkat: 1W4 ≠ 1#3 bazı aylar için!
+SELECT jcron.next_time('0 0 9 * * 1#3', NOW());
+
+-- 2. haftanın cumartesi (week-based)
+SELECT jcron.next_time('0 0 14 * * 6W2', NOW());
 ```
 
 ## Validation Rules
@@ -323,7 +466,9 @@ SELECT jcron.next_time('0 0,30 9-17 * * 1-5', NOW());
 '0 0 9 * * 1-5'      -- Weekdays at 9 AM
 '0 0 0 L * *'        -- Last day of month
 '0 0 9 * * 1L'       -- Last Monday of month
-'0 0 9 * * 4#2'      -- 2nd Thursday of month
+'0 0 9 * * 4#2'      -- 2nd Thursday (occurrence-based)
+'0 0 9 * * 1W4'      -- Monday of 4th week (week-based)
+'0 0 14 * * 6W2'     -- Saturday of 2nd week (week-based)
 ```
 
 ### Invalid Patterns
@@ -335,6 +480,8 @@ SELECT jcron.next_time('0 0,30 9-17 * * 1-5', NOW());
 '0 0 25 * * *'       -- Invalid hour (25 > 23)
 '0 0 9 * * 7'        -- Invalid DOW (use 0-6, not 1-7)
 '0 0 9 L * 1L'       -- Can't use L in both fields
+'0 0 9 * * 1W6'      -- Invalid week (use 1-5)
+'0 0 9 * * 7W1'      -- Invalid DOW (use 0-6)
 ```
 
 ## Pattern Testing
