@@ -44,8 +44,8 @@ JCRON is a **next-generation** cron scheduler that combines the **power of Go's 
 - ✅ **Shortcuts**: `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`, `@minutely`
 - ✅ **Advanced Patterns**:
   - `L` (last day/weekday of month)
-  - `#` (nth weekday of month, e.g., `1#2` = 2nd Monday)
-  - `W` (nearest weekday)
+  - `#` (nth weekday occurrence, e.g., `1#2` = 2nd Monday)
+  - `W` (week-based, e.g., `1W3` = Monday of week 3)
   - Multiple patterns (e.g., `1#1,5#3` = 1st Monday and 3rd Friday)
 - ✅ **Week of Year**: `WOY:33` for ISO week-based scheduling
 - ✅ **End of Duration (EOD)**: Schedule tasks relative to period ends
@@ -205,6 +205,11 @@ runner.addFuncCron("0 0 * * 1#1,5#3", () => {
   console.log("Bi-monthly specific weekdays");
 });
 
+// Week-based pattern: Monday of week 4
+runner.addFuncCron("0 0 * * 1W4", () => {
+  console.log("Monday of the 4th week");
+});
+
 // Last day of the month
 runner.addFuncCron("0 0 L * *", () => {
   console.log("Last day of month");
@@ -252,6 +257,7 @@ console.log(toHumanize("0 0 1 1 *")); // "Yearly on January 1st"
 console.log(toHumanize("0 0 * * 1-5")); // "at midnight, on weekdays"
 console.log(toHumanize("0 0 * * 6,0")); // "at midnight, on weekends"
 console.log(toHumanize("0 0 * * 1#2")); // "at midnight, on 2nd Monday of the month"
+console.log(toHumanize("0 0 * * 1W4")); // "at midnight, on Monday of week 4"
 console.log(toHumanize("*/15 9-17 * * 1-5")); // Smart time range formatting
 
 // Multi-language support

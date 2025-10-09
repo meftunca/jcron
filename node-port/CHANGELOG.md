@@ -5,6 +5,40 @@ All notable changes to the JCRON-node project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2025-10-08
+
+### Added
+
+- **🎉 NEW: Week-based nthWeekDay Syntax (`WN`)**
+  - Introduced `WN` syntax for week-based day patterns (e.g., `1W3` = Monday of week 3)
+  - Complements existing `#N` syntax (occurrence-based, e.g., `1#3` = 3rd Monday)
+  - Supports mixed patterns: `1#2,1W4` = 2nd Monday OR Monday of week 4
+  - Fully compatible with timezones, EOD, and all other JCRON features
+  - Week calculation: `Math.floor((dayOfMonth - 1 + firstDayOfWeek) / 7) + 1` (Sunday = week start)
+
+### Improved
+
+- **Centralized Date Operations**: All `date-fns` and `date-fns-tz` operations now managed through `date-utils.ts`
+  - Better maintainability and consistency
+  - Easier to audit and optimize date operations
+  - Reduced code duplication
+- **Enhanced Documentation**: Added WN syntax examples and explanations to README
+- **Better Code Organization**: Separated occurrence-based (`#N`) and week-based (`WN`) pattern handling
+
+### Fixed
+
+- **Critical Fix**: `getPrev()` + Non-UTC Timezone + `nthWeekDay` now works correctly
+  - Fixed timezone-aware date component extraction in `_checkDayOfWeek` and `_checkDayOfMonth`
+  - Simplified `_createDateInTimezone` to use `fromZonedTime` directly
+  - Centralized date utils resolved edge cases with timezone boundaries
+
+### Technical Details
+
+- Added `weekBasedPatterns` and `hasWeekBased` flags to `ExpandedSchedule`
+- Updated validation regex to support `WN` patterns: `/^(\d)W(\d)$/`
+- Enhanced `validateScheduleFields` to validate week numbers (1-5)
+- Both syntaxes use optimized caching for performance
+
 ## [1.4.4] - 2025-10-08
 
 ### Fixed

@@ -1,14 +1,17 @@
 // src/engine.ts
+import { fromZonedTime, toZonedTime } from "date-fns-tz"; // Still needed for some legacy code
 import {
-  addSeconds,
-  getISOWeek,
-  getISOWeekYear,
-  setISOWeek,
-  startOfISOWeek,
-  startOfISOWeekYear,
-  subSeconds,
-} from "date-fns";
-import { formatInTimeZone, fromZonedTime, toZonedTime } from "date-fns-tz";
+  addSecondsToDate,
+  createDateFromComponents,
+  formatDateInTimezone,
+  getDateComponentsInTimezone,
+  getISOWeekNumber,
+  getISOWeekYearNumber,
+  getStartOfISOWeek,
+  getStartOfISOWeekYear,
+  setISOWeekForDate,
+  subtractSecondsFromDate,
+} from "./date-utils";
 import { EndOfDuration } from "./eod";
 import { ParseError } from "./errors";
 import { Schedule } from "./schedule";
@@ -48,9 +51,14 @@ class ExpandedSchedule {
   isEveryYear: boolean = false;
   isUTC: boolean = true;
 
-  // 🚀 OPTIMIZED: Pre-parsed nthWeekDay patterns
+  // 🚀 OPTIMIZED: Pre-parsed nthWeekDay patterns (occurrence-based: 1#3 = 3rd Monday)
   nthWeekDayPatterns: Array<{ day: number; nth: number }> = [];
   hasNthWeekDay: boolean = false;
+
+  // 🚀 NEW: Pre-parsed week-based patterns (1W3 = Monday of week 3)
+  weekBasedPatterns: Array<{ day: number; week: number }> = [];
+  hasWeekBased: boolean = false;
+
   hasLastWeekDay: boolean = false;
 
   // Pre-compiled regex for common patterns (reserved for future use)
@@ -124,11 +132,11 @@ export class Engine {
       return result;
     }
 
-    let searchTime = addSeconds(fromTime, 1);
+    let searchTime = addSecondsToDate(fromTime, 1);
 
     for (let i = 0; i < 2000; i++) {
-      // 🚀 OPTIMIZED: Use fast timezone conversion with cache
-      const timeComponents = this._getTimeComponentsFast(searchTime, location);
+      // 🚀 Use centralized date-utils for timezone conversion
+      const timeComponents = getDateComponentsInTimezone(searchTime, location);
       const year = timeComponents.year;
       const month = timeComponents.month;
       const date = timeComponents.day;
@@ -139,7 +147,7 @@ export class Engine {
       // Use Set.has() instead of Array.includes() for better performance
       if (!expSchedule.yearsSet.has(year)) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year + 1,
           0,
           1,
@@ -152,7 +160,7 @@ export class Engine {
       }
       if (!expSchedule.monthsSet.has(month + 1)) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month + 1,
           1,
@@ -165,8 +173,8 @@ export class Engine {
       }
       if (!this._isWeekOfYearMatch(searchTime, expSchedule)) {
         // SIMPLIFIED WOY LOGIC using date-fns: Find next valid week occurrence
-        const currentWeek = getISOWeek(searchTime);
-        const currentYear = getISOWeekYear(searchTime);
+        const currentWeek = getISOWeekNumber(searchTime);
+        const currentYear = getISOWeekYearNumber(searchTime);
         const validWeeks = Array.from(expSchedule.weeksOfYearSet).sort(
           (a, b) => a - b
         );
@@ -191,12 +199,12 @@ export class Engine {
         // Create date for the target week using date-fns
         try {
           // Start with beginning of the target year
-          const yearStart = startOfISOWeekYear(new Date(targetYear, 0, 1));
+          const yearStart = getStartOfISOWeekYear(new Date(targetYear, 0, 1));
           // Set to the target week (ensure targetWeek is valid)
           if (targetWeek && targetWeek >= 1 && targetWeek <= 53) {
-            const targetDate = setISOWeek(yearStart, targetWeek);
+            const targetDate = setISOWeekForDate(yearStart, targetWeek);
             // Get start of that week (Monday)
-            searchTime = startOfISOWeek(targetDate);
+            searchTime = getStartOfISOWeek(targetDate);
           } else {
             // Invalid week, skip to next year
             searchTime = new Date(targetYear + 1, 0, 1);
@@ -211,7 +219,7 @@ export class Engine {
       }
       if (!this._isDayMatch(searchTime, expSchedule)) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date + 1,
@@ -231,7 +239,7 @@ export class Engine {
       );
       if (hourWrap) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date + 1,
@@ -244,7 +252,7 @@ export class Engine {
       }
       if (nextHour > hours) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -263,7 +271,7 @@ export class Engine {
       );
       if (minuteWrap) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -276,7 +284,7 @@ export class Engine {
       }
       if (nextMinute > minutes) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -295,7 +303,7 @@ export class Engine {
       );
       if (secondWrap) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -308,7 +316,7 @@ export class Engine {
       }
       if (nextSecond > seconds) {
         // 🚀 OPTIMIZED: Use fast date creation
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -331,11 +339,11 @@ export class Engine {
   public prev(schedule: Schedule, fromTime: Date): Date {
     const expSchedule = this._getExpandedSchedule(schedule);
     const location = expSchedule.timezone;
-    let searchTime = subSeconds(fromTime, 1);
+    let searchTime = subtractSecondsFromDate(fromTime, 1);
 
     for (let i = 0; i < 2000; i++) {
-      // 🚀 OPTIMIZED: Use fast timezone conversion with cache
-      const timeComponents = this._getTimeComponentsFast(searchTime, location);
+      // 🚀 Use centralized date-utils for timezone conversion
+      const timeComponents = getDateComponentsInTimezone(searchTime, location);
       const year = timeComponents.year;
       const month = timeComponents.month;
       const date = timeComponents.day;
@@ -345,7 +353,7 @@ export class Engine {
 
       if (!expSchedule.yearsSet.has(year)) {
         // 🚀 OPTIMIZED: Create last second of previous year
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year - 1,
           11,
           31,
@@ -360,7 +368,7 @@ export class Engine {
       if (!expSchedule.monthsSet.has(month + 1)) {
         // 🚀 OPTIMIZED: Create last second of previous month
         // Note: Using date 31 with month-1, JS Date will auto-adjust to last day of month
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month - 1,
           31,
@@ -374,7 +382,7 @@ export class Engine {
       }
       if (!this._isWeekOfYearMatch(searchTime, expSchedule)) {
         // 🚀 OPTIMIZED: Go to previous day
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date - 1,
@@ -388,7 +396,7 @@ export class Engine {
       }
       if (!this._isDayMatch(searchTime, expSchedule)) {
         // 🚀 OPTIMIZED: Go to previous day
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date - 1,
@@ -407,7 +415,7 @@ export class Engine {
       );
       if (hourWrap) {
         // 🚀 OPTIMIZED: Previous day, last hour
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date - 1,
@@ -421,7 +429,7 @@ export class Engine {
       }
       if (prevHour < hours) {
         // 🚀 OPTIMIZED: Same day, previous hour
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -440,7 +448,7 @@ export class Engine {
       );
       if (minuteWrap) {
         // 🚀 OPTIMIZED: Previous hour
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -454,7 +462,7 @@ export class Engine {
       }
       if (prevMinute < minutes) {
         // 🚀 OPTIMIZED: Same hour, previous minute
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -473,7 +481,7 @@ export class Engine {
       );
       if (secondWrap) {
         // 🚀 OPTIMIZED: Previous minute
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -487,7 +495,7 @@ export class Engine {
       }
       if (prevSecond < seconds) {
         // 🚀 OPTIMIZED: Same minute, previous second
-        searchTime = this._createDateInTimezone(
+        searchTime = createDateFromComponents(
           year,
           month,
           date,
@@ -560,7 +568,7 @@ export class Engine {
     const tz = schedule.tz && schedule.tz !== "" ? schedule.tz : "UTC";
 
     try {
-      formatInTimeZone(new Date(), tz, "yyyy-MM-dd HH:mm:ssXXX");
+      formatDateInTimezone(new Date(), "yyyy-MM-dd HH:mm:ssXXX", tz);
       exp.timezone = tz;
     } catch (e) {
       throw new ParseError(`Invalid timezone '${tz}': ${(e as Error).message}`);
@@ -582,15 +590,15 @@ export class Engine {
     exp.daysOfMonth =
       D === "*" || D === "?" ? [] : this._expandPartOptimized(D, 1, 31);
 
-    // Handle dayOfWeek with special patterns (# and L)
+    // Handle dayOfWeek with special patterns (#, W, and L)
     if (dow === "*" || dow === "?") {
       exp.daysOfWeek = [];
-    } else if (dow.includes("#") || dow.includes("L")) {
-      // For special patterns like 1#1, 5L, etc., don't expand to numbers
+    } else if (dow.includes("#") || dow.includes("W") || dow.includes("L")) {
+      // For special patterns like 1#1, 1W3, 5L, etc., don't expand to numbers
       // The _checkDayOfWeek method will handle these patterns directly
       exp.daysOfWeek = [];
 
-      // 🚀 OPTIMIZED: Pre-parse nthWeekDay patterns
+      // 🚀 OPTIMIZED: Pre-parse nthWeekDay patterns (occurrence-based: 1#3 = 3rd Monday)
       if (dow.includes("#")) {
         exp.hasNthWeekDay = true;
         const parts = dow.split(",");
@@ -600,6 +608,21 @@ export class Engine {
             exp.nthWeekDayPatterns.push({
               day: parseInt(match[1], 10) % 7,
               nth: parseInt(match[2], 10),
+            });
+          }
+        }
+      }
+
+      // 🚀 NEW: Pre-parse week-based patterns (1W3 = Monday of week 3)
+      if (dow.includes("W")) {
+        exp.hasWeekBased = true;
+        const parts = dow.split(",");
+        for (const part of parts) {
+          const match = part.trim().match(/^(\d)W(\d)$/);
+          if (match) {
+            exp.weekBasedPatterns.push({
+              day: parseInt(match[1], 10) % 7,
+              week: parseInt(match[2], 10),
             });
           }
         }
@@ -713,15 +736,43 @@ export class Engine {
     expr: string,
     schedule: ExpandedSchedule
   ): boolean {
-    // Use appropriate time method based on timezone
-    const dayOfMonth = schedule.isUTC ? date.getUTCDate() : date.getDate();
+    // 🚀 FIXED: Use timezone-aware components for non-UTC schedules
+    let dayOfMonth: number;
+    let year: number;
+    let month: number;
+
+    if (schedule.isUTC) {
+      dayOfMonth = date.getUTCDate();
+      year = date.getUTCFullYear();
+      month = date.getUTCMonth();
+    } else {
+      const components = getDateComponentsInTimezone(date, schedule.timezone);
+      dayOfMonth = components.day;
+      year = components.year;
+      month = components.month;
+    }
 
     if (expr.toUpperCase() === "L") {
-      const lastDay = schedule.isUTC
-        ? new Date(
-            Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)
-          ).getUTCDate()
-        : new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+      let lastDay: number;
+
+      if (schedule.isUTC) {
+        lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+      } else {
+        const lastDayComponents = this._getTimeComponentsFast(
+          this._createDateInTimezone(
+            year,
+            month + 1,
+            0,
+            23,
+            59,
+            59,
+            schedule.timezone
+          ),
+          schedule.timezone
+        );
+        lastDay = lastDayComponents.day;
+      }
+
       return dayOfMonth === lastDay;
     }
 
@@ -743,31 +794,61 @@ export class Engine {
     expr: string,
     schedule: ExpandedSchedule
   ): boolean {
-    // Use appropriate time method based on timezone
-    const dayOfWeek = schedule.isUTC ? date.getUTCDay() : date.getDay();
-    const dayOfMonth = schedule.isUTC ? date.getUTCDate() : date.getDate();
+    // 🚀 FIXED: Use timezone-aware components for non-UTC schedules
+    // For non-UTC, we need to get the day/date in the target timezone, not system local
+    let dayOfWeek: number;
+    let dayOfMonth: number;
+    let year: number;
+    let month: number;
+
+    if (schedule.isUTC) {
+      dayOfWeek = date.getUTCDay();
+      dayOfMonth = date.getUTCDate();
+      year = date.getUTCFullYear();
+      month = date.getUTCMonth();
+    } else {
+      // For non-UTC timezones, use centralized date-utils
+      const components = getDateComponentsInTimezone(date, schedule.timezone);
+      dayOfWeek = components.dayOfWeek;
+      dayOfMonth = components.day;
+      year = components.year;
+      month = components.month;
+    }
 
     // 🚀 OPTIMIZED: Use pre-parsed nthWeekDay patterns (fastest path)
+    // Occurrence-based logic: day#N means "Nth occurrence of this day in the month"
+    // Example: 1#3 = 3rd Monday of the month
     if (schedule.hasNthWeekDay && schedule.nthWeekDayPatterns.length > 0) {
-      const year = schedule.isUTC ? date.getUTCFullYear() : date.getFullYear();
-      const month = schedule.isUTC ? date.getUTCMonth() : date.getMonth();
-
       for (const pattern of schedule.nthWeekDayPatterns) {
         // Check day match first (fast rejection)
         if (dayOfWeek !== pattern.day) continue;
 
-        // Get cached first occurrence
+        // Get cached first occurrence day
         const cacheKey = `${year}-${month}-${pattern.day}`;
         let firstOccurrenceDay = this.nthWeekDayCache.get(cacheKey);
 
         if (firstOccurrenceDay === undefined) {
-          const firstDayOfMonth = schedule.isUTC
-            ? new Date(Date.UTC(year, month, 1))
-            : new Date(year, month, 1);
+          // Get the day of week for the 1st of the month
+          let firstDayOfWeek: number;
 
-          const firstDayOfWeek = schedule.isUTC
-            ? firstDayOfMonth.getUTCDay()
-            : firstDayOfMonth.getDay();
+          if (schedule.isUTC) {
+            const firstDayOfMonth = new Date(Date.UTC(year, month, 1));
+            firstDayOfWeek = firstDayOfMonth.getUTCDay();
+          } else {
+            const firstDayComponents = getDateComponentsInTimezone(
+              createDateFromComponents(
+                year,
+                month,
+                1,
+                0,
+                0,
+                0,
+                schedule.timezone
+              ),
+              schedule.timezone
+            );
+            firstDayOfWeek = firstDayComponents.dayOfWeek;
+          }
 
           const daysToFirstOccurrence = (pattern.day - firstDayOfWeek + 7) % 7;
           firstOccurrenceDay = 1 + daysToFirstOccurrence;
@@ -780,9 +861,61 @@ export class Engine {
           }
         }
 
+        // Calculate nth occurrence: which occurrence of this day is this date?
         const nthOccurrence =
           Math.floor((dayOfMonth - firstOccurrenceDay) / 7) + 1;
+
         if (nthOccurrence === pattern.nth) return true;
+      }
+
+      // Don't return false yet - check week-based patterns too
+      if (!schedule.hasWeekBased) return false;
+    }
+
+    // 🚀 NEW: Week-based patterns (dayWN syntax, e.g., 1W3 = Monday of week 3)
+    if (schedule.hasWeekBased && schedule.weekBasedPatterns.length > 0) {
+      for (const pattern of schedule.weekBasedPatterns) {
+        // Check day match first (fast rejection)
+        if (dayOfWeek !== pattern.day) continue;
+
+        // Get cached first day of week for this month
+        const cacheKey = `${year}-${month}-firstDay`;
+        let firstDayOfWeek: number | undefined =
+          this.nthWeekDayCache.get(cacheKey);
+
+        if (firstDayOfWeek === undefined) {
+          if (schedule.isUTC) {
+            const firstDayOfMonth = new Date(Date.UTC(year, month, 1));
+            firstDayOfWeek = firstDayOfMonth.getUTCDay();
+          } else {
+            const firstDayComponents = getDateComponentsInTimezone(
+              createDateFromComponents(
+                year,
+                month,
+                1,
+                0,
+                0,
+                0,
+                schedule.timezone
+              ),
+              schedule.timezone
+            );
+            firstDayOfWeek = firstDayComponents.dayOfWeek;
+          }
+
+          this.nthWeekDayCache.set(cacheKey, firstDayOfWeek);
+
+          if (this.nthWeekDayCache.size > Engine.MAX_NTH_CACHE_SIZE) {
+            const firstKey = this.nthWeekDayCache.keys().next().value;
+            if (firstKey) this.nthWeekDayCache.delete(firstKey);
+          }
+        }
+
+        // Calculate week number using formula
+        const weekNumber =
+          Math.floor((dayOfMonth - 1 + firstDayOfWeek) / 7) + 1;
+
+        if (weekNumber === pattern.week) return true;
       }
       return false;
     }
@@ -800,11 +933,31 @@ export class Engine {
       const lastDayMatch = expr.match(/^(\d)L$/i);
       if (lastDayMatch) {
         const day = parseInt(lastDayMatch[1], 10) % 7;
-        const lastDayOfCurrentMonth = schedule.isUTC
-          ? new Date(
-              Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)
-            ).getUTCDate()
-          : new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+
+        // Get last day of current month in the correct timezone
+        let lastDayOfCurrentMonth: number;
+
+        if (schedule.isUTC) {
+          lastDayOfCurrentMonth = new Date(
+            Date.UTC(year, month + 1, 0)
+          ).getUTCDate();
+        } else {
+          // For non-UTC, get last day of month in target timezone
+          const lastDayComponents = this._getTimeComponentsFast(
+            this._createDateInTimezone(
+              year,
+              month + 1,
+              0,
+              23,
+              59,
+              59,
+              schedule.timezone
+            ),
+            schedule.timezone
+          );
+          lastDayOfCurrentMonth = lastDayComponents.day;
+        }
+
         return dayOfWeek === day && dayOfMonth > lastDayOfCurrentMonth - 7;
       }
     }
@@ -826,8 +979,8 @@ export class Engine {
 
   // Helper function to get ISO week number (1-53) using reliable date-fns
   private _getISOWeek(date: Date, schedule?: ExpandedSchedule): number {
-    // Use date-fns getISOWeek for reliable ISO week calculation
-    return getISOWeek(date);
+    // Use centralized date-utils for reliable ISO week calculation
+    return getISOWeekNumber(date);
   }
 
   private _isWeekOfYearMatch(
@@ -955,12 +1108,13 @@ export class Engine {
   }
 
   /**
-   * 🚀 OPTIMIZED: Create date in specific timezone using cache
-   * Replaces expensive fromZonedTime() calls
-   *
+   * 🚀 Create date in specific timezone
    * Takes time components in the TARGET timezone and returns UTC Date
    * Example: createDateInTimezone(2024, 0, 1, 12, 0, 0, "America/New_York")
    *   means "noon in NY" which is 17:00 UTC
+   *
+   * NOTE: fromZonedTime is NOT cacheable because it interprets the Date object's
+   * local components in the target timezone. We must use it directly.
    */
   private _createDateInTimezone(
     year: number,
@@ -976,45 +1130,13 @@ export class Engine {
       return new Date(Date.UTC(year, month, day, hours, minutes, seconds, 0));
     }
 
-    // For non-UTC: we have time components in the target timezone
-    // We need to convert them to UTC
-    // Strategy: Create a "fake" UTC date with these components,
-    // then find what offset we need to apply to get the correct UTC time
+    // For non-UTC: use fromZonedTime
+    // Create a Date with these components (will be interpreted as system local time)
+    // Then fromZonedTime will treat those components as if they're in the target timezone
+    const localDate = new Date(year, month, day, hours, minutes, seconds, 0);
 
-    // Create approximate UTC timestamp
-    const approxUtc = Date.UTC(year, month, day, hours, minutes, seconds, 0);
-
-    // Get cached offset for this timezone at this approximate time
-    const cacheKey = `${timezone}-${Math.floor(approxUtc / Engine.CACHE_TTL)}`;
-    let cached = this.timezoneCache.get(cacheKey);
-
-    if (!cached) {
-      // Need to calculate offset - use expensive conversion once
-      // Create a Date and convert it to the target timezone
-      const testDate = new Date(approxUtc);
-      const zonedDate = toZonedTime(testDate, timezone);
-      const offset = zonedDate.getTime() - testDate.getTime();
-
-      cached = {
-        offset,
-        dstOffset: offset,
-        timestamp: approxUtc,
-      };
-
-      this.timezoneCache.set(cacheKey, cached);
-
-      // Cleanup
-      if (this.timezoneCache.size > Engine.MAX_TZ_CACHE_SIZE) {
-        const firstKey = this.timezoneCache.keys().next().value;
-        if (firstKey) this.timezoneCache.delete(firstKey);
-      }
-    }
-
-    // The offset tells us: "local time" = UTC time + offset
-    // So: UTC time = "local time" - offset
-    // But our approxUtc is already in "local time" format
-    // We need to subtract the offset to get actual UTC
-    return new Date(approxUtc - cached.offset);
+    // fromZonedTime interprets localDate's components as target timezone and returns UTC
+    return fromZonedTime(localDate, timezone);
   }
 
   /**

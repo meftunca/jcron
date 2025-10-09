@@ -380,6 +380,65 @@ SELECT jcron.get_nth_weekday(
 
 ---
 
+### `jcron.get_weekday_of_week()` ⭐ NEW
+
+Ayın belirli haftasında belirli bir weekday'i hesaplar (week-based).
+
+**Signature:**
+```sql
+jcron.get_weekday_of_week(
+    year_val INTEGER,
+    month_val INTEGER,
+    weekday_num INTEGER,
+    week_num INTEGER
+) RETURNS DATE
+```
+
+**Parameters:**
+- `year_val` - Year
+- `month_val` - Month (1-12)
+- `weekday_num` - Day of week (0=Sunday, 6=Saturday)
+- `week_num` - Week number (1-5)
+
+**Returns:** Date of weekday in specified week, or NULL if doesn't exist
+
+**Week Definition:**
+- Week 1 starts on day 1 of month
+- Week 1 ends on first Sunday
+- Subsequent weeks are 7-day periods
+
+**Examples:**
+```sql
+-- July 2025'in 4. haftasının pazartesi (21 Temmuz)
+SELECT jcron.get_weekday_of_week(2025, 7, 1, 4);
+-- Returns: 2025-07-21
+
+-- July 2025'in 1. haftasının pazartesi (week 1'de pazartesi yok)
+SELECT jcron.get_weekday_of_week(2025, 7, 1, 1);
+-- Returns: NULL (week 1 = days 1-6, no Monday)
+```
+
+**Difference from `get_nth_weekday()`:**
+- `get_nth_weekday()` - Occurrence-based (e.g., 3rd Monday)
+- `get_weekday_of_week()` - Week-based (e.g., Monday of week 4)
+- They may return different dates depending on month start day!
+
+**Example showing difference:**
+```sql
+-- July 2025 starts Tuesday:
+SELECT jcron.get_weekday_of_week(2025, 7, 1, 4);  -- Week 4 Monday = July 21
+SELECT jcron.get_nth_weekday(2025, 7, 1, 3);      -- 3rd Monday = July 21 (same!)
+
+SELECT jcron.get_weekday_of_week(2025, 7, 1, 2);  -- Week 2 Monday = July 7
+SELECT jcron.get_nth_weekday(2025, 7, 1, 1);      -- 1st Monday = July 7 (same!)
+
+-- But week 1 has NO Monday:
+SELECT jcron.get_weekday_of_week(2025, 7, 1, 1);  -- NULL
+SELECT jcron.get_nth_weekday(2025, 7, 1, 1);      -- July 7 (1st occurrence)
+```
+
+---
+
 ### `jcron.get_week_start()`
 
 ISO 8601 haftasının başlangıç tarihini hesaplar.
@@ -595,6 +654,74 @@ SELECT jcron.version();
 ---
 
 ## Advanced Usage
+
+### Week-based vs Occurrence-based Scheduling ⭐ NEW
+
+JCRON supports two different ways to specify nth weekdays:
+
+#### `#` Syntax (Occurrence-based)
+
+Counts occurrences of a weekday within a month:
+
+```sql
+-- 1st Monday of month
+SELECT jcron.next_time('0 0 9 * * 1#1', NOW());
+
+-- 3rd Friday of month
+SELECT jcron.next_time('0 0 17 * * 5#3', NOW());
+```
+
+#### `W` Syntax (Week-based)
+
+Specifies weekday within a week number:
+
+```sql
+-- Monday of week 4
+SELECT jcron.next_time('0 0 9 * * 1W4', NOW());
+
+-- Friday of week 3
+SELECT jcron.next_time('0 0 17 * * 5W3', NOW());
+```
+
+#### Key Differences
+
+**Week Definition:**
+- Week 1 starts on day 1 of month (regardless of weekday)
+- Week 1 ends on first Sunday
+- Subsequent weeks are standard 7-day periods
+
+**Example: July 2025 (starts Tuesday)**
+
+| Week | Days | Monday | Syntax Comparison |
+|------|------|--------|-------------------|
+| Week 1 | 1-6 (Tue-Sun) | **None** | `1W1` → NULL, `1#1` → July 7 |
+| Week 2 | 7-13 | July 7 | `1W2` → July 7 (= `1#1`) |
+| Week 3 | 14-20 | July 14 | `1W3` → July 14 (= `1#2`) |
+| Week 4 | 21-27 | July 21 | `1W4` → July 21 (= `1#3`) ✅ |
+
+**When they differ:**
+```sql
+-- September 2025 starts Monday:
+SELECT jcron.next_time('0 0 9 * * 1W1', '2025-08-31'::TIMESTAMPTZ);
+-- Returns: 2025-09-01 (week 1 HAS Monday)
+
+SELECT jcron.next_time('0 0 9 * * 1#1', '2025-08-31'::TIMESTAMPTZ);
+-- Returns: 2025-09-01 (1st Monday - same!)
+
+-- July 2025 starts Tuesday:
+SELECT jcron.next_time('0 0 9 * * 1W1', '2025-06-30'::TIMESTAMPTZ);
+-- Returns: 2025-09-01 (skips July, week 1 has no Monday)
+
+SELECT jcron.next_time('0 0 9 * * 1#1', '2025-06-30'::TIMESTAMPTZ);
+-- Returns: 2025-07-07 (1st Monday exists)
+```
+
+**NULL Handling:**
+- If a weekday doesn't exist in the specified week, `W` syntax returns NULL
+- The scheduler automatically skips to the next month where it exists
+- `#` syntax always finds the occurrence if it exists in the month
+
+---
 
 ### Timezone Support
 

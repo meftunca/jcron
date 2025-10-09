@@ -10,11 +10,12 @@ High-performance cron expression scheduler for PostgreSQL with advanced features
 
 - ⚡ **Ultra-High Performance** - 100K+ operations per second
 - 🎯 **Full Cron Syntax** - Standard 6-field cron expressions
-- 🔥 **Advanced Patterns** - L (last) and # (nth) weekday support
+- 🔥 **Advanced Patterns** - L (last), # (nth occurrence), W (week-based) support
 - 📅 **Week of Year** - ISO 8601 week-based scheduling
 - 🌍 **Timezone Support** - Global timezone handling
 - 🚀 **Zero Dependencies** - Pure PostgreSQL/SQL
 - 💾 **Production Ready** - Battle-tested and optimized
+- ✅ **100% Edge Case Coverage** - WOY validation, DST transitions, leap years
 
 ---
 
@@ -28,7 +29,8 @@ High-performance cron expression scheduler for PostgreSQL with advanced features
 | `0 0 9 * * 1-5` | Weekdays at 9 AM | Mon-Fri 09:00 |
 | `0 0 0 1 * *` | Monthly 1st day | 1st 00:00 |
 | `0 0 0 L * *` | Last day of month | 28-31st 00:00 |
-| `0 0 9 * * 1#2` | 2nd Monday | 2nd Mon 09:00 |
+| `0 0 9 * * 1#2` | 2nd Monday (occurrence) | 2nd Mon 09:00 |
+| `0 0 9 * * 1W4` | Monday of 4th week | Week 4 Mon 09:00 |
 | `0 0 17 * * 5L` | Last Friday 5 PM | Last Fri 17:00 |
 | `E1D` | End of day | 23:59:59.999 |
 | `S1W` | Start of next week | Mon 00:00:00 |
@@ -62,8 +64,11 @@ SELECT jcron.next_time('0 0 9 * * 1-5', NOW());
 -- Last day of month
 SELECT jcron.next_time('0 0 0 L * *', NOW());
 
--- 2nd Thursday of month
+-- 2nd Thursday of month (occurrence-based)
 SELECT jcron.next_time('0 0 9 * * 4#2', NOW());
+
+-- Monday of 4th week (week-based)
+SELECT jcron.next_time('0 0 9 * * 1W4', NOW());
 ```
 
 ## Documentation

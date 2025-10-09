@@ -204,9 +204,11 @@ function normalizeToSchedule(input: string | Schedule): Schedule {
       return fromJCronString(expression);
     }
 
-    // 5. Check for L/# syntax in cron fields
+    // 5. Check for L/#/W syntax in cron fields
     const hasSpecialSyntax =
-      expression.includes("L") || expression.includes("#");
+      expression.includes("L") ||
+      expression.includes("#") ||
+      /\dW\d/.test(expression);
 
     if (hasSpecialSyntax) {
       return fromJCronString(expression);
@@ -237,13 +239,16 @@ function validateScheduleFields(schedule: Schedule): boolean {
       return true;
     }
 
-    if (fieldType === "dayOfWeek" && (value.includes("#") || value.includes("L"))) {
-      // Handle multiple patterns: "1#1,3L,5L" or "1#2,2#4"
+    if (
+      fieldType === "dayOfWeek" &&
+      (value.includes("#") || value.includes("W") || value.includes("L"))
+    ) {
+      // Handle multiple patterns: "1#1,3L,5L" or "1#2,2#4" or "1W3,2W4"
       const patterns = value.split(",");
       for (const pattern of patterns) {
         const trimmed = pattern.trim();
-        
-        // Validate '#' pattern: "1#2" (second Monday)
+
+        // Validate '#' pattern: "1#2" (2nd Monday occurrence)
         if (trimmed.includes("#")) {
           const parts = trimmed.split("#");
           if (parts.length !== 2) return false;
@@ -254,7 +259,19 @@ function validateScheduleFields(schedule: Schedule): boolean {
           if (occurrence < 1 || occurrence > 5) return false; // Occurrence must be 1-5
           continue;
         }
-        
+
+        // Validate 'W' pattern: "1W3" (Monday of week 3)
+        if (trimmed.includes("W")) {
+          const parts = trimmed.split("W");
+          if (parts.length !== 2) return false;
+          const day = parseInt(parts[0]);
+          const week = parseInt(parts[1]);
+          if (isNaN(day) || isNaN(week)) return false;
+          if (day < 0 || day > 7) return false; // Day must be 0-7
+          if (week < 1 || week > 5) return false; // Week must be 1-5
+          continue;
+        }
+
         // Validate 'L' pattern: "5L" (last Friday)
         if (trimmed.includes("L")) {
           const dayStr = trimmed.replace("L", "");
@@ -263,8 +280,8 @@ function validateScheduleFields(schedule: Schedule): boolean {
           if (isNaN(dayNum) || dayNum < 0 || dayNum > 7) return false;
           continue;
         }
-        
-        // If neither # nor L, validate as normal day number
+
+        // If neither #, W, nor L, validate as normal day number
         const dayNum = parseInt(trimmed);
         if (isNaN(dayNum) || dayNum < 0 || dayNum > 7) return false;
       }
