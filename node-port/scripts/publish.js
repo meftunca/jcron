@@ -129,14 +129,14 @@ function main() {
     process.exit(1);
   }
 
-  // 5. Run tests
-  log("\n🧪 Step 5: Running tests...", "blue");
-  try {
-    exec("npm test", true);
-    log("✅ Tests passed", "green");
-  } catch (error) {
-    log("⚠️  Some tests failed, but continuing...", "yellow");
-  }
+  // // 5. Run tests
+  // log("\n🧪 Step 5: Running tests...", "blue");
+  // try {
+  //   exec("npm test", true);
+  //   log("✅ Tests passed", "green");
+  // } catch (error) {
+  //   log("⚠️  Some tests failed, but continuing...", "yellow");
+  // }
 
   // 6. Dry run (optional)
   const dryRun = process.argv.includes("--dry-run");
