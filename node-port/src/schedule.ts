@@ -2,6 +2,56 @@
 import { getNext, getPrev } from ".";
 import { EndOfDuration, parseEoD } from "./eod";
 import { ParseError } from "./errors";
+import { parseISO, isValid as isValidDate } from "date-fns";
+
+/**
+ * Type for flexible date input - accepts Date objects, ISO strings, or Unix timestamps
+ */
+export type DateInput = Date | string | number;
+
+/**
+ * Normalize various date input formats to a Date object using date-fns
+ * @param input Date object, ISO date string, or Unix timestamp (milliseconds)
+ * @param paramName Parameter name for error messages
+ * @returns Valid Date object
+ * @throws Error if input is invalid or cannot be parsed
+ */
+function normalizeDate(input: DateInput | undefined | null, paramName: string): Date {
+  if (input === undefined || input === null) {
+    throw new Error(`${paramName} is required`);
+  }
+
+  // Already a Date object
+  if (input instanceof Date) {
+    if (!isValidDate(input)) {
+      throw new Error(`${paramName} is an invalid Date object`);
+    }
+    return input;
+  }
+
+  // ISO string format (e.g., "2024-01-01", "2024-01-01T10:00:00Z")
+  if (typeof input === 'string') {
+    const parsed = parseISO(input);
+    if (!isValidDate(parsed)) {
+      throw new Error(`${paramName} is not a valid ISO date string: ${input}`);
+    }
+    return parsed;
+  }
+
+  // Unix timestamp in milliseconds
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) {
+      throw new Error(`${paramName} must be a finite number (Unix timestamp)`);
+    }
+    const parsed = new Date(input);
+    if (!isValidDate(parsed)) {
+      throw new Error(`${paramName} is not a valid Unix timestamp: ${input}`);
+    }
+    return parsed;
+  }
+
+  throw new Error(`${paramName} must be a Date, ISO date string, or Unix timestamp`);
+}
 
 // Interface for timezone validation
 interface TimezoneValidation {
@@ -215,16 +265,19 @@ export class Schedule {
   /**
    * Calculate the end date for this schedule based on its End-of-Duration (EOD) configuration
    * If the schedule has an EOD, calculates when the schedule should end execution
-   * @param fromDate The starting date for the calculation (defaults to current time)
+   * @param fromDate Date, ISO string, or Unix timestamp (defaults to current time)
    * @returns Date when the schedule should end, or null if no EOD is configured
    */
-  endOf(fromDate: Date = new Date()): Date | null {
+  endOf(fromDate?: DateInput): Date | null {
     if (!this.eod) {
       return null;
     }
 
+    // Normalize date input, defaulting to current time if not provided
+    const normalizedDate = fromDate ? normalizeDate(fromDate, 'fromDate') : new Date();
+
     // Get the next trigger time (when the schedule will be triggered)
-    const nextTime = getNext(this, fromDate);
+    const nextTime = getNext(this, normalizedDate);
     if (!nextTime) {
       return null; // No next trigger time found
     }
@@ -236,16 +289,19 @@ export class Schedule {
   /**
    * Calculate the start date for this schedule based on its End-of-Duration (EOD) configuration
    * If the schedule has an EOD, calculates when the schedule should start execution
-   * @param fromDate The starting date for the calculation (defaults to current time)
+   * @param fromDate Date, ISO string, or Unix timestamp (defaults to current time)
    * @returns Date when the schedule should start, or null if no EOD is configured
    */
-  startOf(fromDate: Date = new Date()): Date | null {
+  startOf(fromDate?: DateInput): Date | null {
     if (!this.eod) {
       return null;
     }
 
+    // Normalize date input, defaulting to current time if not provided
+    const normalizedDate = fromDate ? normalizeDate(fromDate, 'fromDate') : new Date();
+
     // Get the previous trigger time (when the schedule would have been triggered)
-    const prev = getPrev(this, fromDate);
+    const prev = getPrev(this, normalizedDate);
     if (!prev) {
       return null; // No previous trigger time found
     }
@@ -258,30 +314,33 @@ export class Schedule {
   /**
    * Check if timeCreated is within an active execution window
    * For EOD schedules, checks if timeCreated is between previous trigger and its end time
-   * @param timeCreated The time to check if it's within an active execution window
+   * @param timeCreated Date, ISO string, or Unix timestamp to check
    * @returns true if timeCreated is within an active execution window, false otherwise
    */
-  isRangeNow(timeCreated: Date): boolean {
+  isRangeNow(timeCreated: DateInput): boolean {
     if (!this.eod) {
       return false;
     }
 
     try {
+      // Normalize date input
+      const normalizedDate = normalizeDate(timeCreated, 'timeCreated');
+
       // Special logic for WOY patterns
       if (this.woy) {
-        return this._isRangeNowForWOY(timeCreated);
+        return this._isRangeNowForWOY(normalizedDate);
       }
 
       // Standard logic for regular cron patterns
-      const prevTrigger = getPrev(this, timeCreated);
+      const prevTrigger = getPrev(this, normalizedDate);
 
       if (prevTrigger) {
         const endTime = this.eod.calculateEndDate(prevTrigger);
 
-        // Check if timeCreated is between previous trigger and its end time
+        // Check if normalizedDate is between previous trigger and its end time
         if (
-          timeCreated.getTime() >= prevTrigger.getTime() &&
-          timeCreated.getTime() <= endTime.getTime()
+          normalizedDate.getTime() >= prevTrigger.getTime() &&
+          normalizedDate.getTime() <= endTime.getTime()
         ) {
           return true;
         }

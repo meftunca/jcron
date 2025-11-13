@@ -16,6 +16,7 @@ Complete API documentation for JCRON SQL functions.
 Ana scheduling fonksiyonu. Bir sonraki çalışma zamanını hesaplar.
 
 **Signature:**
+
 ```sql
 jcron.next_time(
     pattern TEXT,
@@ -26,6 +27,7 @@ jcron.next_time(
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern veya özel syntax (WOY, E/S modifiers)
 - `from_time` - Başlangıç zamanı (default: NOW())
 - `get_endof` - Period sonunu hesapla (default: TRUE)
@@ -34,6 +36,7 @@ jcron.next_time(
 **Returns:** Next occurrence timestamp
 
 **Examples:**
+
 ```sql
 -- Temel kullanım
 SELECT jcron.next_time('0 0 9 * * *');
@@ -41,11 +44,16 @@ SELECT jcron.next_time('0 0 9 * * *');
 -- Belirli bir zamandan itibaren
 SELECT jcron.next_time('0 0 9 * * 1-5', '2025-01-01 00:00:00');
 
--- End of day
-SELECT jcron.next_time('E1D', NOW());
+-- End/Start of Period
+SELECT jcron.next_time('E0D', NOW());  -- End of today
+SELECT jcron.next_time('E0H', NOW());  -- End of this hour
+SELECT jcron.next_time('S0W', NOW());  -- Start of this week
+SELECT jcron.next_time('S2H', NOW());  -- Start 2 hours later
 
--- Start of week
-SELECT jcron.next_time('S1W', NOW());
+-- Cron + EOD/SOD Modifiers
+SELECT jcron.next_time('0 0 10 * * * S0H', NOW());  -- 10:00:00
+SELECT jcron.next_time('0 0 10 * * * S2H', NOW());  -- 12:00:00 (10+2)
+SELECT jcron.next_time('0 0 9 * * 1-5 E0D', NOW()); -- Weekdays end of day
 ```
 
 ---
@@ -55,16 +63,19 @@ SELECT jcron.next_time('S1W', NOW());
 Simplified version - sadece pattern alır.
 
 **Signature:**
+
 ```sql
 jcron.next(pattern TEXT) RETURNS TIMESTAMPTZ
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern
 
 **Returns:** Next occurrence from NOW()
 
 **Example:**
+
 ```sql
 SELECT jcron.next('0 0 9 * * *');
 ```
@@ -76,6 +87,7 @@ SELECT jcron.next('0 0 9 * * *');
 Belirli bir zamandan sonraki occurrence.
 
 **Signature:**
+
 ```sql
 jcron.next_from(
     pattern TEXT,
@@ -84,12 +96,14 @@ jcron.next_from(
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern
 - `from_time` - Starting time
 
 **Returns:** Next occurrence after from_time
 
 **Example:**
+
 ```sql
 SELECT jcron.next_from('0 0 9 * * *', '2025-01-01');
 ```
@@ -101,16 +115,19 @@ SELECT jcron.next_from('0 0 9 * * *', '2025-01-01');
 Next occurrence'ın period sonu (simplified).
 
 **Signature:**
+
 ```sql
 jcron.next_end(pattern TEXT) RETURNS TIMESTAMPTZ
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern
 
 **Returns:** Next end of period
 
 **Example:**
+
 ```sql
 SELECT jcron.next_end('E1D');  -- End of today
 ```
@@ -122,6 +139,7 @@ SELECT jcron.next_end('E1D');  -- End of today
 Belirli zamandan sonraki period sonu.
 
 **Signature:**
+
 ```sql
 jcron.next_end_from(
     pattern TEXT,
@@ -130,6 +148,7 @@ jcron.next_end_from(
 ```
 
 **Example:**
+
 ```sql
 SELECT jcron.next_end_from('E1W', '2025-01-01');
 ```
@@ -141,16 +160,19 @@ SELECT jcron.next_end_from('E1W', '2025-01-01');
 Next occurrence'ın period başı (simplified).
 
 **Signature:**
+
 ```sql
 jcron.next_start(pattern TEXT) RETURNS TIMESTAMPTZ
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern
 
 **Returns:** Next start of period
 
 **Example:**
+
 ```sql
 SELECT jcron.next_start('S1D');  -- Start of tomorrow
 ```
@@ -162,6 +184,7 @@ SELECT jcron.next_start('S1D');  -- Start of tomorrow
 Belirli zamandan sonraki period başı.
 
 **Signature:**
+
 ```sql
 jcron.next_start_from(
     pattern TEXT,
@@ -170,6 +193,7 @@ jcron.next_start_from(
 ```
 
 **Example:**
+
 ```sql
 SELECT jcron.next_start_from('S1M', '2025-01-15');
 ```
@@ -181,6 +205,7 @@ SELECT jcron.next_start_from('S1M', '2025-01-15');
 Önceki çalışma zamanını hesaplar.
 
 **Signature:**
+
 ```sql
 jcron.prev_time(
     pattern TEXT,
@@ -191,11 +216,13 @@ jcron.prev_time(
 ```
 
 **Parameters:**
+
 - Same as `next_time()`
 
 **Returns:** Previous occurrence timestamp
 
 **Example:**
+
 ```sql
 SELECT jcron.prev_time('0 0 9 * * *', NOW());
 ```
@@ -207,6 +234,7 @@ SELECT jcron.prev_time('0 0 9 * * *', NOW());
 Verilen zamanın pattern'a uyup uymadığını kontrol eder.
 
 **Signature:**
+
 ```sql
 jcron.match_time(
     pattern TEXT,
@@ -215,12 +243,14 @@ jcron.match_time(
 ```
 
 **Parameters:**
+
 - `pattern` - Cron pattern
 - `check_time` - Time to check
 
 **Returns:** TRUE if time matches pattern
 
 **Examples:**
+
 ```sql
 -- Şu an 9:00 mı?
 SELECT jcron.match_time('0 0 9 * * *', NOW());
@@ -241,6 +271,7 @@ SELECT jcron.match_time(
 Period sonunu hesaplar (E modifier işlemleri için).
 
 **Signature:**
+
 ```sql
 jcron.calc_end_time(
     from_time TIMESTAMPTZ,
@@ -251,6 +282,7 @@ jcron.calc_end_time(
 ```
 
 **Parameters:**
+
 - `from_time` - Starting timestamp
 - `weeks` - Number of weeks to add
 - `months` - Number of months to add
@@ -259,6 +291,7 @@ jcron.calc_end_time(
 **Returns:** End of the specified period
 
 **Examples:**
+
 ```sql
 -- End of current day
 SELECT jcron.calc_end_time(NOW(), 0, 0, 0);
@@ -277,6 +310,7 @@ SELECT jcron.calc_end_time(NOW(), 0, 1, 0);
 Period başlangıcını hesaplar (S modifier işlemleri için).
 
 **Signature:**
+
 ```sql
 jcron.calc_start_time(
     from_time TIMESTAMPTZ,
@@ -287,11 +321,13 @@ jcron.calc_start_time(
 ```
 
 **Parameters:**
+
 - Same as `calc_end_time()`
 
 **Returns:** Start of the specified period
 
 **Examples:**
+
 ```sql
 -- Start of tomorrow
 SELECT jcron.calc_start_time(NOW(), 0, 0, 1);
@@ -312,6 +348,7 @@ SELECT jcron.calc_start_time(NOW(), 0, 1, 0);
 Ayın son belirtilen gününü hesaplar (L syntax alternatifi).
 
 **Signature:**
+
 ```sql
 jcron.get_last_weekday(
     year_val INTEGER,
@@ -321,6 +358,7 @@ jcron.get_last_weekday(
 ```
 
 **Parameters:**
+
 - `year_val` - Year
 - `month_val` - Month (1-12)
 - `weekday_num` - Day of week (0=Sunday, 6=Saturday)
@@ -328,6 +366,7 @@ jcron.get_last_weekday(
 **Returns:** Date of last specified weekday
 
 **Examples:**
+
 ```sql
 -- 2025 Ekim'in son pazartesi
 SELECT jcron.get_last_weekday(2025, 10, 1);
@@ -347,6 +386,7 @@ SELECT jcron.get_last_weekday(
 Ayın N'inci belirtilen gününü hesaplar (# syntax alternatifi).
 
 **Signature:**
+
 ```sql
 jcron.get_nth_weekday(
     year_val INTEGER,
@@ -357,6 +397,7 @@ jcron.get_nth_weekday(
 ```
 
 **Parameters:**
+
 - `year_val` - Year
 - `month_val` - Month (1-12)
 - `weekday_num` - Day of week (0=Sunday, 6=Saturday)
@@ -365,6 +406,7 @@ jcron.get_nth_weekday(
 **Returns:** Date of Nth weekday, or NULL if doesn't exist
 
 **Examples:**
+
 ```sql
 -- 2025 Ekim'in 2. perşembesi
 SELECT jcron.get_nth_weekday(2025, 10, 4, 2);
@@ -385,6 +427,7 @@ SELECT jcron.get_nth_weekday(
 Ayın belirli haftasında belirli bir weekday'i hesaplar (week-based).
 
 **Signature:**
+
 ```sql
 jcron.get_weekday_of_week(
     year_val INTEGER,
@@ -395,6 +438,7 @@ jcron.get_weekday_of_week(
 ```
 
 **Parameters:**
+
 - `year_val` - Year
 - `month_val` - Month (1-12)
 - `weekday_num` - Day of week (0=Sunday, 6=Saturday)
@@ -403,11 +447,13 @@ jcron.get_weekday_of_week(
 **Returns:** Date of weekday in specified week, or NULL if doesn't exist
 
 **Week Definition:**
+
 - Week 1 starts on day 1 of month
 - Week 1 ends on first Sunday
 - Subsequent weeks are 7-day periods
 
 **Examples:**
+
 ```sql
 -- July 2025'in 4. haftasının pazartesi (21 Temmuz)
 SELECT jcron.get_weekday_of_week(2025, 7, 1, 4);
@@ -419,11 +465,13 @@ SELECT jcron.get_weekday_of_week(2025, 7, 1, 1);
 ```
 
 **Difference from `get_nth_weekday()`:**
+
 - `get_nth_weekday()` - Occurrence-based (e.g., 3rd Monday)
 - `get_weekday_of_week()` - Week-based (e.g., Monday of week 4)
 - They may return different dates depending on month start day!
 
 **Example showing difference:**
+
 ```sql
 -- July 2025 starts Tuesday:
 SELECT jcron.get_weekday_of_week(2025, 7, 1, 4);  -- Week 4 Monday = July 21
@@ -444,6 +492,7 @@ SELECT jcron.get_nth_weekday(2025, 7, 1, 1);      -- July 7 (1st occurrence)
 ISO 8601 haftasının başlangıç tarihini hesaplar.
 
 **Signature:**
+
 ```sql
 jcron.get_week_start(
     year_val INTEGER,
@@ -452,12 +501,14 @@ jcron.get_week_start(
 ```
 
 **Parameters:**
+
 - `year_val` - Year
 - `week_num` - ISO week number (1-53)
 
 **Returns:** Start date of the week (Monday)
 
 **Example:**
+
 ```sql
 -- 2025'in 40. haftasının başlangıcı
 SELECT jcron.get_week_start(2025, 40);
@@ -472,16 +523,19 @@ SELECT jcron.get_week_start(2025, 40);
 Epoch değerinden day of week hesaplar (ultra-fast mathematical calculation).
 
 **Signature:**
+
 ```sql
 jcron.fast_dow(epoch_val BIGINT) RETURNS INTEGER
 ```
 
 **Parameters:**
+
 - `epoch_val` - Unix epoch timestamp
 
 **Returns:** Day of week (0=Sunday, 6=Saturday)
 
 **Example:**
+
 ```sql
 SELECT jcron.fast_dow(EXTRACT(EPOCH FROM NOW())::BIGINT);
 -- Returns: 0-6
@@ -494,16 +548,19 @@ SELECT jcron.fast_dow(EXTRACT(EPOCH FROM NOW())::BIGINT);
 Timestamp'ten epoch değeri çıkarır (optimized).
 
 **Signature:**
+
 ```sql
 jcron.fast_epoch(ts TIMESTAMPTZ) RETURNS BIGINT
 ```
 
 **Parameters:**
+
 - `ts` - Timestamp with timezone
 
 **Returns:** Unix epoch value
 
 **Example:**
+
 ```sql
 SELECT jcron.fast_epoch(NOW());
 ```
@@ -515,6 +572,7 @@ SELECT jcron.fast_epoch(NOW());
 İki zaman arasındaki farkı milisaniye cinsinden hesaplar.
 
 **Signature:**
+
 ```sql
 jcron.fast_time_diff_ms(
     end_ts TIMESTAMPTZ,
@@ -523,12 +581,14 @@ jcron.fast_time_diff_ms(
 ```
 
 **Parameters:**
+
 - `end_ts` - End timestamp
 - `start_ts` - Start timestamp
 
 **Returns:** Difference in milliseconds
 
 **Example:**
+
 ```sql
 SELECT jcron.fast_time_diff_ms(
     NOW(),
@@ -544,16 +604,19 @@ SELECT jcron.fast_time_diff_ms(
 Timezone'un geçerli olup olmadığını kontrol eder.
 
 **Signature:**
+
 ```sql
 jcron.validate_timezone(tz TEXT) RETURNS BOOLEAN
 ```
 
 **Parameters:**
+
 - `tz` - Timezone name
 
 **Returns:** TRUE if valid timezone
 
 **Examples:**
+
 ```sql
 SELECT jcron.validate_timezone('America/New_York');  -- true
 SELECT jcron.validate_timezone('Invalid/Zone');      -- false
@@ -566,16 +629,19 @@ SELECT jcron.validate_timezone('Invalid/Zone');      -- false
 Pattern tipini tespit eder.
 
 **Signature:**
+
 ```sql
 jcron.classify_pattern(expr TEXT) RETURNS TEXT
 ```
 
 **Parameters:**
+
 - `expr` - Pattern expression
 
 **Returns:** Pattern type ('CRON', 'WOY', 'SPECIAL', etc.)
 
 **Examples:**
+
 ```sql
 SELECT jcron.classify_pattern('0 0 9 * * *');     -- 'CRON'
 SELECT jcron.classify_pattern('W1-5');             -- 'WOY'
@@ -591,8 +657,9 @@ SELECT jcron.classify_pattern('E1D');              -- 'SPECIAL'
 V4 Extreme versiyonunun performans testini çalıştırır.
 
 **Signature:**
+
 ```sql
-jcron.performance_test_v4_extreme() 
+jcron.performance_test_v4_extreme()
 RETURNS TABLE(
     test_name TEXT,
     iterations INTEGER,
@@ -605,6 +672,7 @@ RETURNS TABLE(
 **Returns:** Performance metrics table
 
 **Example:**
+
 ```sql
 SELECT * FROM jcron.performance_test_v4_extreme();
 ```
@@ -616,8 +684,9 @@ SELECT * FROM jcron.performance_test_v4_extreme();
 Çeşitli kullanım örneklerini gösterir.
 
 **Signature:**
+
 ```sql
-jcron.examples() 
+jcron.examples()
 RETURNS TABLE(
     description TEXT,
     pattern TEXT,
@@ -628,6 +697,7 @@ RETURNS TABLE(
 **Returns:** Example patterns and results
 
 **Example:**
+
 ```sql
 SELECT * FROM jcron.examples();
 ```
@@ -639,6 +709,7 @@ SELECT * FROM jcron.examples();
 JCRON versiyonunu döndürür.
 
 **Signature:**
+
 ```sql
 jcron.version() RETURNS TEXT
 ```
@@ -646,6 +717,7 @@ jcron.version() RETURNS TEXT
 **Returns:** Version string
 
 **Example:**
+
 ```sql
 SELECT jcron.version();
 -- Returns: "JCRON V4 EXTREME - 100K OPS/SEC"
@@ -686,20 +758,22 @@ SELECT jcron.next_time('0 0 17 * * 5W3', NOW());
 #### Key Differences
 
 **Week Definition:**
+
 - Week 1 starts on day 1 of month (regardless of weekday)
 - Week 1 ends on first Sunday
 - Subsequent weeks are standard 7-day periods
 
 **Example: July 2025 (starts Tuesday)**
 
-| Week | Days | Monday | Syntax Comparison |
-|------|------|--------|-------------------|
+| Week   | Days          | Monday   | Syntax Comparison            |
+| ------ | ------------- | -------- | ---------------------------- |
 | Week 1 | 1-6 (Tue-Sun) | **None** | `1W1` → NULL, `1#1` → July 7 |
-| Week 2 | 7-13 | July 7 | `1W2` → July 7 (= `1#1`) |
-| Week 3 | 14-20 | July 14 | `1W3` → July 14 (= `1#2`) |
-| Week 4 | 21-27 | July 21 | `1W4` → July 21 (= `1#3`) ✅ |
+| Week 2 | 7-13          | July 7   | `1W2` → July 7 (= `1#1`)     |
+| Week 3 | 14-20         | July 14  | `1W3` → July 14 (= `1#2`)    |
+| Week 4 | 21-27         | July 21  | `1W4` → July 21 (= `1#3`) ✅ |
 
 **When they differ:**
+
 ```sql
 -- September 2025 starts Monday:
 SELECT jcron.next_time('0 0 9 * * 1W1', '2025-08-31'::TIMESTAMPTZ);
@@ -717,6 +791,7 @@ SELECT jcron.next_time('0 0 9 * * 1#1', '2025-06-30'::TIMESTAMPTZ);
 ```
 
 **NULL Handling:**
+
 - If a weekday doesn't exist in the specified week, `W` syntax returns NULL
 - The scheduler automatically skips to the next month where it exists
 - `#` syntax always finds the occurrence if it exists in the month
@@ -729,11 +804,11 @@ Tüm timezone fonksiyonları PostgreSQL'in timezone sistemini kullanır.
 
 ```sql
 -- Farklı timezone'larda aynı pattern
-SELECT 
+SELECT
     'UTC' as tz,
     jcron.next_time('0 0 9 * * *', NOW()) AT TIME ZONE 'UTC'
 UNION ALL
-SELECT 
+SELECT
     'New York',
     jcron.next_time('0 0 9 * * *', NOW()) AT TIME ZONE 'America/New_York';
 ```
@@ -743,11 +818,11 @@ SELECT
 ```sql
 -- Sonraki 5 çalışmayı bul
 WITH RECURSIVE next_runs AS (
-    SELECT 
+    SELECT
         1 as n,
         jcron.next_time('0 0 9 * * *', NOW()) as run_time
     UNION ALL
-    SELECT 
+    SELECT
         n + 1,
         jcron.next_time('0 0 9 * * *', run_time)
     FROM next_runs
@@ -772,12 +847,12 @@ END $$;
 
 ### Function Performance (Benchmarked)
 
-| Pattern Complexity | Avg Time | Throughput | Example |
-|-------------------|----------|------------|---------|
-| **Simple** | ~1.4 ms | ~700/sec | `0 */5 * * * *` |
-| **Medium** (with TZ) | ~1.8 ms | ~550/sec | `TZ:UTC 0 0 9 * * *` |
-| **Complex** (WOY/EOD) | ~2.5 ms | ~400/sec | `0 0 0 L * * WOY:10,20,30` |
-| **Extreme** (all features) | ~3.1 ms | ~320/sec | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
+| Pattern Complexity         | Avg Time | Throughput | Example                                |
+| -------------------------- | -------- | ---------- | -------------------------------------- |
+| **Simple**                 | ~1.4 ms  | ~700/sec   | `0 */5 * * * *`                        |
+| **Medium** (with TZ)       | ~1.8 ms  | ~550/sec   | `TZ:UTC 0 0 9 * * *`                   |
+| **Complex** (WOY/EOD)      | ~2.5 ms  | ~400/sec   | `0 0 0 L * * WOY:10,20,30`             |
+| **Extreme** (all features) | ~3.1 ms  | ~320/sec   | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
 
 **Based on realistic benchmark with 1000+ production-like patterns**
 
@@ -813,10 +888,10 @@ cd ..
 
 ### Performance Targets
 
-| Environment | Target Throughput | Notes |
-|-------------|------------------|-------|
-| Development | >500 patterns/sec | Basic functionality testing |
-| Production | >1000 patterns/sec | With indexes and optimization |
+| Environment      | Target Throughput  | Notes                               |
+| ---------------- | ------------------ | ----------------------------------- |
+| Development      | >500 patterns/sec  | Basic functionality testing         |
+| Production       | >1000 patterns/sec | With indexes and optimization       |
 | High Performance | >5000 patterns/sec | With caching and connection pooling |
 
 📖 **See [BENCHMARK_README.md](../BENCHMARK_README.md)** for detailed benchmark documentation and CI/CD integration.

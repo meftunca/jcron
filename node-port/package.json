@@ -1,6 +1,6 @@
 {
   "name": "@devloops/jcron",
-  "version": "1.5.0",
+  "version": "1.5.3",
   "description": "A high-performance, type-safe job scheduler for Node.js and React Native, inspired by Go's jcron.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",

@@ -21,19 +21,22 @@ High-performance cron expression scheduler for PostgreSQL with advanced features
 
 ## 📋 Quick Reference Table
 
-| Pattern | Description | Example Time |
-|---------|-------------|--------------|
-| `0 0 9 * * *` | Daily at 9 AM | 09:00:00 |
-| `0 0 0,12 * * *` | Midnight & Noon | 00:00 & 12:00 |
-| `0 */15 * * * *` | Every 15 minutes | :00, :15, :30, :45 |
-| `0 0 9 * * 1-5` | Weekdays at 9 AM | Mon-Fri 09:00 |
-| `0 0 0 1 * *` | Monthly 1st day | 1st 00:00 |
-| `0 0 0 L * *` | Last day of month | 28-31st 00:00 |
-| `0 0 9 * * 1#2` | 2nd Monday (occurrence) | 2nd Mon 09:00 |
-| `0 0 9 * * 1W4` | Monday of 4th week | Week 4 Mon 09:00 |
-| `0 0 17 * * 5L` | Last Friday 5 PM | Last Fri 17:00 |
-| `E1D` | End of day | 23:59:59.999 |
-| `S1W` | Start of next week | Mon 00:00:00 |
+| Pattern            | Description             | Example Time       |
+| ------------------ | ----------------------- | ------------------ |
+| `0 0 9 * * *`      | Daily at 9 AM           | 09:00:00           |
+| `0 0 0,12 * * *`   | Midnight & Noon         | 00:00 & 12:00      |
+| `0 */15 * * * *`   | Every 15 minutes        | :00, :15, :30, :45 |
+| `0 0 9 * * 1-5`    | Weekdays at 9 AM        | Mon-Fri 09:00      |
+| `0 0 0 1 * *`      | Monthly 1st day         | 1st 00:00          |
+| `0 0 0 L * *`      | Last day of month       | 28-31st 00:00      |
+| `0 0 9 * * 1#2`    | 2nd Monday (occurrence) | 2nd Mon 09:00      |
+| `0 0 9 * * 1W4`    | Monday of 4th week      | Week 4 Mon 09:00   |
+| `0 0 17 * * 5L`    | Last Friday 5 PM        | Last Fri 17:00     |
+| `E0D`              | End of today            | 23:59:59.999       |
+| `E0H`              | End of this hour        | :59:59.999         |
+| `S0W`              | Start of this week      | Mon 00:00:00       |
+| `S2H`              | 2 hours later start     | +2h 00:00          |
+| `0 0 10 * * * S2H` | Cron + modifier         | 12:00:00 (10+2)    |
 
 ## Quick Start
 
@@ -136,7 +139,7 @@ CREATE TABLE scheduled_jobs (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_jobs_next_run ON scheduled_jobs(next_run) 
+CREATE INDEX idx_jobs_next_run ON scheduled_jobs(next_run)
 WHERE enabled = TRUE;
 ```
 
@@ -144,7 +147,7 @@ WHERE enabled = TRUE;
 
 ```sql
 INSERT INTO scheduled_jobs (name, cron_pattern, timezone)
-VALUES 
+VALUES
     ('Daily Backup', '0 0 2 * * *', 'UTC'),
     ('Hourly Sync', '0 0 * * * *', 'UTC'),
     ('Weekly Report', '0 0 9 * * 1', 'America/New_York');
@@ -161,7 +164,7 @@ WHERE enabled = TRUE;
 -- Get jobs that should run now
 SELECT id, name, cron_pattern
 FROM scheduled_jobs
-WHERE enabled = TRUE 
+WHERE enabled = TRUE
   AND next_run <= NOW()
 ORDER BY next_run
 FOR UPDATE SKIP LOCKED;
@@ -261,11 +264,11 @@ SELECT jcron.get_nth_weekday(2025, 10, 4, 2);
 -- See next 10 occurrences
 CREATE TEMP TABLE test_results AS
 WITH RECURSIVE next_runs AS (
-    SELECT 
+    SELECT
         1 as n,
         jcron.next_time('0 0 9 * * 1-5', NOW()) as run_time
     UNION ALL
-    SELECT 
+    SELECT
         n + 1,
         jcron.next_time('0 0 9 * * 1-5', run_time)
     FROM next_runs
@@ -354,7 +357,7 @@ SELECT jcron.version();
 ## Limitations
 
 - Maximum date range: PostgreSQL timestamp limits (4713 BC - 294276 AD)
-- Maximum iterations: 366 * 24 * 60 (safety limit)
+- Maximum iterations: 366 _ 24 _ 60 (safety limit)
 - Pattern complexity: No practical limit
 
 ## Troubleshooting
@@ -410,7 +413,7 @@ DECLARE
     result TIMESTAMPTZ;
 BEGIN
     result := jcron.next_time(pattern, NOW());
-    
+
     IF result IS NULL THEN
         RAISE NOTICE 'Pattern % returned NULL - check syntax', pattern;
     ELSE
@@ -447,12 +450,12 @@ cd ..
 
 ### Performance Metrics
 
-| Complexity | Avg Time | Throughput | Pattern Example |
-|------------|----------|------------|-----------------|
-| **Simple** | ~1.4 ms | ~700/sec | `0 */5 * * * *` |
-| **Medium** | ~1.8 ms | ~550/sec | `TZ:UTC 0 0 9 * * *` |
-| **Complex** | ~2.5 ms | ~400/sec | `0 0 0 L * * WOY:10,20,30` |
-| **Extreme** | ~3.1 ms | ~320/sec | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
+| Complexity  | Avg Time | Throughput | Pattern Example                        |
+| ----------- | -------- | ---------- | -------------------------------------- |
+| **Simple**  | ~1.4 ms  | ~700/sec   | `0 */5 * * * *`                        |
+| **Medium**  | ~1.8 ms  | ~550/sec   | `TZ:UTC 0 0 9 * * *`                   |
+| **Complex** | ~2.5 ms  | ~400/sec   | `0 0 0 L * * WOY:10,20,30`             |
+| **Extreme** | ~3.1 ms  | ~320/sec   | `TZ:UTC 0 0 23 * * 0 WOY:10,20,30 E1W` |
 
 ### Benchmark Test Categories
 
@@ -481,6 +484,7 @@ bun run generate-bench-improved.ts --total 1000 --woy --eod --special --format s
 ```
 
 **Features:**
+
 - ✅ Realistic pattern distribution (business hours, weekly, monthly)
 - ✅ Correct `expectedTime` calculation
 - ✅ WOY and EOD/SOD support
@@ -508,6 +512,7 @@ MIT License - See LICENSE file for details
 ## Support
 
 For issues, questions, or contributions:
+
 - GitHub Issues: [Report bugs or request features]
 - Documentation: Check guides above
 - Examples: See [SCHEDULER.md](SCHEDULER.md)

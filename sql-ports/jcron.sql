@@ -296,40 +296,47 @@ BEGIN
         RETURN;
     END IF;
     
-    -- Parse weeks (E<num>W)
-    pos := position('EW' IN expression);
-    IF pos > 0 THEN
+    -- Initialize to -1 to indicate "not found"
+    weeks := -1; months := -1; days := -1; hours := -1;
+    
+    -- Parse weeks (E<num>W) - Extract number, if just "EW" then 1
+    num_str := substring(expression FROM 'E(\d+)W');
+    IF num_str IS NOT NULL THEN
+        weeks := num_str::INTEGER;
+    ELSIF position('EW' IN expression) > 0 THEN
         weeks := 1;
     ELSE
-        num_str := substring(expression FROM 'E(\d+)W');
-        weeks := COALESCE(num_str::INTEGER, 0);
+        weeks := -1;
     END IF;
     
-    -- Parse months (E<num>M)
-    pos := position('EM' IN expression);
-    IF pos > 0 THEN
+    -- Parse months (E<num>M) - Extract number, if just "EM" then 1
+    num_str := substring(expression FROM 'E(\d+)M');
+    IF num_str IS NOT NULL THEN
+        months := num_str::INTEGER;
+    ELSIF position('EM' IN expression) > 0 THEN
         months := 1;
     ELSE
-        num_str := substring(expression FROM 'E(\d+)M');
-        months := COALESCE(num_str::INTEGER, 0);
+        months := -1;
     END IF;
     
-    -- Parse days (E<num>D)
-    pos := position('ED' IN expression);
-    IF pos > 0 THEN
+    -- Parse days (E<num>D) - Extract number, if just "ED" then 1
+    num_str := substring(expression FROM 'E(\d+)D');
+    IF num_str IS NOT NULL THEN
+        days := num_str::INTEGER;
+    ELSIF position('ED' IN expression) > 0 THEN
         days := 1;
     ELSE
-        num_str := substring(expression FROM 'E(\d+)D');
-        days := COALESCE(num_str::INTEGER, 0);
+        days := -1;
     END IF;
     
-    -- Parse hours (E<num>H) ⭐ NEW
-    pos := position('EH' IN expression);
-    IF pos > 0 THEN
+    -- Parse hours (E<num>H) ⭐ NEW - Extract number, if just "EH" then 1
+    num_str := substring(expression FROM 'E(\d+)H');
+    IF num_str IS NOT NULL THEN
+        hours := num_str::INTEGER;
+    ELSIF position('EH' IN expression) > 0 THEN
         hours := 1;
     ELSE
-        num_str := substring(expression FROM 'E(\d+)H');
-        hours := COALESCE(num_str::INTEGER, 0);
+        hours := -1;
     END IF;
     
     RETURN NEXT;
@@ -350,40 +357,47 @@ BEGIN
         RETURN;
     END IF;
     
-    -- Parse weeks (S<num>W)
-    pos := position('SW' IN expression);
-    IF pos > 0 THEN
+    -- Initialize to -1 to indicate "not found"
+    weeks := -1; months := -1; days := -1; hours := -1;
+    
+    -- Parse weeks (S<num>W) - Extract number, if just "SW" then 1
+    num_str := substring(expression FROM 'S(\d+)W');
+    IF num_str IS NOT NULL THEN
+        weeks := num_str::INTEGER;
+    ELSIF position('SW' IN expression) > 0 THEN
         weeks := 1;
     ELSE
-        num_str := substring(expression FROM 'S(\d+)W');
-        weeks := COALESCE(num_str::INTEGER, 0);
+        weeks := -1;
     END IF;
     
-    -- Parse months (S<num>M)
-    pos := position('SM' IN expression);
-    IF pos > 0 THEN
+    -- Parse months (S<num>M) - Extract number, if just "SM" then 1
+    num_str := substring(expression FROM 'S(\d+)M');
+    IF num_str IS NOT NULL THEN
+        months := num_str::INTEGER;
+    ELSIF position('SM' IN expression) > 0 THEN
         months := 1;
     ELSE
-        num_str := substring(expression FROM 'S(\d+)M');
-        months := COALESCE(num_str::INTEGER, 0);
+        months := -1;
     END IF;
     
-    -- Parse days (S<num>D)
-    pos := position('SD' IN expression);
-    IF pos > 0 THEN
+    -- Parse days (S<num>D) - Extract number, if just "SD" then 1
+    num_str := substring(expression FROM 'S(\d+)D');
+    IF num_str IS NOT NULL THEN
+        days := num_str::INTEGER;
+    ELSIF position('SD' IN expression) > 0 THEN
         days := 1;
     ELSE
-        num_str := substring(expression FROM 'S(\d+)D');
-        days := COALESCE(num_str::INTEGER, 0);
+        days := -1;
     END IF;
     
-    -- Parse hours (S<num>H) ⭐ NEW
-    pos := position('SH' IN expression);
-    IF pos > 0 THEN
+    -- Parse hours (S<num>H) ⭐ NEW - Extract number, if just "SH" then 1
+    num_str := substring(expression FROM 'S(\d+)H');
+    IF num_str IS NOT NULL THEN
+        hours := num_str::INTEGER;
+    ELSIF position('SH' IN expression) > 0 THEN
         hours := 1;
     ELSE
-        num_str := substring(expression FROM 'S(\d+)H');
-        hours := COALESCE(num_str::INTEGER, 0);
+        hours := -1;
     END IF;
     
     RETURN NEXT;
@@ -479,12 +493,12 @@ BEGIN
     modifier := substring(expr FROM pos FOR 4);
     
     IF substring(modifier, 2, 1) ~ '\d' THEN
-        IF substring(modifier, 3, 1) IN ('W', 'M', 'D') THEN
+        IF substring(modifier, 3, 1) IN ('W', 'M', 'D', 'H') THEN
             RETURN substring(modifier, 1, 3);
-        ELSIF substring(modifier, 4, 1) IN ('W', 'M', 'D') THEN
+        ELSIF substring(modifier, 4, 1) IN ('W', 'M', 'D', 'H') THEN
             RETURN substring(modifier, 1, 4);
         END IF;
-    ELSIF substring(modifier, 2, 1) IN ('W', 'M', 'D') THEN
+    ELSIF substring(modifier, 2, 1) IN ('W', 'M', 'D', 'H') THEN
         RETURN substring(modifier, 1, 2);
     END IF;
     
@@ -554,14 +568,14 @@ BEGIN
     end_modifier := jcron.extract_modifier(working_expr, 'E');
     IF end_modifier IS NOT NULL THEN
         has_end := TRUE;
-        working_expr := regexp_replace(working_expr, 'E\d*[WMD]\s*', '', 'g');
+        working_expr := regexp_replace(working_expr, 'E\d*[WMDH]\s*', '', 'g');
     END IF;
     
     -- Extract Start modifiers using helper
     start_modifier := jcron.extract_modifier(working_expr, 'S');
     IF start_modifier IS NOT NULL THEN
         has_start := TRUE;
-        working_expr := regexp_replace(working_expr, 'S\d*[WMD]\s*', '', 'g');
+        working_expr := regexp_replace(working_expr, 'S\d*[WMDH]\s*', '', 'g');
     END IF;
     
     -- Final cleanup
@@ -744,17 +758,29 @@ CREATE OR REPLACE FUNCTION jcron.calc_end_time(
 DECLARE
     target_time TIMESTAMPTZ := from_time;
 BEGIN
-    IF weeks > 0 THEN
-        target_time := target_time + (weeks * interval '1 week');
+    -- weeks >= 0: Add weeks first, then go to end of that week
+    IF weeks >= 0 AND (months < 0 AND days < 0 AND hours < 0) THEN
+        IF weeks > 0 THEN
+            target_time := target_time + (weeks * interval '1 week');
+        END IF;
         target_time := date_trunc('week', target_time) + interval '6 days 23 hours 59 minutes 59 seconds';
-    ELSIF months > 0 THEN
-        target_time := target_time + (months * interval '1 month');
+    -- months >= 0: Add months first, then go to end of that month
+    ELSIF months >= 0 AND (days < 0 AND hours < 0) THEN
+        IF months > 0 THEN
+            target_time := target_time + (months * interval '1 month');
+        END IF;
         target_time := date_trunc('month', target_time) + interval '1 month - 1 second';
-    ELSIF days > 0 THEN
-        target_time := target_time + (days * interval '1 day');
+    -- days >= 0: Add days first, then go to end of that day
+    ELSIF days >= 0 AND hours < 0 THEN
+        IF days > 0 THEN
+            target_time := target_time + (days * interval '1 day');
+        END IF;
         target_time := date_trunc('day', target_time) + interval '23 hours 59 minutes 59 seconds';
-    ELSIF hours > 0 THEN
-        target_time := target_time + (hours * interval '1 hour');
+    -- hours >= 0: Add hours first, then go to end of that hour
+    ELSIF hours >= 0 THEN
+        IF hours > 0 THEN
+            target_time := target_time + (hours * interval '1 hour');
+        END IF;
         target_time := date_trunc('hour', target_time) + interval '59 minutes 59 seconds';
     END IF;
     
@@ -773,17 +799,29 @@ CREATE OR REPLACE FUNCTION jcron.calc_start_time(
 DECLARE
     target_time TIMESTAMPTZ := from_time;
 BEGIN
-    IF weeks > 0 THEN
-        target_time := target_time + (weeks * interval '1 week');
+    -- weeks >= 0: Add weeks first, then go to start of that week
+    IF weeks >= 0 AND (months < 0 AND days < 0 AND hours < 0) THEN
+        IF weeks > 0 THEN
+            target_time := target_time + (weeks * interval '1 week');
+        END IF;
         target_time := date_trunc('week', target_time);
-    ELSIF months > 0 THEN
-        target_time := target_time + (months * interval '1 month');
+    -- months >= 0: Add months first, then go to start of that month
+    ELSIF months >= 0 AND (days < 0 AND hours < 0) THEN
+        IF months > 0 THEN
+            target_time := target_time + (months * interval '1 month');
+        END IF;
         target_time := date_trunc('month', target_time);
-    ELSIF days > 0 THEN
-        target_time := target_time + (days * interval '1 day');
+    -- days >= 0: Add days first, then go to start of that day
+    ELSIF days >= 0 AND hours < 0 THEN
+        IF days > 0 THEN
+            target_time := target_time + (days * interval '1 day');
+        END IF;
         target_time := date_trunc('day', target_time);
-    ELSIF hours > 0 THEN
-        target_time := target_time + (hours * interval '1 hour');
+    -- hours >= 0: Add hours first, then go to start of that hour
+    ELSIF hours >= 0 THEN
+        IF hours > 0 THEN
+            target_time := target_time + (hours * interval '1 hour');
+        END IF;
         target_time := date_trunc('hour', target_time);
     END IF;
     
@@ -1853,20 +1891,16 @@ BEGIN
     
     final_result := base_result;
     
-    -- Apply End modifier
-    IF (parsed.has_end AND get_endof) OR (get_endof AND NOT parsed.has_start) THEN
-        IF parsed.end_modifier IS NOT NULL THEN
-            SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.end_modifier);
-            final_result := jcron.calc_end_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
-        END IF;
+    -- Apply End modifier (always apply if present in pattern)
+    IF parsed.has_end AND parsed.end_modifier IS NOT NULL THEN
+        SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.end_modifier);
+        final_result := jcron.calc_end_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
     END IF;
     
-    -- Apply Start modifier
-    IF (parsed.has_start AND get_startof) OR (get_startof AND NOT parsed.has_end) THEN
-        IF parsed.start_modifier IS NOT NULL THEN
-            SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.start_modifier);
-            final_result := jcron.calc_start_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
-        END IF;
+    -- Apply Start modifier (always apply if present in pattern)
+    IF parsed.has_start AND parsed.start_modifier IS NOT NULL THEN
+        SELECT * INTO modifier_data FROM jcron.parse_modifier(parsed.start_modifier);
+        final_result := jcron.calc_start_time(base_result, modifier_data.weeks, modifier_data.months, modifier_data.days, modifier_data.hours);
     END IF;
     
     RETURN final_result;

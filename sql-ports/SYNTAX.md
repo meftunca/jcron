@@ -27,14 +27,14 @@ JCRON supports standard 6-field cron syntax:
 
 ## Field Values
 
-| Field | Range | Special Characters | Description |
-|-------|-------|-------------------|-------------|
-| Second | 0-59 | `*` `,` `-` `/` | Saniye |
-| Minute | 0-59 | `*` `,` `-` `/` | Dakika |
-| Hour | 0-23 | `*` `,` `-` `/` | Saat |
-| Day | 1-31 | `*` `,` `-` `/` `L` | Ayın günü |
-| Month | 1-12 | `*` `,` `-` `/` | Ay |
-| DOW | 0-6 | `*` `,` `-` `/` `L` `#` | Haftanın günü |
+| Field  | Range | Special Characters      | Description   |
+| ------ | ----- | ----------------------- | ------------- |
+| Second | 0-59  | `*` `,` `-` `/`         | Saniye        |
+| Minute | 0-59  | `*` `,` `-` `/`         | Dakika        |
+| Hour   | 0-23  | `*` `,` `-` `/`         | Saat          |
+| Day    | 1-31  | `*` `,` `-` `/` `L`     | Ayın günü     |
+| Month  | 1-12  | `*` `,` `-` `/`         | Ay            |
+| DOW    | 0-6   | `*` `,` `-` `/` `L` `#` | Haftanın günü |
 
 **Note:** 0 = Sunday (Pazar), 6 = Saturday (Cumartesi)
 
@@ -128,6 +128,7 @@ SELECT jcron.next_time('0 0 12 * * 3L', NOW());
 ```
 
 **Syntax:**
+
 - Day field: `L` = last day of month
 - DOW field: `{0-6}L` = last {weekday} of month
 
@@ -150,6 +151,7 @@ SELECT jcron.next_time('0 0 10 * * 2#4', NOW());
 ```
 
 **Syntax:** `{0-6}#{1-5}`
+
 - First number: day of week (0=Sunday, 6=Saturday)
 - Second number: occurrence (1-5)
 
@@ -172,10 +174,12 @@ SELECT jcron.next_time('0 30 17 * * 5W3', NOW());
 ```
 
 **Syntax:** `{0-6}W{1-5}`
+
 - First number: day of week (0=Sunday, 6=Saturday)
 - Second number: week number (1-5)
 
 **Week Definition:**
+
 - Week 1 starts on day 1 of the month
 - Week 1 ends on the first Sunday
 - Subsequent weeks are standard 7-day periods
@@ -184,21 +188,23 @@ SELECT jcron.next_time('0 30 17 * * 5W3', NOW());
 
 `W` (week-based) and `#` (occurrence-based) are **NOT equivalent**:
 
-| Pattern | Meaning | July 2025 Example |
-|---------|---------|-------------------|
-| `1W1` | Monday of week 1 | NULL (week 1 has no Monday) |
-| `1W2` | Monday of week 2 | July 7 (= `1#1`) |
-| `1W4` | Monday of week 4 | July 21 (= `1#3`) |
-| `1#1` | 1st Monday | July 7 |
-| `1#3` | 3rd Monday | July 21 |
+| Pattern | Meaning          | July 2025 Example           |
+| ------- | ---------------- | --------------------------- |
+| `1W1`   | Monday of week 1 | NULL (week 1 has no Monday) |
+| `1W2`   | Monday of week 2 | July 7 (= `1#1`)            |
+| `1W4`   | Monday of week 4 | July 21 (= `1#3`)           |
+| `1#1`   | 1st Monday       | July 7                      |
+| `1#3`   | 3rd Monday       | July 21                     |
 
 **Why the difference?**
+
 - July 2025 starts on Tuesday (DOW=2)
 - Week 1 = days 1-6 (Tue-Sun), **no Monday**
 - Week 2 = days 7-13 (has the **1st Monday**)
 - Week 4 = days 21-27 (has the **3rd Monday**)
 
 **Examples:**
+
 - `1W4` = Monday of 4th week (week-based)
 - `6W2` = Saturday of 2nd week (week-based)
 - `0W1` = Sunday of 1st week (always exists, as week 1 ends on Sunday)
@@ -209,7 +215,8 @@ SELECT jcron.next_time('0 30 17 * * 5W3', NOW());
 
 ### Multi-Pattern Support with `|` (Pipe Operator)
 
-**NEW FEATURE**: Multiple cron patterns can be combined using the `|` (pipe) operator. 
+**NEW FEATURE**: Multiple cron patterns can be combined using the `|` (pipe) operator.
+
 - For `next_time`: Returns the **earliest** (minimum) match among all patterns
 - For `prev_time`: Returns the **latest** (maximum) match among all patterns
 
@@ -309,33 +316,51 @@ SELECT jcron.next_time('W1,10,20,30', NOW());
 #### End of Period (E)
 
 ```sql
+-- End of Hour (59:59.999)
+SELECT jcron.next_time('E0H', NOW());  -- This hour's end
+SELECT jcron.next_time('E1H', NOW());  -- Next hour's end
+SELECT jcron.next_time('E2H', NOW());  -- 2 hours later's end
+
 -- End of Day (23:59:59)
-SELECT jcron.next_time('E1D', NOW());
+SELECT jcron.next_time('E0D', NOW());  -- Today's end
+SELECT jcron.next_time('E1D', NOW());  -- Tomorrow's end
 
 -- End of Week (Pazar 23:59:59)
-SELECT jcron.next_time('E1W', NOW());
+SELECT jcron.next_time('E0W', NOW());  -- This week's end
+SELECT jcron.next_time('E1W', NOW());  -- Next week's end
 
 -- End of Month
-SELECT jcron.next_time('E1M', NOW());
+SELECT jcron.next_time('E0M', NOW());  -- This month's end
+SELECT jcron.next_time('E1M', NOW());  -- Next month's end
 
 -- End of Year
-SELECT jcron.next_time('E1Y', NOW());
+SELECT jcron.next_time('E0Y', NOW());  -- This year's end
+SELECT jcron.next_time('E1Y', NOW());  -- Next year's end
 ```
 
 #### Start of Period (S)
 
 ```sql
+-- Start of Hour (00:00.000)
+SELECT jcron.next_time('S0H', NOW());  -- This hour's start
+SELECT jcron.next_time('S1H', NOW());  -- Next hour's start
+SELECT jcron.next_time('S2H', NOW());  -- 2 hours later's start
+
 -- Start of Day (00:00:00)
-SELECT jcron.next_time('S1D', NOW());
+SELECT jcron.next_time('S0D', NOW());  -- Today's start
+SELECT jcron.next_time('S1D', NOW());  -- Tomorrow's start
 
 -- Start of Week (Pazartesi 00:00:00)
-SELECT jcron.next_time('S1W', NOW());
+SELECT jcron.next_time('S0W', NOW());  -- This week's start
+SELECT jcron.next_time('S1W', NOW());  -- Next week's start
 
 -- Start of Month
-SELECT jcron.next_time('S1M', NOW());
+SELECT jcron.next_time('S0M', NOW());  -- This month's start
+SELECT jcron.next_time('S1M', NOW());  -- Next month's start
 
 -- Start of Year
-SELECT jcron.next_time('S1Y', NOW());
+SELECT jcron.next_time('S0Y', NOW());  -- This year's start
+SELECT jcron.next_time('S1Y', NOW());  -- Next year's start
 ```
 
 ### Timezone Patterns
@@ -460,6 +485,7 @@ SELECT jcron.next_time('0 0 14 * * 6W2', NOW());
 ### Valid Patterns
 
 ✅ Correct syntax examples:
+
 ```sql
 '0 0 9 * * *'        -- Daily at 9 AM
 '0 */15 * * * *'     -- Every 15 minutes
@@ -474,6 +500,7 @@ SELECT jcron.next_time('0 0 14 * * 6W2', NOW());
 ### Invalid Patterns
 
 ❌ Common mistakes:
+
 ```sql
 '* * * * *'          -- Missing seconds field (use 6 fields)
 '0 0 9 32 * *'       -- Invalid day (32 > 31)
@@ -505,8 +532,8 @@ DECLARE
 BEGIN
     FOR i IN 1..count LOOP
         current_time := jcron.next_time(pattern, current_time);
-        
-        RETURN QUERY SELECT 
+
+        RETURN QUERY SELECT
             i,
             current_time,
             TO_CHAR(current_time, 'YYYY-MM-DD HH24:MI:SS Day');
@@ -521,6 +548,7 @@ SELECT * FROM test_pattern('0 0 9 * * 1-5', 10);
 ## Advanced Combinations
 
 ### L + Timezone
+
 ```sql
 -- Last day at 10 PM NY time
 SELECT jcron.next_time('0 0 22 L * * America/New_York', NOW());
@@ -530,6 +558,7 @@ SELECT jcron.next_time('0 0 9 * * 5L Europe/London', NOW());
 ```
 
 ### # + Multiple Values
+
 ```sql
 -- 2nd Monday AND 2nd Wednesday
 SELECT jcron.next_time('0 0 9 * * 1#2,3#2', NOW());
@@ -539,6 +568,7 @@ SELECT jcron.next_time('0 0 12 * * 5#1,5#3', NOW());
 ```
 
 ### Complex Business Rules
+
 ```sql
 -- Weekdays at 9 AM
 SELECT jcron.next_time('0 0 9 * * 1-5', NOW());
@@ -555,6 +585,7 @@ SELECT jcron.next_time('0 0 0 1,15 * *', NOW());
 ## Common Pitfalls & Solutions
 
 ### ❌ Day AND Weekday Both Specified
+
 ```sql
 -- WRONG: Ambiguous! Day=15 OR Monday?
 SELECT jcron.next_time('0 0 9 15 * 1', NOW());
@@ -565,6 +596,7 @@ SELECT jcron.next_time('0 0 9 * * 1', NOW());   -- Every Monday
 ```
 
 ### ❌ Invalid L Syntax
+
 ```sql
 -- WRONG: L in day field doesn't take prefix
 SELECT jcron.next_time('0 0 0 5L * *', NOW());
@@ -575,6 +607,7 @@ SELECT jcron.next_time('0 0 9 * * 5L', NOW());  -- Last Friday
 ```
 
 ### ❌ # Outside Valid Range
+
 ```sql
 -- WRONG: 6th Monday (most months only have 4-5)
 SELECT jcron.next_time('0 0 9 * * 1#6', NOW());
@@ -585,6 +618,7 @@ SELECT jcron.next_time('0 0 9 * * 5L', NOW());   -- Last occurrence
 ```
 
 ### ❌ Invalid Timezone
+
 ```sql
 -- WRONG: Invalid timezone name
 SELECT jcron.next_time('0 0 9 * * * US/Pacific', NOW());
@@ -594,14 +628,45 @@ SELECT jcron.next_time('0 0 9 * * * America/Los_Angeles', NOW());
 SELECT jcron.next_time('0 0 9 * * * Europe/Istanbul', NOW());
 ```
 
-### ❌ E/S with Regular Pattern
-```sql
--- WRONG: Mixing period and specific time
-SELECT jcron.next_time('E1D 0 0 9 * * *', NOW());
+### ✅ Combining Cron with EOD/SOD Modifiers
 
--- RIGHT: Use E/S alone or regular pattern alone
-SELECT jcron.next_end('E1D');              -- End of period
-SELECT jcron.next_time('0 0 9 * * *', NOW());  -- Specific time
+You can combine cron patterns with EOD/SOD modifiers. The cron defines the base time, and the modifier adjusts it:
+
+```sql
+-- Cron + Hour modifier: Base time + offset
+SELECT jcron.next_time('0 0 10 * * * S0H', NOW());  -- 10:00:00 (start of hour 10)
+SELECT jcron.next_time('0 0 10 * * * S2H', NOW());  -- 12:00:00 (10 + 2 hours)
+SELECT jcron.next_time('0 30 9 * * * S2H', NOW());  -- 11:00:00 (9:30 + 2h = 11:00)
+
+-- Cron + Day modifier: Base time + day adjustment
+SELECT jcron.next_time('0 0 10 * * * S0D', NOW());  -- Start of day at 10:00
+SELECT jcron.next_time('0 0 10 * * * E0D', NOW());  -- End of day (23:59:59)
+
+-- Cron + Week modifier
+SELECT jcron.next_time('0 0 10 * * 1 S0W', NOW());  -- Monday 10:00, start of week
+SELECT jcron.next_time('0 0 10 * * 1 S1W', NOW());  -- Next Monday 10:00
+
+-- Cron + Month modifier
+SELECT jcron.next_time('0 0 10 1 * * S0M', NOW());  -- 1st day 10:00, month start
+SELECT jcron.next_time('0 0 10 L * * E0M', NOW());  -- Last day 10:00, month end
+
+-- Real-world examples
+SELECT jcron.next_time('0 0 9 * * 1-5 S2H', NOW());  -- Weekdays 11:00 (9+2)
+SELECT jcron.next_time('0 0 14 * * * S3H', NOW());   -- Daily 17:00 (14+3)
+```
+
+### ❌ E/S Standalone (Without Cron)
+
+```sql
+-- WRONG: Using as regular pattern (use dedicated functions)
+SELECT jcron.next_time('E1D', NOW());  -- Works but use next_end()
+
+-- RIGHT: Use dedicated functions for standalone E/S
+SELECT jcron.next_end('E1D');          -- End of period
+SELECT jcron.next_start('S1W');        -- Start of period
+
+-- OR: Use with cron pattern (recommended for complex scheduling)
+SELECT jcron.next_time('0 0 9 * * * E0D', NOW());  -- Daily 9AM + end of day
 ```
 
 ---

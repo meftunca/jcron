@@ -1,0 +1,33 @@
+[Unit]
+Description=JCRON Cron Daemon
+Documentation=man:jcrond(8)
+After=local-fs.target
+Requires=local-fs.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/jcrond.pid
+ExecStart=/usr/local/bin/jcrond
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Security settings
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/run /var/spool/cron /etc/cron.d /etc/crontab
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+# Resource limits
+LimitNOFILE=65536
+MemoryLimit=50M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target

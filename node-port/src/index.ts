@@ -4,17 +4,66 @@
 import { Engine } from "./engine";
 import { parseEoD } from "./eod";
 import { ParseError } from "./errors";
+import { parseISO, isValid as isValidDate } from "date-fns";
 import {
   fromCronSyntax,
   fromJCronString,
   Schedule,
   validateSchedule,
+  DateInput,
 } from "./schedule";
 import {
   getPatternOptimized,
   isValidOptimized,
   validateCronOptimized,
 } from "./validation";
+
+// Re-export DateInput type from schedule for external use
+export type { DateInput } from "./schedule";
+
+/**
+ * Normalize various date input formats to a Date object using date-fns
+ * @param input Date object, ISO date string, or Unix timestamp (milliseconds)
+ * @param paramName Parameter name for error messages
+ * @returns Valid Date object
+ * @throws Error if input is invalid or cannot be parsed
+ */
+function normalizeDate(input: DateInput | undefined | null, paramName: string): Date {
+  if (input === undefined || input === null) {
+    throw new Error(`${paramName} is required`);
+  }
+
+  // Already a Date object
+  if (input instanceof Date) {
+    if (!isValidDate(input)) {
+      throw new Error(`${paramName} is an invalid Date object`);
+    }
+    return input;
+  }
+
+  // ISO string format (e.g., "2024-01-01", "2024-01-01T10:00:00Z")
+  if (typeof input === 'string') {
+    const parsed = parseISO(input);
+    if (!isValidDate(parsed)) {
+      throw new Error(`${paramName} is not a valid ISO date string: ${input}`);
+    }
+    return parsed;
+  }
+
+  // Unix timestamp in milliseconds
+  if (typeof input === 'number') {
+    if (!Number.isFinite(input)) {
+      throw new Error(`${paramName} must be a finite number (Unix timestamp)`);
+    }
+    const parsed = new Date(input);
+    if (!isValidDate(parsed)) {
+      throw new Error(`${paramName} is not a valid Unix timestamp: ${input}`);
+    }
+    return parsed;
+  }
+
+  throw new Error(`${paramName} must be a Date, ISO date string, or Unix timestamp`);
+}
 
 // Core Engine and Schedule
 export { Engine } from "./engine";
@@ -341,35 +390,47 @@ function validateScheduleFields(schedule: Schedule): boolean {
  * JCRON Unified API: Get next execution time for any JCRON expression type
  * Supports: Traditional Cron, WOY, TZ, EOD/SOD, L/#, and Hybrid expressions
  * Auto-detects expression type and applies appropriate processing
+ * @param expression JCRON expression
+ * @param fromTime Date, ISO string, or Unix timestamp
+ * @param timezone Optional timezone (for future use)
  */
 export function next_time(
   expression: string,
-  fromTime?: Date,
+  fromTime: DateInput,
   timezone?: string
 ): Date {
-  return getNext(expression, fromTime);
+  const normalizedDate = normalizeDate(fromTime, 'fromTime');
+  return getNext(expression, normalizedDate);
 }
 
 /**
  * JCRON Unified API: Get previous execution time for any JCRON expression type
+ * @param expression JCRON expression
+ * @param fromTime Date, ISO string, or Unix timestamp
+ * @param timezone Optional timezone (for future use)
  */
 export function prev_time(
   expression: string,
-  fromTime?: Date,
+  fromTime: DateInput,
   timezone?: string
 ): Date {
-  return getPrev(expression, fromTime);
+  const normalizedDate = normalizeDate(fromTime, 'fromTime');
+  return getPrev(expression, normalizedDate);
 }
 
 /**
  * JCRON Unified API: Check if time matches any JCRON expression type
+ * @param expression JCRON expression
+ * @param checkTime Date, ISO string, or Unix timestamp
+ * @param tolerance Optional tolerance in milliseconds
  */
 export function is_time_match(
   expression: string,
-  checkTime?: Date,
+  checkTime: DateInput,
   tolerance?: number
 ): boolean {
-  return match(expression, checkTime);
+  const normalizedDate = normalizeDate(checkTime, 'checkTime');
+  return match(expression, normalizedDate);
 }
 
 /**
@@ -381,37 +442,50 @@ export function parse_expression(expression: string): Schedule {
 
 /**
  * Get next execution time for a cron expression or Schedule
+ * @param cronExpression Cron expression or Schedule object
+ * @param fromTime Date, ISO string, or Unix timestamp
+ * @throws Error if fromTime is invalid
  */
 export function getNext(
   cronExpression: string | Schedule,
-  fromTime?: Date
+  fromTime: DateInput
 ): Date {
+  const normalizedDate = normalizeDate(fromTime, 'fromTime');
   const schedule = normalizeToSchedule(cronExpression);
-  return defaultEngine.next(schedule, fromTime || new Date());
+  return defaultEngine.next(schedule, normalizedDate);
 }
 
 /**
  * Get previous execution time for a cron expression or Schedule
+ * @param cronExpression Cron expression or Schedule object
+ * @param fromTime Date, ISO string, or Unix timestamp
+ * @throws Error if fromTime is invalid
  */
 export function getPrev(
   cronExpression: string | Schedule,
-  fromTime?: Date
+  fromTime: DateInput
 ): Date {
+  const normalizedDate = normalizeDate(fromTime, 'fromTime');
   const schedule = normalizeToSchedule(cronExpression);
-  return defaultEngine.prev(schedule, fromTime || new Date());
+  return defaultEngine.prev(schedule, normalizedDate);
 }
 
 /**
  * Get multiple next execution times
+ * @param cronExpression Cron expression or Schedule object
+ * @param count Number of next times to calculate
+ * @param fromTime Date, ISO string, or Unix timestamp
+ * @throws Error if fromTime is invalid
  */
 export function getNextN(
   cronExpression: string | Schedule,
   count: number,
-  fromTime?: Date
+  fromTime: DateInput
 ): Date[] {
+  const normalizedDate = normalizeDate(fromTime, 'fromTime');
   const schedule = normalizeToSchedule(cronExpression);
   const results: Date[] = [];
-  let currentTime = fromTime || new Date();
+  let currentTime = normalizedDate;
 
   for (let i = 0; i < count; i++) {
     currentTime = defaultEngine.next(schedule, currentTime);
@@ -423,10 +497,14 @@ export function getNextN(
 
 /**
  * Check if a date matches a cron expression or Schedule
+ * @param cronExpression Cron expression or Schedule object
+ * @param date Date, ISO string, or Unix timestamp
+ * @throws Error if date is invalid
  */
-export function match(cronExpression: string | Schedule, date?: Date): boolean {
+export function match(cronExpression: string | Schedule, date: DateInput): boolean {
+  const normalizedDate = normalizeDate(date, 'date');
   const schedule = normalizeToSchedule(cronExpression);
-  return defaultEngine.isMatch(schedule, date || new Date());
+  return defaultEngine.isMatch(schedule, normalizedDate);
 }
 
 /**
@@ -440,13 +518,17 @@ export function isValid(cronExpression: string | Schedule): boolean {
 
 /**
  * Check if it's time to execute (within tolerance)
+ * @param cronExpression Cron expression or Schedule object
+ * @param date Date, ISO string, or Unix timestamp
+ * @param toleranceMs Tolerance in milliseconds (default: 1000ms)
+ * @throws Error if date is invalid
  */
 export function isTime(
   cronExpression: string | Schedule,
-  date?: Date,
+  date: DateInput,
   toleranceMs: number = 1000
 ): boolean {
-  const checkDate = date || new Date();
+  const checkDate = normalizeDate(date, 'date');
   const schedule = normalizeToSchedule(cronExpression);
 
   // Check exact match first
@@ -542,18 +624,18 @@ export { ParseError, RuntimeError } from "./errors";
 /**
  * V2 next_time - Core function with 4-parameter design
  * @param pattern Cron pattern or JCRON expression
- * @param base_time Base time for calculation (optional)
+ * @param base_time Date, ISO string, or Unix timestamp
  * @param end_of Calculate end of period (optional, default: false)
  * @param start_of Calculate start of period (optional, default: false)
  * @returns Next occurrence timestamp
  */
 export function next_time_v2(
   pattern: string,
-  base_time?: Date,
+  base_time: DateInput,
   end_of: boolean = false,
   start_of: boolean = false
 ): Date {
-  const fromTime = base_time || new Date();
+  const fromTime = normalizeDate(base_time, 'base_time');
 
   try {
     // V2 enhanced pattern processing
@@ -590,14 +672,17 @@ export function next_time_v2(
  * V2 next - Simple next occurrence (conflict-free name)
  * @param pattern JCRON pattern
  * @param modifier Optional modifier (E1W, S1M, etc.)
- * @param base_time Base time (optional)
+ * @param base_time Date, ISO string, or Unix timestamp (required)
  * @returns Next occurrence
  */
 export function next(
   pattern: string,
   modifier?: string,
-  base_time?: Date
+  base_time?: DateInput
 ): Date {
+  if (!base_time) {
+    throw new Error('base_time parameter is required');
+  }
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time);
 }
@@ -616,14 +701,17 @@ export function next_from(pattern: string, from_time: Date): Date {
  * V2 next_end - Next occurrence with end modifier (conflict-free name)
  * @param pattern JCRON pattern
  * @param modifier Optional modifier
- * @param base_time Base time (optional)
+ * @param base_time Date, ISO string, or Unix timestamp (required)
  * @returns Next occurrence with end calculation
  */
 export function next_end(
   pattern: string,
   modifier?: string,
-  base_time?: Date
+  base_time?: DateInput
 ): Date {
+  if (!base_time) {
+    throw new Error('base_time parameter is required');
+  }
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time, true, false);
 }
@@ -632,14 +720,17 @@ export function next_end(
  * V2 next_start - Next occurrence with start modifier (conflict-free name)
  * @param pattern JCRON pattern
  * @param modifier Optional modifier
- * @param base_time Base time (optional)
+ * @param base_time Date, ISO string, or Unix timestamp (required)
  * @returns Next occurrence with start calculation
  */
 export function next_start(
   pattern: string,
   modifier?: string,
-  base_time?: Date
+  base_time?: DateInput
 ): Date {
+  if (!base_time) {
+    throw new Error('base_time parameter is required');
+  }
   const fullPattern = modifier ? `${pattern} ${modifier}` : pattern;
   return next_time_v2(fullPattern, base_time, false, true);
 }

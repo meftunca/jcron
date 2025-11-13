@@ -1,0 +1,8 @@
+# JCRON PostgreSQL Extension Control File
+
+comment = 'High-performance cron scheduling for PostgreSQL'
+default_version = '1.0'
+module_pathname = '$libdir/jcron'
+relocatable = false
+superuser = true
+schema = jcron

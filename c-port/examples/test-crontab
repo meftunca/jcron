@@ -1,0 +1,14 @@
+# Test crontab for JCRON daemon
+# Format: minute hour day month weekday command
+
+# Run every minute
+* * * * * echo "JCRON test: $(date)" >> /tmp/jcron-test.log
+
+# Run every 5 minutes
+*/5 * * * * echo "JCRON 5-minute test: $(date)" >> /tmp/jcron-test.log
+
+# Run at specific time (noon)
+0 12 * * * echo "JCRON noon test: $(date)" >> /tmp/jcron-test.log
+
+# Run on weekdays at 9 AM
+0 9 * * 1-5 echo "JCRON weekday morning: $(date)" >> /tmp/jcron-test.log
