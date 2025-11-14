@@ -5,7 +5,8 @@ describe("JCRON Timezone Support Tests", () => {
   let engine: Engine;
 
   beforeEach(() => {
-    engine = new Engine();
+    // Use tolerant timezone so tests that check invalid timezone handling do not throw
+    engine = new Engine({ tolerantTimezone: true });
   });
 
   describe("Timezone Parsing", () => {

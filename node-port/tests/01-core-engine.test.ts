@@ -21,7 +21,7 @@ describe("JCRON Core Engine Tests", () => {
     });
 
     test("should parse 6-field cron patterns (without year)", () => {
-      const schedule = fromJCronString("30 14 * * * *");
+      const schedule = fromJCronString("30 14 * * * *", { legacyFieldMapping: false });
       expect(schedule.s).toBe("*");
       expect(schedule.m).toBe("30");
       expect(schedule.h).toBe("14");
@@ -32,7 +32,7 @@ describe("JCRON Core Engine Tests", () => {
     });
 
     test("should parse 5-field cron patterns (classic)", () => {
-      const schedule = fromJCronString("14 * * * *");
+      const schedule = fromJCronString("14 * * * *", { legacyFieldMapping: false });
       expect(schedule.s).toBe("*");
       expect(schedule.m).toBe("*");
       expect(schedule.h).toBe("14");

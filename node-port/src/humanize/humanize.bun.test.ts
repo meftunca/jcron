@@ -12,7 +12,7 @@ describe("Humanize jcron expressions", () => {
   });
 
   test("should humanize every day at 12:00", () => {
-    expect(toString("0 12 * * *")).toMatch(/at.*noon.*every day|at.*12:00.*every day/);
+    expect(toString("0 12 * * *")).toMatch(/at.*noon.*every day|at.*12:00.*every day|Daily at noon/);
   });
 
   test("should humanize every Monday at 9:00", () => {

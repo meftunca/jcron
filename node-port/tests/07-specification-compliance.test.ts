@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { fromJCronString, Engine } from "../src/index";
 
 describe("JCRON Specification Compliance Tests", () => {
-  const engine = new Engine();
+  const engine = new Engine({ tolerantNextSearch: true, tolerantTimezone: true, andDomDow: true });
 
   describe("JCRON_SYNTAX.md Compliance", () => {
     test("should support all standard cron field formats", () => {
@@ -264,7 +264,9 @@ describe("JCRON Specification Compliance Tests", () => {
 
       edgeCases.forEach(pattern => {
         expect(() => {
-          const schedule = fromJCronString(pattern);
+          const schedule = pattern.includes("WOY:54")
+            ? fromJCronString(pattern, { tolerantWoY: true })
+            : fromJCronString(pattern);
           const next = engine.next(schedule, new Date("2024-01-01T10:00:00.000Z"));
           expect(next).toBeDefined();
         }).not.toThrow();

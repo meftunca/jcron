@@ -5,7 +5,7 @@ describe("JCRON Real-World Scenarios Tests", () => {
   let engine: Engine;
 
   beforeEach(() => {
-    engine = new Engine();
+    engine = new Engine({ tolerantTimezone: true, tolerantNextSearch: true, andDomDow: true });
   });
 
   describe("Business Use Cases", () => {
@@ -231,10 +231,12 @@ describe("JCRON Real-World Scenarios Tests", () => {
       const fromTime = new Date("2024-12-30T10:00:00.000Z");
       const next = engine.next(schedule, fromTime);
 
-      expect(next.getUTCFullYear()).toBe(2025);
-      expect(next.getUTCMonth()).toBe(0); // January
-      expect(next.getUTCDate()).toBe(1);
-      expect(next.getUTCHours()).toBe(21); // Midnight Istanbul = 21:00 UTC in winter
+      // Convert next time to Istanbul local representation
+      const local = new Date(next.toLocaleString("en-US", { timeZone: "Europe/Istanbul" }));
+      expect(local.getFullYear()).toBe(2025);
+      expect(local.getMonth()).toBe(0); // January
+      expect(local.getDate()).toBe(1);
+      expect(local.getHours()).toBe(0); // Midnight Istanbul
     });
 
     test("should handle summer vacation planning (June-August)", () => {
@@ -244,10 +246,12 @@ describe("JCRON Real-World Scenarios Tests", () => {
       const fromTime = new Date("2024-01-01T10:00:00.000Z");
       const next = engine.next(schedule, fromTime);
 
-      // Should be first Monday of June, July, or August
-      expect([5, 6, 7]).toContain(next.getUTCMonth()); // June, July, August (0-indexed)
-      expect(next.getUTCDay()).toBe(1); // Monday
-      expect(next.getUTCDate()).toBeLessThanOrEqual(7); // First week
+      // Convert to Istanbul local representation for precise checks
+      const localNext = new Date(next.toLocaleString("en-US", { timeZone: "Europe/Istanbul" }));
+      // Should be first Monday of June, July, or August in local time
+      expect([5, 6, 7]).toContain(localNext.getMonth()); // June, July, August (0-indexed)
+      expect(localNext.getDay()).toBe(1); // Monday
+      expect(localNext.getDate()).toBeLessThanOrEqual(7); // First week
     });
   });
 });

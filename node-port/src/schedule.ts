@@ -201,7 +201,7 @@ export class Schedule {
    * Does NOT include JCRON extensions (week-of-year, timezone)
    * @param convertTextualNames - Whether to convert textual names (MON-FRI) to numbers (1-5)
    */
-  toStandardCron(convertTextualNames: boolean = false): string {
+  toStandardCron(convertTextualNames: boolean = false, omitYear: boolean = false): string {
     // Convert textual names to numbers for compatibility if requested
     const convertField = (field: string | null): string => {
       if (!field) return "*";
@@ -247,7 +247,7 @@ export class Schedule {
     ];
 
     // Add year if specified
-    if (this.Y) {
+    if (this.Y && !omitYear) {
       fields.push(this.Y);
     }
 
@@ -647,7 +647,17 @@ function replaceTextualNames(field: string): string {
   return field.replace(regex, (match) => replacements[match.toUpperCase()]);
 }
 
-export function fromCronSyntax(cronString: string): Schedule {
+export interface ParseOptions {
+  // Maintain legacy parsing where 5-field cron defaults to seconds=0
+  legacyFieldMapping?: boolean; // default true
+  // Whether to accept trailing timezone tokens in cron syntax (e.g. "0 0 12 * * * UTC")
+  allowTrailingTimezone?: boolean; // default false
+  // When enabled, invalid WOY values will not throw; they will be ignored
+  tolerantWoY?: boolean; // default false
+}
+
+export function fromCronSyntax(cronString: string, options?: ParseOptions): Schedule {
+  const { legacyFieldMapping = true, allowTrailingTimezone = false } = options || {};
   const originalString = cronString.trim();
 
   if (SHORTCUTS[originalString]) {
@@ -665,8 +675,25 @@ export function fromCronSyntax(cronString: string): Schedule {
     );
   }
 
+  // If a trailing timezone token (non-numeric) is present and allowed, extract it
+  let tzFromTrailing: string | null = null;
+  if (allowTrailingTimezone && parts.length >= 6) {
+    const last = parts[parts.length - 1];
+    if (isNaN(Number(last)) && !last.includes(":")) {
+      // non-numeric token like 'UTC' or 'Europe/Istanbul' - treat as timezone
+      tzFromTrailing = last;
+      parts.pop();
+    }
+  }
+
   if (parts.length === 5) {
-    parts.unshift("0"); // saniye
+    if (legacyFieldMapping) {
+      // legacy mapping: assume missing seconds -> default 0
+      parts.unshift("0"); // saniye
+    } else {
+      // modern mapping: missing seconds -> wildcard
+      parts.unshift("*");
+    }
   }
 
   // 6: s m h D M dow
@@ -678,11 +705,18 @@ export function fromCronSyntax(cronString: string): Schedule {
     D,
     M,
     dow,
-    Y = null,
+    Y = "*",
     woy = null,
     tz = null;
   if (parts.length === 6) {
-    [s, m, h, D, M, dow] = parts;
+    if (legacyFieldMapping) {
+      // legacy mapping: treat 6-field as s m h D M dow
+      [s, m, h, D, M, dow] = parts;
+    } else {
+      // modern mapping: treat 6-field as m h D M dow [year?] (no seconds)
+      s = "*";
+      [m, h, D, M, dow] = parts as any;
+    }
   } else if (parts.length === 7) {
     [s, m, h, D, M, dow, Y] = parts;
   } else if (parts.length === 8) {
@@ -746,7 +780,9 @@ export function fromCronSyntax(cronString: string): Schedule {
   validateField(Y, 1970, 3000, "year");
   validateField(tz, 0, 0, "timezone"); // timezone is string, skip numeric validation
 
-  return new Schedule(s, m, h, D, M, dow, Y || null, woy, tz || null);
+  // If a trailing timezone was found, prefer it when tz isn't set explicitly
+  const effectiveTz = tz || tzFromTrailing || null;
+  return new Schedule(s, m, h, D, M, dow, Y || null, woy, effectiveTz);
 }
 
 export function withWeekOfYear(
@@ -1028,12 +1064,13 @@ export const WeekPatterns = {
  * Parse a JCRON specification string that may include WOY:, TZ:, and EOD: extensions
  * Supports: "s m h D M dow [Y] [WOY:woy] [TZ:tz] [EOD:eod]"
  */
-export function fromJCronString(jcronString: string): Schedule {
+export function fromJCronString(jcronString: string, options?: ParseOptions): Schedule {
+  const { legacyFieldMapping = true, allowTrailingTimezone = false } = options || {};
   const originalString = jcronString.trim();
 
   // Handle shortcuts first
   if (SHORTCUTS[originalString]) {
-    return fromCronSyntax(SHORTCUTS[originalString]);
+    return fromCronSyntax(SHORTCUTS[originalString], options);
   }
 
   // Split by spaces and identify extensions
@@ -1043,6 +1080,7 @@ export function fromJCronString(jcronString: string): Schedule {
   let woy: string | null = null;
   let tz: string | null = null;
   let eodStr: string | null = null;
+  let tzFromTrailing: string | null = null;
 
   // Separate cron fields from JCRON extensions
   for (const part of parts) {
@@ -1060,6 +1098,15 @@ export function fromJCronString(jcronString: string): Schedule {
     }
   }
 
+  // If a trailing timezone token (non-numeric) is present and allowed, extract it
+  if (allowTrailingTimezone && cronParts.length >= 6) {
+    const last = cronParts[cronParts.length - 1];
+    if (isNaN(Number(last)) && !last.includes(":")) {
+      tzFromTrailing = last;
+      cronParts.pop();
+    }
+  }
+
   // Validate cron part count
   if (cronParts.length < 5 || cronParts.length > 7) {
     throw new ParseError(
@@ -1069,7 +1116,7 @@ export function fromJCronString(jcronString: string): Schedule {
 
   // Add seconds if missing (5-field format)
   if (cronParts.length === 5) {
-    cronParts.unshift("0");
+    cronParts.unshift(legacyFieldMapping ? "0" : "*");
   }
 
   // Parse cron fields
@@ -1079,10 +1126,15 @@ export function fromJCronString(jcronString: string): Schedule {
     D,
     M,
     dow,
-    Y = null;
+    Y = "*";
 
   if (cronParts.length === 6) {
-    [s, m, h, D, M, dow] = cronParts;
+    if (legacyFieldMapping) {
+      [s, m, h, D, M, dow] = cronParts;
+    } else {
+      s = "*";
+      [m, h, D, M, dow] = (cronParts as any);
+    }
   } else if (cronParts.length === 7) {
     [s, m, h, D, M, dow, Y] = cronParts;
   }
@@ -1145,7 +1197,13 @@ export function fromJCronString(jcronString: string): Schedule {
   validateField(M, 1, 12, "month");
   validateField(dow, 0, 7, "day of week");
   validateField(Y, 1970, 3000, "year");
-  validateField(woy, 1, 53, "week of year");
+  try {
+    validateField(woy, 1, 53, "week of year");
+  } catch (e) {
+    if (!options?.tolerantWoY) throw e;
+    // Ignore invalid WOY and clear it
+    woy = null;
+  }
 
   // Parse EoD if present
   let eod: EndOfDuration | null = null;
@@ -1159,6 +1217,10 @@ export function fromJCronString(jcronString: string): Schedule {
         }`
       );
     }
+  }
+
+  if (!tz && tzFromTrailing) {
+    tz = tzFromTrailing;
   }
 
   return new Schedule(s, m, h, D, M, dow, Y || null, woy, tz || null, eod);

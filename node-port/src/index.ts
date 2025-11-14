@@ -66,7 +66,9 @@ function normalizeDate(input: DateInput | undefined | null, paramName: string): 
 }
 
 // Core Engine and Schedule
+export type { EngineOptions } from "./engine";
 export { Engine } from "./engine";
+export type { ParseOptions } from "./schedule";
 export {
   fromCronSyntax,
   fromCronWithWeekOfYear,

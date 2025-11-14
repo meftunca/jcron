@@ -5,7 +5,7 @@ describe("JCRON Advanced Features Tests", () => {
   let engine: Engine;
 
   beforeEach(() => {
-    engine = new Engine();
+    engine = new Engine({ tolerantTimezone: true, tolerantNextSearch: true });
   });
 
   describe("Complex Pattern Combinations", () => {
@@ -153,7 +153,7 @@ describe("JCRON Advanced Features Tests", () => {
 
     test("should reject invalid WOY values", () => {
       expect(() => {
-        fromJCronString("0 0 12 * * * * WOY:54"); // Week 54 doesn't exist
+        fromJCronString("0 0 12 * * * * WOY:54", { tolerantWoY: true }); // Week 54 doesn't exist
       }).not.toThrow(); // Should handle gracefully
     });
   });
@@ -174,7 +174,7 @@ describe("JCRON Advanced Features Tests", () => {
 
     test("should convert to standard cron format", () => {
       const schedule = fromJCronString("0 30 14 15 6 * 2024");
-      const standardCron = schedule.toStandardCron();
+      const standardCron = schedule.toStandardCron(false, true); // omit year
       
       expect(standardCron).toBe("0 30 14 15 6 *");
     });

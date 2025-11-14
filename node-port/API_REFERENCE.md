@@ -162,7 +162,7 @@ Parse a standard cron string into a Schedule object.
 **Signature:**
 
 ```typescript
-function fromCronSyntax(cronString: string): Schedule;
+function fromCronSyntax(cronString: string, options?: ParseOptions): Schedule;
 ```
 
 **Parameters:**
@@ -193,7 +193,7 @@ Parse a JCRON string into a Schedule object.
 **Signature:**
 
 ```typescript
-function fromJCronString(jcronString: string): Schedule;
+function fromJCronString(jcronString: string, options?: ParseOptions): Schedule;
 ```
 
 **Parameters:**
@@ -517,7 +517,7 @@ The `Engine` class handles schedule calculations.
 ### Constructor
 
 ```typescript
-new Engine();
+new Engine(options?: EngineOptions);
 ```
 
 **Example:**
@@ -728,6 +728,36 @@ interface ScheduleOptions {
   tz?: string; // Timezone
   eod?: EndOfDuration | string | null; // End of duration
 }
+
+---
+
+### ParseOptions
+
+```typescript
+interface ParseOptions {
+  /** Maintain legacy parsing where 5-field cron defaults to seconds=0 (default: true) */
+  legacyFieldMapping?: boolean;
+  /** Accept trailing timezone tokens in cron syntax (e.g. '0 0 12 * * * UTC') */
+  allowTrailingTimezone?: boolean;
+  /** When enabled, invalid WOY values will not throw; they will be ignored (default: false) */
+  tolerantWoY?: boolean;
+}
+```
+
+---
+
+### EngineOptions
+
+```typescript
+interface EngineOptions {
+  /** When enabled, invalid timezones will not throw and will fallback to UTC (default: false) */
+  tolerantTimezone?: boolean;
+  /** When enabled, next()/prev() will broaden search attempts to avoid throwing edge-case errors (default: false) */
+  tolerantNextSearch?: boolean;
+  /** When true, Day-of-Month and Day-of-Week fields must both be satisfied (AND semantics) instead of legacy OR (default: false) */
+  andDomDow?: boolean;
+}
+```
 ```
 
 ---

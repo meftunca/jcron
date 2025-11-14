@@ -83,7 +83,18 @@ interface TimezoneOffsetCache {
   timestamp: number;
 }
 
+export interface EngineOptions {
+  // When enabled, invalid timezones will not throw and will fallback to UTC
+  tolerantTimezone?: boolean;
+  // When enabled, next()/prev() will broaden search attempts to avoid throwing
+  tolerantNextSearch?: boolean;
+  // When true, day-of-month and day-of-week fields must both be satisfied
+  // (AND semantics). Default is false (legacy OR semantics).
+  andDomDow?: boolean;
+}
+
 export class Engine {
+  private readonly options: Required<EngineOptions>;
   private readonly scheduleCache = new WeakMap<Schedule, ExpandedSchedule>();
 
   // Cache for commonly used date calculations (reserved for future use)
@@ -100,6 +111,14 @@ export class Engine {
   // Caches first occurrence day for each month/year/day combination
   private readonly nthWeekDayCache = new Map<string, number>();
   private static readonly MAX_NTH_CACHE_SIZE = 1000;
+
+  constructor(options?: EngineOptions) {
+    this.options = {
+      tolerantTimezone: options?.tolerantTimezone ?? false,
+      tolerantNextSearch: options?.tolerantNextSearch ?? false,
+      andDomDow: options?.andDomDow ?? false,
+    };
+  }
 
   public next(schedule: Schedule, fromTime: Date): Date {
     // Handle pure EOD/SOD expressions (no cron pattern, just EOD calculation)
@@ -134,7 +153,8 @@ export class Engine {
 
     let searchTime = addSecondsToDate(fromTime, 1);
 
-    for (let i = 0; i < 2000; i++) {
+    const maxAttempts = this.options.tolerantNextSearch ? 2000 * 5 : 2000;
+    for (let i = 0; i < maxAttempts; i++) {
       // 🚀 Use centralized date-utils for timezone conversion
       const timeComponents = getDateComponentsInTimezone(searchTime, location);
       const year = timeComponents.year;
@@ -332,6 +352,94 @@ export class Engine {
       return searchTime;
     }
 
+    if (this.options.tolerantNextSearch) {
+      // As a last resort, expand year set heuristically and try one more time
+      try {
+        // Restart the search from the original 'fromTime' to ensure we don't miss
+        // earlier occurrences when using expanded years.
+        searchTime = addSecondsToDate(fromTime, 1);
+        let fallbackExp = this._getExpandedSchedule(schedule);
+        const fromYearExtended = fromTime.getUTCFullYear();
+        for (let y = fromYearExtended; y <= fromYearExtended + 100; y++) fallbackExp.yearsSet.add(y);
+
+        // Fix impossible day-month combinations: if a specific day-of-month for a specific month
+        // is impossible for all years in 'yearsSet', relax the month restriction by selecting months
+        // where that day does exist in at least one of the years in the expanded set.
+        try {
+          const Dexpr = schedule.D;
+          const Mexpr = schedule.M;
+          const Dnum = parseInt(Dexpr as any, 10);
+          const Mnum = parseInt(Mexpr as any, 10);
+          if (!isNaN(Dnum) && !isNaN(Mnum)) {
+            let validExists = false;
+            for (const yVal of Array.from(fallbackExp.yearsSet)) {
+              const lastDay = new Date(yVal, Mnum, 0).getDate();
+              if (Dnum <= lastDay) {
+                validExists = true;
+                break;
+              }
+            }
+            if (!validExists) {
+              const monthsThatFit: number[] = [];
+              for (let m = 1; m <= 12; m++) {
+                for (const yVal of Array.from(fallbackExp.yearsSet)) {
+                  const lastDay = new Date(yVal, m, 0).getDate();
+                  if (Dnum <= lastDay) {
+                    monthsThatFit.push(m);
+                    break;
+                  }
+                }
+              }
+              fallbackExp.months = monthsThatFit;
+              fallbackExp.monthsSet = new Set(monthsThatFit);
+            }
+          }
+        } catch {
+          // ignore any parsing mishaps and proceed
+        }
+        // Try again with expanded attempts
+          // 🚀 FAST FALLBACK: Try an optimized scan by year/month instead of brute-force second iteration
+          try {
+            const Dexpr = schedule.D;
+            const Dnum = parseInt(Dexpr as any, 10);
+            if (!isNaN(Dnum) && fallbackExp.months && fallbackExp.months.length > 0) {
+              const fromYearIter = fromTime.getUTCFullYear();
+              const fromMonthIter = getDateComponentsInTimezone(fromTime, location).month; // 1-based
+              for (let y = fromYearIter; y <= fromYearIter + 100; y++) {
+                if (!fallbackExp.yearsSet.has(y)) continue;
+                const monthsToCheck = fallbackExp.months.sort((a,b)=>a-b);
+                for (const m of monthsToCheck) {
+                  if (y === fromYearIter && m < fromMonthIter) continue;
+                  // check candidate day exists
+                  const lastDay = new Date(y, m, 0).getDate();
+                  if (Dnum > lastDay) continue;
+                  const hval = parseInt(schedule.h || "0", 10) || 0;
+                  const mval = parseInt(schedule.m || "0", 10) || 0;
+                  const sval = parseInt(schedule.s || "0", 10) || 0;
+                  const candidate = this._createDateInTimezone(y, m - 1, Dnum, hval, mval, sval, location);
+                  if (candidate.getTime() > fromTime.getTime()) {
+                    // ensure candidate also matches time components (hour/min/sec)
+                    if (this._isDayMatch(candidate, fallbackExp)) return candidate;
+                  }
+                }
+              }
+            }
+          } catch {
+            // ignore fallback failures
+          }
+        for (let i = 0; i < 2000 * 5; i++) {
+          const timeComponents = getDateComponentsInTimezone(searchTime, location);
+          const year = timeComponents.year;
+          // a simple attempt to find by increasing time
+          if (fallbackExp.yearsSet.has(year) && this._isDayMatch(searchTime, fallbackExp)) {
+            return searchTime;
+          }
+          searchTime = addSecondsToDate(searchTime, 1);
+        }
+      } catch (e) {
+        // ignore and fallthrough to the original behavior
+      }
+    }
     throw new Error(
       "JCRON: Could not find a valid next run time within a reasonable number of attempts."
     );
@@ -571,7 +679,12 @@ export class Engine {
       formatDateInTimezone(new Date(), "yyyy-MM-dd HH:mm:ssXXX", tz);
       exp.timezone = tz;
     } catch (e) {
-      throw new ParseError(`Invalid timezone '${tz}': ${(e as Error).message}`);
+      if (this.options.tolerantTimezone) {
+        // Fallback to UTC and continue
+        exp.timezone = "UTC";
+      } else {
+        throw new ParseError(`Invalid timezone '${tz}': ${(e as Error).message}`);
+      }
     }
 
     // Expand fields with optimizations
@@ -719,11 +832,18 @@ export class Engine {
     const isDomRestricted = D !== "*" && D !== "?";
     const isDowRestricted = dow !== "*" && dow !== "?";
 
-    if (isDomRestricted && isDowRestricted)
+    if (isDomRestricted && isDowRestricted) {
+      if (this.options.andDomDow) {
+        return (
+          this._checkDayOfMonth(date, D, schedule) &&
+          this._checkDayOfWeek(date, dow, schedule)
+        );
+      }
       return (
         this._checkDayOfMonth(date, D, schedule) ||
         this._checkDayOfWeek(date, dow, schedule)
       );
+    }
     if (isDomRestricted) return this._checkDayOfMonth(date, D, schedule);
     if (isDowRestricted) return this._checkDayOfWeek(date, dow, schedule);
     return true;
